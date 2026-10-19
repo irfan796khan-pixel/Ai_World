@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>AI World — Girl + Room</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; background: #cbd5e1; }
+    #status { position: absolute; top: 12px; left: 12px; z-index: 10; pointer-events: none;
+      background: rgba(15, 23, 42, 0.72); color: #e2e8f0; padding: 8px 12px; border-radius: 12px;
+      font-family: 'Consolas', monospace; font-size: 12px; }
+    #status:empty { display: none; }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+<div id="status">loading the girl…</div>
+<script>
+// ============================================================================
+// AI World — ONLY the girl and the room.
+// Brain, voice, chat, moves, memory, server = left out on purpose (partners add them).
+// Room code is copied from index.html (same sizes, colors, places).
+// ============================================================================
+const statusEl = document.getElementById('status');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xdbeafe);
+
+const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(0, 2.0, 4.7);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputEncoding = THREE.sRGBEncoding;
+document.body.appendChild(renderer.domElement);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 1.0, 0);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI / 2 - 0.02;
+controls.update();
+
+// ---------------------------------------------------------------- lights
+const hemi = new THREE.HemisphereLight(0xffffff, 0x94a3b8, 1.0); scene.add(hemi);
+const dirLight = new THREE.DirectionalLight(0xfffbeb, 0.95);
+dirLight.position.set(4, 8, 5);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.width = 2048;
+dirLight.shadow.mapSize.height = 2048;
+scene.add(dirLight);
+
+// ---------------------------------------------------------------- spots in the room (for partners: walk targets)
+const ROOM_SPOTS = {
+  center: { x: 0, z: 0, name: "Center Rug" },
+  sofa:   { x: 2.2, z: -3.75, name: "Living Room Sofa" },
+  window: { x: -2.8, z: -4.1, name: "Sunny Window" },
+  plant:  { x: -4.0, z: -3.5, name: "Indoor Plant" },
+  front:  { x: 0, z: 1.7, name: "Right in Front of You" },
+  tv:     { x: -5.2, z: 0.0, name: "TV", face: -Math.PI / 2 },
+  ball:   { x: -1.6, z: 1.6, name: "Ball" }
+};
+
+// ============================================================================
+// 1. THE ROOM
+// ============================================================================
+const room = new THREE.Group();
+scene.add(room);
+
+// floor + rug
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(14, 14), new THREE.MeshStandardMaterial({ color: 0xb4835b, roughness: 0.6 }));
+floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; room.add(floor);
+const rug = new THREE.Mesh(new THREE.BoxGeometry(5.5, 0.02, 4.0), new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.9 }));
+rug.position.set(0, 0.01, 0); rug.receiveShadow = true; room.add(rug);
+
+// walls + window
+const wallMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.85 });
+const backWall = new THREE.Mesh(new THREE.BoxGeometry(14, 6, 0.2), wallMat);
+backWall.position.set(0, 3, -6); backWall.receiveShadow = true; room.add(backWall);
+const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.2, 6, 14), wallMat);
+leftWall.position.set(-7, 3, 0); leftWall.receiveShadow = true; room.add(leftWall);
+const winFrame = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.2, 0.25), new THREE.MeshStandardMaterial({ color: 0x334155 }));
+winFrame.position.set(-3, 3.2, -5.95); room.add(winFrame);
+const winGlass = new THREE.Mesh(new THREE.BoxGeometry(2.9, 1.9, 0.27), new THREE.MeshBasicMaterial({ color: 0xe0f2fe }));
+winGlass.position.set(-3, 3.2, -5.95); room.add(winGlass);
+
+// sofa, coffee table, plant
+const sofaMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.8 });
+const sofaBase = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.45, 1.2), sofaMat);
+sofaBase.position.set(2.2, 0.225, -4.6); sofaBase.castShadow = true; room.add(sofaBase);
+const sofaBack = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.95, 0.3), sofaMat);
+sofaBack.position.set(2.2, 0.6, -5.05); sofaBack.castShadow = true; room.add(sofaBack);
+const table = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.42, 0.9), new THREE.MeshStandardMaterial({ color: 0x78350f }));
+table.position.set(2.2, 0.21, -2.8); table.castShadow = true; room.add(table);
+const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.22, 0.5, 16), new THREE.MeshStandardMaterial({ color: 0xd97706 }));
+pot.position.set(-5.2, 0.25, -4.5); pot.castShadow = true; room.add(pot);
+const leaves = new THREE.Mesh(new THREE.SphereGeometry(0.55, 16, 16), new THREE.MeshStandardMaterial({ color: 0x15803d }));
+leaves.position.set(-5.2, 0.85, -4.5); leaves.castShadow = true; room.add(leaves);
+
+// floor lamp (off) + whiteboard (blank)
+const lampPole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.05, 1.7, 10), new THREE.MeshStandardMaterial({ color: 0x334155 }));
+lampPole.position.set(5.4, 0.85, -5.3); room.add(lampPole);
+const lampBulb = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 16), new THREE.MeshStandardMaterial({ color: 0xfef3c7, emissive: 0xfbbf24, emissiveIntensity: 0.2 }));
+lampBulb.position.set(5.4, 1.8, -5.3); room.add(lampBulb);
+const lampLight = new THREE.PointLight(0xffd27a, 0, 9, 2); lampLight.position.set(5.4, 1.8, -5.3); room.add(lampLight);
+const boardCanvas = document.createElement('canvas'); boardCanvas.width = 1024; boardCanvas.height = 512;
+{ const c = boardCanvas.getContext('2d'); c.fillStyle = '#f8fafc'; c.fillRect(0, 0, 1024, 512); }
+const boardTex = new THREE.CanvasTexture(boardCanvas);
+const board = new THREE.Mesh(new THREE.PlaneGeometry(3.0, 1.5), new THREE.MeshStandardMaterial({ map: boardTex, roughness: 0.9 }));
+board.position.set(1.2, 2.6, -5.84); room.add(board);
+const boardFrame = new THREE.Mesh(new THREE.BoxGeometry(3.15, 1.65, 0.05), new THREE.MeshStandardMaterial({ color: 0x475569 }));
+boardFrame.position.set(1.2, 2.6, -5.9); room.add(boardFrame);
+
+// TV (off), ball, glass, book
+const tvCanvas = document.createElement('canvas'); tvCanvas.width = 768; tvCanvas.height = 432;
+{ const c = tvCanvas.getContext('2d'); c.fillStyle = '#111827'; c.fillRect(0, 0, 768, 432); }
+const tvTex = new THREE.CanvasTexture(tvCanvas);
+const tvFrame = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.35, 2.3), new THREE.MeshStandardMaterial({ color: 0x0f172a })); tvFrame.position.set(-6.85, 1.9, 0); room.add(tvFrame);
+const tv = new THREE.Mesh(new THREE.PlaneGeometry(2.15, 1.2), new THREE.MeshBasicMaterial({ map: tvTex })); tv.position.set(-6.8, 1.9, 0); tv.rotation.y = Math.PI / 2; room.add(tv);
+const tvStand = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.6, 2.0), new THREE.MeshStandardMaterial({ color: 0x334155 })); tvStand.position.set(-6.6, 0.3, 0); room.add(tvStand);
+const ball = new THREE.Mesh(new THREE.SphereGeometry(0.16, 20, 20), new THREE.MeshStandardMaterial({ color: 0xef4444, roughness: 0.5 })); ball.position.set(-1.6, 0.16, 1.6); ball.castShadow = true; room.add(ball);
+const glass = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.16, 12), new THREE.MeshStandardMaterial({ color: 0xbae6fd, transparent: true, opacity: 0.7 })); glass.position.set(1.7, 0.5, -2.8); room.add(glass);
+const book = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.05, 0.24), new THREE.MeshStandardMaterial({ color: 0x7c3aed })); book.position.set(2.6, 0.445, -2.7); book.rotation.y = 0.3; room.add(book);
+
+// ============================================================================
+// 2. THE GIRL (Girl_character.glb, same folder)
+// ============================================================================
+const girl = new THREE.Group();          // move/rotate this group to move her
+scene.add(girl);
+const bones = {};                        // bones by name; three.js drops dots: 'upper_arm.L' is bones['upper_armL']
+const morphMeshes = [];                  // meshes with face shapes (jawOpen, eyeBlinkLeft, ...)
+const rest = {};                         // rest rotation of each bone
+let loaded = false;
+
+function setMorph(name, v) {
+  for (const m of morphMeshes) { const i = m.morphTargetDictionary[name]; if (i !== undefined) m.morphTargetInfluences[i] = v; }
+}
+
+// turn a bone so the direction from it to its child points along "want" (world space)
+function aimBone(bone, child, want) {
+  bone.updateMatrixWorld(true);
+  const a = bone.getWorldPosition(new THREE.Vector3()), b = child.getWorldPosition(new THREE.Vector3());
+  const have = b.sub(a).normalize();
+  const qWorld = new THREE.Quaternion().setFromUnitVectors(have, want.clone().normalize());
+  const parentQ = bone.parent.getWorldQuaternion(new THREE.Quaternion());
+  const boneQ = bone.getWorldQuaternion(new THREE.Quaternion());
+  const newWorld = qWorld.multiply(boneQ);
+  bone.quaternion.copy(parentQ.invert().multiply(newWorld));
+  bone.updateMatrixWorld(true);
+}
+
+new THREE.GLTFLoader().load('Girl_character.glb', (gltf) => {
+  const obj = gltf.scene;
+  // same size rule as index.html: biggest side = 1.9, feet on the floor, centered
+  const box = new THREE.Box3().setFromObject(obj);
+  const size = box.getSize(new THREE.Vector3());
+  obj.scale.setScalar(1.9 / Math.max(size.x, size.y, size.z));
+  obj.updateMatrixWorld(true);
+  const sBox = new THREE.Box3().setFromObject(obj);
+  const c = sBox.getCenter(new THREE.Vector3());
+  obj.position.set(-c.x, -sBox.min.y, -c.z);
+  obj.traverse(o => {
+    if (o.isBone) bones[o.name] = o;
+    if (o.isMesh) {
+      o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false;
+      if (o.morphTargetDictionary) morphMeshes.push(o);
+    }
+  });
+  girl.add(obj);
+  girl.updateMatrixWorld(true);
+
+  // relax the arms out of the T-pose (about 15 degrees from the body)
+  const down = 0.26;
+  if (bones['upper_armL'] && bones['forearmL']) {
+    const sideL = Math.sign(bones['forearmL'].getWorldPosition(new THREE.Vector3()).x - bones['upper_armL'].getWorldPosition(new THREE.Vector3()).x) || 1;
+    aimBone(bones['upper_armL'], bones['forearmL'], new THREE.Vector3(sideL * Math.sin(down), -Math.cos(down), 0));
+  }
+  if (bones['upper_armR'] && bones['forearmR']) {
+    const sideR = Math.sign(bones['forearmR'].getWorldPosition(new THREE.Vector3()).x - bones['upper_armR'].getWorldPosition(new THREE.Vector3()).x) || -1;
+    aimBone(bones['upper_armR'], bones['forearmR'], new THREE.Vector3(sideR * Math.sin(down), -Math.cos(down), 0));
+  }
+  for (const n in bones) rest[n] = bones[n].quaternion.clone();
+  prepareWave();
+
+  loaded = true;
+  statusEl.textContent = '';
+  window.AIWorld.ready = true;
+}, undefined, (err) => {
+  console.error(err);
+  statusEl.textContent = 'Could not load Girl_character.glb. Start with run_girl_room.bat (not by double-clicking the html).';
+});
+
+// ---------------------------------------------------------------- small idle life: breathing + blinking
+const clock = new THREE.Clock();
+let blinkIn = 2.5, blinkT = -1;
+const tmpQ = new THREE.Quaternion(), tmpE = new THREE.Euler();
+function addRot(name, x, y, z) {
+  const b = bones[name]; if (!b || !rest[name]) return;
+  tmpQ.setFromEuler(tmpE.set(x, y, z));
+  b.quaternion.copy(rest[name]).multiply(tmpQ);
+}
+function idleTick(t, dt) {
+  if (!loaded || window.AIWorld.idle === false) return;
+  const br = Math.sin(t * 1.6);                       // breathing
+  addRot('spine002', 0.012 * br, 0, 0);
+  addRot('spine004', 0.015 * Math.sin(t * 0.5), 0.03 * Math.sin(t * 0.37), 0);  // slow head sway
+  blinkIn -= dt;                                      // blink every 2–5 s
+  if (blinkIn <= 0 && blinkT < 0) { blinkT = 0; blinkIn = 2 + Math.random() * 3; }
+  if (blinkT >= 0) {
+    blinkT += dt;
+    const v = blinkT < 0.08 ? blinkT / 0.08 : Math.max(0, 1 - (blinkT - 0.08) / 0.1);
+    setMorph('eyeBlinkLeft', v); setMorph('eyeBlinkRight', v);
+    if (blinkT > 0.18) { blinkT = -1; setMorph('eyeBlinkLeft', 0); setMorph('eyeBlinkRight', 0); }
+  }
+}
+
+// ============================================================================
+// 3. ACTIONS — the body does what the brain sends (loop: talk > brain > words + action > ACTION)
+// ============================================================================
+// AIWorld.act([{walk:"sofa"}, {wave:2}, {lamp:true}])  — runs one after another
+//   {walk:"sofa"} or {walk:{x:1,z:2}}   walk to a room spot (names in ROOM_SPOTS)
+//   {face:"camera"} | {face:90}         turn to the person, or to an angle in degrees
+//   {wave:2}                            wave for 2 seconds
+//   {lamp:true|false}  {tv:true|false|"text on screen"}  {board:"text"}
+//   {wait:1.5}                          stand still 1.5 s
+const act = { queue: [], cur: null, t: 0, walking: false, waving: 0, onDone: null };
+const WALK_SPEED = 1.1;   // metres per second
+function drawTV(on, text) {
+  const c = tvCanvas.getContext('2d');
+  c.fillStyle = on ? '#0b1220' : '#111827'; c.fillRect(0, 0, 768, 432);
+  if (on && text) { c.fillStyle = '#e2e8f0'; c.font = '30px Segoe UI, Arial'; c.fillText(String(text).slice(0, 40), 30, 220); }
+  tvTex.needsUpdate = true;
+}
+function writeBoard(text) {
+  const c = boardCanvas.getContext('2d');
+  c.fillStyle = '#f8fafc'; c.fillRect(0, 0, 1024, 512);
+  c.fillStyle = '#1e3a8a'; c.font = 'bold 40px Segoe UI, Arial'; c.textBaseline = 'top';
+  const words = String(text || '').split(/\s+/); let line = '', y = 30; const lines = [];
+  for (const w of words) { const tst = line ? line + ' ' + w : w; if (c.measureText(tst).width > 964) { lines.push(line); line = w; } else line = tst; }
+  lines.push(line); for (const l of lines.slice(0, 7)) { c.fillText(l, 30, y); y += 52; }
+  boardTex.needsUpdate = true;
+}
+function startAction(a) {
+  act.cur = a; act.t = 0;
+  if (a.walk !== undefined) {
+    const s = typeof a.walk === 'string' ? ROOM_SPOTS[a.walk] : a.walk;
+    if (!s) { console.warn('unknown spot', a.walk); return finishAction(); }
+    a._to = new THREE.Vector3(s.x, 0, s.z); a._face = s.face; act.walking = true;
+  } else if (a.face !== undefined) {
+    a._yaw = a.face === 'camera' ? Math.atan2(camera.position.x - girl.position.x, camera.position.z - girl.position.z) : THREE.MathUtils.degToRad(+a.face);
+  } else if (a.wave !== undefined) { act.waving = +a.wave || 2; }
+  else if (a.lamp !== undefined) { lampLight.intensity = a.lamp ? 2.2 : 0; lampBulb.material.emissiveIntensity = a.lamp ? 1.2 : 0.2; return finishAction(); }
+  else if (a.tv !== undefined) { drawTV(!!a.tv, typeof a.tv === 'string' ? a.tv : ''); return finishAction(); }
+  else if (a.board !== undefined) { writeBoard(a.board); return finishAction(); }
+  else if (a.wait === undefined) { console.warn('unknown action', a); return finishAction(); }
+}
+function finishAction() {
+  const done = act.cur; act.cur = null; act.walking = false;
+  if (done && typeof window.AIWorld.onActionDone === 'function') window.AIWorld.onActionDone(done);
+  if (act.queue.length) startAction(act.queue.shift());
+}
+function turnToward(yaw, dt, speed = 6) {
+  let d = yaw - girl.rotation.y; d = Math.atan2(Math.sin(d), Math.cos(d));
+  girl.rotation.y += d * Math.min(1, dt * speed); return Math.abs(d);
+}
+function actionTick(t, dt) {
+  const a = act.cur; if (!a || !loaded) return;
+  act.t += dt;
+  if (a.walk !== undefined) {
+    const d = new THREE.Vector3().subVectors(a._to, girl.position); d.y = 0;
+    const dist = d.length();
+    if (dist < 0.05) { if (a._face !== undefined) { a.face = THREE.MathUtils.radToDeg(a._face); delete a.walk; a._yaw = a._face; act.walking = false; return; } return finishAction(); }
+    turnToward(Math.atan2(d.x, d.z), dt);
+    girl.position.addScaledVector(d.normalize(), Math.min(dist, WALK_SPEED * dt));
+  } else if (a._yaw !== undefined) { if (turnToward(a._yaw, dt) < 0.02 || act.t > 3) finishAction(); }
+  else if (a.wave !== undefined) { act.waving -= dt; if (act.waving <= 0) { act.waving = 0; finishAction(); } }
+  else if (a.wait !== undefined) { if (act.t >= +a.wait) finishAction(); }
+}
+// legs + arms for walking and waving (added on top of the idle pose)
+let walkPhase = 0, walkW = 0, waveW = 0;
+function limbsTick(t, dt) {
+  if (!loaded) return;
+  walkW += ((act.walking ? 1 : 0) - walkW) * Math.min(1, dt * 8);
+  waveW += ((act.waving > 0 ? 1 : 0) - waveW) * Math.min(1, dt * 8);
+  walkPhase += dt * 7 * walkW;
+  const sw = Math.sin(walkPhase) * walkW;
+  addRot('thighL', 0.45 * sw, 0, 0);  addRot('thighR', -0.45 * sw, 0, 0);
+  addRot('shinL', Math.max(0, -sw) * 0.7, 0, 0); addRot('shinR', Math.max(0, sw) * 0.7, 0, 0);
+  addRot('upper_armL', 0, 0, 0.015 * Math.sin(t * 1.6));
+  addRot('upper_armR', 0, 0, -0.015 * Math.sin(t * 1.6));
+  if (walkW > 0.01) { bones.upper_armL && bones.upper_armL.rotateX(-0.3 * sw); bones.upper_armR && bones.upper_armR.rotateX(0.3 * sw); }
+  if (waveW > 0.01 && bones.upper_armR) {
+    bones.upper_armR.quaternion.slerp(waveQ, waveW);
+    if (bones.forearmR && rest.forearmR) bones.forearmR.quaternion.copy(rest.forearmR).slerp(waveFQ(t), waveW);
+  } else if (bones.forearmR && rest.forearmR) bones.forearmR.quaternion.copy(rest.forearmR);
+  girl.position.y = 0.025 * Math.abs(Math.sin(walkPhase)) * walkW;
+}
+let waveQ = new THREE.Quaternion();
+function waveFQ(t) { return waveFBase.clone().multiply(tmpQ.setFromEuler(tmpE.set(0, 0, 0.35 * Math.sin(t * 9)))); }
+let waveFBase = new THREE.Quaternion();
+function prepareWave() {   // arm up beside the head, forearm up; worked out once from her own bones
+  const ua = bones.upper_armR, fa = bones.forearmR, hand = bones.handR; if (!ua || !fa || !hand) return;
+  const save = ua.quaternion.clone(), saveF = fa.quaternion.clone();
+  const side = Math.sign(fa.getWorldPosition(new THREE.Vector3()).x - ua.getWorldPosition(new THREE.Vector3()).x) || -1;
+  aimBone(ua, fa, new THREE.Vector3(side * 0.95, 0.3, 0.05)); waveQ = ua.quaternion.clone();
+  aimBone(fa, hand, new THREE.Vector3(side * 0.15, 1, 0.1)); waveFBase = fa.quaternion.clone();
+  ua.quaternion.copy(save); fa.quaternion.copy(saveF); ua.updateMatrixWorld(true);
+}
+
+// ============================================================================
+// 4. HOOK FOR PARTNERS (brain / voice / face) — use window.AIWorld
+// ============================================================================
+window.AIWorld = {
+  ready: false,
+  idle: true,                 // set false to stop the built-in breathing/blink
+  THREE, scene, camera, renderer, controls, room, girl, bones, morphMeshes, ROOM_SPOTS,
+  act(list) { list = Array.isArray(list) ? list : [list]; for (const a of list) act.queue.push({ ...a }); if (!act.cur && act.queue.length) startAction(act.queue.shift()); },
+  stop() { act.queue = []; act.cur = null; act.walking = false; act.waving = 0; },
+  busy: () => !!act.cur,
+  onActionDone: null,         // function (action) {} — called after each action
+  setMorph,                   // AIWorld.setMorph('jawOpen', 0.6) — for Audio2Face lip sync
+  morphNames: () => morphMeshes.length ? Object.keys(morphMeshes[0].morphTargetDictionary) : [],
+  onFrame: []                 // push functions (t, dt) => {...} to run every frame
+};
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+  idleTick(t, dt);
+  actionTick(t, dt);
+  limbsTick(t, dt);
+  for (const f of window.AIWorld.onFrame) { try { f(t, dt); } catch (e) { console.error(e); } }
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
