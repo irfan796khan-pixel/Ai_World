@@ -127,7 +127,7 @@ const glass = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.16, 12), n
 const book = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.05, 0.24), new THREE.MeshStandardMaterial({ color: 0x7c3aed })); book.position.set(2.6, 0.445, -2.7); book.rotation.y = 0.3; room.add(book);
 
 // ============================================================================
-// 2. THE GIRL (Girl_character_rigged.glb, same folder)
+// 2. THE GIRL (Girl_character_mixamo.glb, same folder)
 // ============================================================================
 const girl = new THREE.Group();          // move/rotate this group to move her
 scene.add(girl);
@@ -153,7 +153,7 @@ function aimBone(bone, child, want) {
   bone.updateMatrixWorld(true);
 }
 
-new THREE.GLTFLoader().load('Girl_character_rigged.glb', (gltf) => {
+new THREE.GLTFLoader().load('Girl_character_mixamo.glb', (gltf) => {
   const obj = gltf.scene;
   // same size rule as index.html: biggest side = 1.9, feet on the floor, centered
   const box = new THREE.Box3().setFromObject(obj);
@@ -191,7 +191,7 @@ new THREE.GLTFLoader().load('Girl_character_rigged.glb', (gltf) => {
   window.AIWorld.ready = true;
 }, undefined, (err) => {
   console.error(err);
-  statusEl.textContent = 'Could not load Girl_character_rigged.glb. Start with run_girl_room.bat (not by double-clicking the html).';
+  statusEl.textContent = 'Could not load Girl_character_mixamo.glb. Start with run_girl_room.bat (not by double-clicking the html).';
 });
 
 // ---------------------------------------------------------------- small idle life: breathing + blinking
