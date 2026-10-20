@@ -229,6 +229,68 @@ function idleTick(t, dt) {
 //   {wait:1.5}                          stand still 1.5 s
 const act = { queue: [], cur: null, t: 0, walking: false, waving: 0, onDone: null };
 const WALK_SPEED = 1.1;   // metres per second
+
+// Furniture she must walk around (footprints, in metres). M = her body radius.
+const OBSTACLES = [
+  { x0: 0.45, x1: 3.95, z0: -5.25, z1: -3.95 },  // sofa (seat + back)
+  { x0: 1.35, x1: 3.05, z0: -3.25, z1: -2.35 },  // coffee table
+  { x0: -5.48, x1: -4.92, z0: -4.78, z1: -4.22 } // plant pot
+];
+const BODY_RADIUS = 0.35;
+const GRID = 0.2, HALF = 6.3;
+function cellBlocked(x, z) {
+  if (Math.abs(x) > HALF || Math.abs(z) > HALF) return true;
+  return OBSTACLES.some(o => x > o.x0 - BODY_RADIUS && x < o.x1 + BODY_RADIUS &&
+                             z > o.z0 - BODY_RADIUS && z < o.z1 + BODY_RADIUS);
+}
+// Grid search (breadth-first) from her position to the target, going around furniture.
+// Always returns at least one point (the target), so a blocked search falls back to a straight walk.
+function findPath(from, to) {
+  const N = Math.round(2 * HALF / GRID) + 1;
+  const toCell = (x, z) => [Math.round((x + HALF) / GRID), Math.round((z + HALF) / GRID)];
+  const toPos = (i, j) => [i * GRID - HALF, j * GRID - HALF];
+  const [sx, sz] = toCell(from.x, from.z);
+  let [gx, gz] = toCell(to.x, to.z);
+  // If the target sits inside the body margin (e.g. "sofa" is in front of the sofa),
+  // aim for the nearest free cell instead, then finish at the exact target.
+  if (cellBlocked(...toPos(gx, gz))) {
+    let found = false;
+    for (let r = 1; r < 40 && !found; r++) {
+      for (let di = -r; di <= r && !found; di++) for (let dj = -r; dj <= r && !found; dj++) {
+        if (Math.abs(di) !== r && Math.abs(dj) !== r) continue;
+        const i = gx + di, j = gz + dj;
+        if (i < 0 || j < 0 || i >= N || j >= N) continue;
+        if (!cellBlocked(...toPos(i, j))) { gx = i; gz = j; found = true; }
+      }
+    }
+  }
+  const idx = (i, j) => i * N + j;
+  const prev = new Int32Array(N * N).fill(-2);
+  const queue = [idx(sx, sz)];
+  prev[idx(sx, sz)] = -1;
+  const goal = idx(gx, gz);
+  while (queue.length && prev[goal] === -2) {
+    const cur = queue.shift();
+    const i = Math.floor(cur / N), j = cur % N;
+    for (const [di, dj] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+      const ni = i + di, nj = j + dj;
+      if (ni < 0 || nj < 0 || ni >= N || nj >= N) continue;
+      const n = idx(ni, nj);
+      if (prev[n] !== -2) continue;
+      const [px, pz] = toPos(ni, nj);
+      if (n !== goal && cellBlocked(px, pz)) continue;
+      prev[n] = cur; queue.push(n);
+    }
+  }
+  if (prev[goal] === -2) return [to.clone()];
+  const pts = [];
+  for (let c = goal; c !== idx(sx, sz) && c !== -1; c = prev[c]) {
+    const [px, pz] = toPos(Math.floor(c / N), c % N);
+    pts.unshift(new THREE.Vector3(px, 0, pz));
+  }
+  if (pts.length) pts[pts.length - 1] = to.clone();
+  return pts.length ? pts : [to.clone()];
+}
 function drawTV(on, text) {
   const c = tvCanvas.getContext('2d');
   c.fillStyle = on ? '#0b1220' : '#111827'; c.fillRect(0, 0, 768, 432);
@@ -249,7 +311,7 @@ function startAction(a) {
   if (a.walk !== undefined) {
     const s = typeof a.walk === 'string' ? ROOM_SPOTS[a.walk] : a.walk;
     if (!s) { console.warn('unknown spot', a.walk); return finishAction(); }
-    a._to = new THREE.Vector3(s.x, 0, s.z); a._face = s.face; act.walking = true;
+    a._to = new THREE.Vector3(s.x, 0, s.z); a._path = findPath(girl.position, a._to); a._face = s.face; act.walking = true;
   } else if (a.face !== undefined) {
     a._yaw = a.face === 'camera' ? Math.atan2(camera.position.x - girl.position.x, camera.position.z - girl.position.z) : THREE.MathUtils.degToRad(+a.face);
   } else if (a.wave !== undefined) { act.waving = +a.wave || 2; }
@@ -271,9 +333,14 @@ function actionTick(t, dt) {
   const a = act.cur; if (!a || !loaded) return;
   act.t += dt;
   if (a.walk !== undefined) {
-    const d = new THREE.Vector3().subVectors(a._to, girl.position); d.y = 0;
+    const d = new THREE.Vector3().subVectors(a._path[0], girl.position); d.y = 0;
     const dist = d.length();
-    if (dist < 0.05) { if (a._face !== undefined) { a.face = THREE.MathUtils.radToDeg(a._face); delete a.walk; a._yaw = a._face; act.walking = false; return; } return finishAction(); }
+    if (dist < 0.05) {
+      a._path.shift();
+      if (a._path.length) return;   // next waypoint on the way around furniture
+      if (a._face !== undefined) { a.face = THREE.MathUtils.radToDeg(a._face); delete a.walk; a._yaw = a._face; act.walking = false; return; }
+      return finishAction();
+    }
     turnToward(Math.atan2(d.x, d.z), dt);
     girl.position.addScaledVector(d.normalize(), Math.min(dist, WALK_SPEED * dt));
   } else if (a._yaw !== undefined) { if (turnToward(a._yaw, dt) < 0.02 || act.t > 3) finishAction(); }
