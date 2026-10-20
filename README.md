@@ -14,7 +14,7 @@ we talk  >  brain thinks  >  brain sends words + action  >  ACTION (this repo)
 | **Body / Surrounding** | **Guy 2 (this repo)** | 3D model, movements, room, walking to places |
 | Voice / Face | Guy 3 (ElevenLabs + NVIDIA Audio2Face) | Speaks the words, moves the lips |
 
-Planned later for the body: MetaHuman + Convai. What is here now: a three.js web version (girl + living room).
+Planned later for the body: a cartoon-style (stylized, not realistic) character, plus Convai for conversation. MetaHuman (realistic) is dropped. What is here now: a three.js web version (girl + living room).
 
 ## Run it (Windows)
 Double-click `run_girl_room.bat`. It opens http://localhost:8081/Girl_Room.html (needs Python, used only as a tiny local file server).
