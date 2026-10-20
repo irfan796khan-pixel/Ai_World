@@ -36,9 +36,18 @@ AIWorld.act([
   { lamp: true },            // lamp on / off
   { tv: "hello" },           // TV on with text, or true / false
   { board: "Hi Irfan" },     // write on the whiteboard
-  { wait: 1.5 }              // stand still
+  { wait: 1.5 },             // stand still
+
+  // funny / clumsy moves
+  { trip: true },            // stumbles, falls flat on her face, gets back up
+  { sit: "sofa", time: 3 },  // walks to the sofa and sits for 3 s
+  { sit: "miss" },           // tries to sit, misses the sofa, lands on the floor
+  { knock: "glass" },        // walks to the coffee table and knocks the glass off (it shatters)
+  { tv: "glitch", time: 4 }, // TV goes crazy by itself, she jumps in fright, then "BOO!"
+  { reset: true }            // puts ball, glass and book back, removes the shards
 ]);
-AIWorld.onActionDone = (a) => console.log("done", a);   // called after each action
+// Walking into the ball kicks it. Spots now also include "table" (next to the coffee table).
+AIWorld.onActionDone = (a) => console.log("done", a);   // called after each action (a "sit" or "knock" reports once, when fully done)
 AIWorld.busy();   // true while she is doing something
 AIWorld.stop();   // clear everything
 ```
@@ -55,7 +64,8 @@ AIWorld.idle = false;            // turns off the built-in breathing + blinking
 Only these 10 face shapes exist in the model now. Full ARKit (52 shapes) is not in the model yet.
 
 ## Known limits (facts)
-- Walking is a straight line. No path around furniture yet (she can walk through the table).
+- Walking goes around the sofa, coffee table and plant (grid path search).
 - Movements are code (procedural), not motion-capture clips.
+- Physics is simple and home-made (falling, bouncing, rolling, the glass breaking) — no physics library.
 - No fingers move. Hair does not swing yet.
-- Tested in a headless Chromium browser (all 7 actions ran in order). Not yet tested on the Windows PC.
+- Tested in a headless Chromium browser (all actions, incl. the clumsy moves). Not yet tested on the Windows PC.

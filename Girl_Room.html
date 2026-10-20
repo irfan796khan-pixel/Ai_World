@@ -62,7 +62,8 @@ const ROOM_SPOTS = {
   plant:  { x: -4.0, z: -3.5, name: "Indoor Plant" },
   front:  { x: 0, z: 1.7, name: "Right in Front of You" },
   tv:     { x: -5.2, z: 0.0, name: "TV", face: -Math.PI / 2 },
-  ball:   { x: -1.6, z: 1.6, name: "Ball" }
+  ball:   { x: -1.6, z: 1.6, name: "Ball" },
+  table:  { x: 0.95, z: -2.8, name: "Coffee Table", face: Math.PI / 2 }
 };
 
 // ============================================================================
@@ -125,11 +126,102 @@ const tvStand = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.6, 2.0), new THREE.M
 const ball = new THREE.Mesh(new THREE.SphereGeometry(0.16, 20, 20), new THREE.MeshStandardMaterial({ color: 0xef4444, roughness: 0.5 })); ball.position.set(-1.6, 0.16, 1.6); ball.castShadow = true; room.add(ball);
 const glass = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.16, 12), new THREE.MeshStandardMaterial({ color: 0xbae6fd, transparent: true, opacity: 0.7 })); glass.position.set(1.7, 0.5, -2.8); room.add(glass);
 const book = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.05, 0.24), new THREE.MeshStandardMaterial({ color: 0x7c3aed })); book.position.set(2.6, 0.445, -2.7); book.rotation.y = 0.3; room.add(book);
+glass.castShadow = true; book.castShadow = true;
+
+// ---------------------------------------------------------------- simple physics for small things (they fall, bounce, roll, break)
+const GRAVITY = 9.8;
+const props = [];
+const shards = [];
+function addProp(mesh, opts) {
+  const p = Object.assign({
+    mesh, r: 0.1, bounce: 0.35, breakable: false, roll: false, flat: false,
+    v: new THREE.Vector3(), w: new THREE.Vector3(), sleep: true, broken: false,
+    home: { pos: mesh.position.clone(), rot: mesh.rotation.clone() }
+  }, opts);
+  props.push(p);
+  return p;
+}
+const ballProp = addProp(ball, { r: 0.16, bounce: 0.55, roll: true });
+const glassProp = addProp(glass, { r: 0.07, bounce: 0.2, breakable: true });
+const bookProp = addProp(book, { r: 0.025, bounce: 0.1, flat: true });
+// height of whatever is under a point (floor, coffee table, sofa seat, TV stand)
+function supportY(x, z) {
+  if (x > 1.35 && x < 3.05 && z > -3.25 && z < -2.35) return 0.42;
+  if (x > 0.5 && x < 3.9 && z > -5.2 && z < -4.0) return 0.45;
+  if (x > -6.85 && x < -6.35 && z > -1.0 && z < 1.0) return 0.6;
+  return 0;
+}
+function pushProp(p, vx, vy, vz, spin = 6) {
+  if (p.broken) return;
+  p.v.set(vx, vy, vz);
+  p.w.set((Math.random() - 0.5) * spin, (Math.random() - 0.5) * spin, (Math.random() - 0.5) * spin);
+  p.sleep = false;
+}
+function shatter(p) {
+  p.mesh.visible = false; p.sleep = true; p.broken = true;
+  const mat = new THREE.MeshStandardMaterial({ color: 0xbae6fd, transparent: true, opacity: 0.85 });
+  for (let i = 0; i < 10; i++) {
+    const s = new THREE.Mesh(new THREE.TetrahedronGeometry(0.02 + Math.random() * 0.025), mat);
+    s.position.copy(p.mesh.position); s.castShadow = true; room.add(s);
+    const sp = addProp(s, { r: 0.015, bounce: 0.3 });
+    const ang = Math.random() * Math.PI * 2, speed = 0.6 + Math.random() * 1.4;
+    sp.v.set(Math.cos(ang) * speed, 0.8 + Math.random() * 1.2, Math.sin(ang) * speed);
+    sp.w.set(Math.random() * 20 - 10, Math.random() * 20 - 10, Math.random() * 20 - 10);
+    sp.sleep = false;
+    shards.push(sp);
+  }
+}
+function resetProps() {
+  for (const s of shards) { room.remove(s.mesh); const i = props.indexOf(s); if (i >= 0) props.splice(i, 1); }
+  shards.length = 0;
+  for (const p of props) {
+    p.mesh.position.copy(p.home.pos); p.mesh.rotation.copy(p.home.rot); p.mesh.visible = true;
+    p.v.set(0, 0, 0); p.w.set(0, 0, 0); p.sleep = true; p.broken = false;
+  }
+}
+function physicsTick(dt) {
+  // walking into the ball kicks it
+  if (typeof act !== 'undefined' && act.walking && !ballProp.broken) {
+    const dx = ball.position.x - girl.position.x, dz = ball.position.z - girl.position.z, d = Math.hypot(dx, dz);
+    if (d > 0.01 && d < 0.4 && ball.position.y < 0.3 && ballProp.v.lengthSq() < 0.5) pushProp(ballProp, dx / d * 2.4, 1.1, dz / d * 2.4, 0);
+  }
+  for (const p of props) {
+    if (p.sleep) continue;
+    const m = p.mesh;
+    p.v.y -= GRAVITY * dt;
+    m.position.addScaledVector(p.v, dt);
+    if (m.position.x < -6.7) { m.position.x = -6.7; p.v.x *= -0.5; }
+    if (m.position.x > 6.7) { m.position.x = 6.7; p.v.x *= -0.5; }
+    if (m.position.z < -5.8) { m.position.z = -5.8; p.v.z *= -0.5; }
+    if (m.position.z > 6.7) { m.position.z = 6.7; p.v.z *= -0.5; }
+    const ground = supportY(m.position.x, m.position.z) + p.r;
+    let onGround = false;
+    if (m.position.y <= ground) {
+      onGround = true;
+      if (p.breakable && p.v.y < -2.0) { m.position.y = ground; shatter(p); continue; }
+      m.position.y = ground;
+      if (p.v.y < -0.4) {                       // hit the ground: bounce
+        p.v.y = -p.v.y * p.bounce; p.v.x *= 0.85; p.v.z *= 0.85; p.w.multiplyScalar(0.6);
+      } else {                                  // resting on it: slide / roll to a stop
+        p.v.y = 0;
+        const f = Math.max(0, 1 - (p.roll ? 0.9 : 6) * dt);
+        p.v.x *= f; p.v.z *= f; p.w.multiplyScalar(Math.max(0, 1 - 6 * dt));
+        if (p.v.lengthSq() < 0.003) {
+          p.v.set(0, 0, 0); p.sleep = true;
+          if (p.flat) { m.rotation.x = 0; m.rotation.z = 0; }
+        }
+      }
+    }
+    if (p.roll && onGround) { m.rotation.x += p.v.z / p.r * dt; m.rotation.z -= p.v.x / p.r * dt; }
+    else { m.rotation.x += p.w.x * dt; m.rotation.y += p.w.y * dt; m.rotation.z += p.w.z * dt; }
+  }
+}
 
 // ============================================================================
 // 2. THE GIRL (Girl_character_mixamo.glb, same folder)
 // ============================================================================
 const girl = new THREE.Group();          // move/rotate this group to move her
+girl.rotation.order = 'YXZ';             // turn (y) first, then lean (x) in her own frame
 scene.add(girl);
 const bones = {};                        // bones by name; three.js drops dots: 'upper_arm.L' is bones['upper_armL']
 const morphMeshes = [];                  // meshes with face shapes (jawOpen, eyeBlinkLeft, ...)
@@ -170,7 +262,12 @@ new THREE.GLTFLoader().load('Girl_character_mixamo.glb', (gltf) => {
       if (o.morphTargetDictionary) morphMeshes.push(o);
     }
   });
-  girl.add(obj);
+  // The model's face points to -Z, but all the code here treats +Z as "forward"
+  // (walking, facing spots, facing the camera). Turn the model around once so they agree.
+  const holder = new THREE.Group();
+  holder.rotation.y = Math.PI;
+  holder.add(obj);
+  girl.add(holder);
   girl.updateMatrixWorld(true);
 
   // relax the arms out of the T-pose (about 15 degrees from the body)
@@ -185,6 +282,7 @@ new THREE.GLTFLoader().load('Girl_character_mixamo.glb', (gltf) => {
   }
   for (const n in bones) rest[n] = bones[n].quaternion.clone();
   prepareWave();
+  prepareClumsy();
 
   loaded = true;
   statusEl.textContent = '';
@@ -227,6 +325,13 @@ function idleTick(t, dt) {
 //   {wave:2}                            wave for 2 seconds
 //   {lamp:true|false}  {tv:true|false|"text on screen"}  {board:"text"}
 //   {wait:1.5}                          stand still 1.5 s
+//   --- clumsy / funny moves ---
+//   {trip:true}                         stumbles, falls flat on her face, gets up
+//   {sit:"sofa", time:3} | {sit:"miss"} sits on the sofa (3 s) — or misses it and lands on the floor
+//   {knock:"glass"}                     walks to the coffee table and knocks the glass off (it breaks)
+//   {tv:"glitch", time:4}               TV goes crazy by itself, she jumps in fright, then "BOO!"
+//   {reset:true}                        puts the ball, glass and book back (cleans up the shards)
+//   Walking into the ball kicks it.
 const act = { queue: [], cur: null, t: 0, walking: false, waving: 0, onDone: null };
 const WALK_SPEED = 1.1;   // metres per second
 
@@ -308,6 +413,7 @@ function writeBoard(text) {
 }
 function startAction(a) {
   act.cur = a; act.t = 0;
+  if (a._kind) return;   // internal step of a clumsy move (sit / knock): clumsyTick runs it
   if (a.walk !== undefined) {
     const s = typeof a.walk === 'string' ? ROOM_SPOTS[a.walk] : a.walk;
     if (!s) { console.warn('unknown spot', a.walk); return finishAction(); }
@@ -315,6 +421,20 @@ function startAction(a) {
   } else if (a.face !== undefined) {
     a._yaw = a.face === 'camera' ? Math.atan2(camera.position.x - girl.position.x, camera.position.z - girl.position.z) : THREE.MathUtils.degToRad(+a.face);
   } else if (a.wave !== undefined) { act.waving = +a.wave || 2; }
+  else if (a.trip !== undefined) { a._kind = 'trip'; a._dur = 3.6; a._slid = 0; }
+  else if (a.sit !== undefined) {
+    const miss = a.sit === 'miss', hold = +a.time || 3;
+    act.queue.unshift({ walk: 'sofa', _sub: true }, { face: 0, _sub: true },
+      { _kind: 'sit', _mode: miss ? 'miss' : 'sofa', _hold: hold, _dur: miss ? 4.4 : 2.4 + hold, _report: a });
+    a._expanded = true; return finishAction();
+  }
+  else if (a.knock !== undefined) {
+    if (glassProp.broken || glass.position.distanceTo(glassProp.home.pos) > 0.01) resetProps();
+    act.queue.unshift({ walk: 'table', _sub: true }, { _kind: 'knock', _dur: 2.8, _report: a });
+    a._expanded = true; return finishAction();
+  }
+  else if (a.tv === 'glitch') { a._kind = 'glitch'; a._dur = Math.max(2, +a.time || 4); }
+  else if (a.reset !== undefined) { resetProps(); return finishAction(); }
   else if (a.lamp !== undefined) { lampLight.intensity = a.lamp ? 2.2 : 0; lampBulb.material.emissiveIntensity = a.lamp ? 1.2 : 0.2; return finishAction(); }
   else if (a.tv !== undefined) { drawTV(!!a.tv, typeof a.tv === 'string' ? a.tv : ''); return finishAction(); }
   else if (a.board !== undefined) { writeBoard(a.board); return finishAction(); }
@@ -322,7 +442,10 @@ function startAction(a) {
 }
 function finishAction() {
   const done = act.cur; act.cur = null; act.walking = false;
-  if (done && typeof window.AIWorld.onActionDone === 'function') window.AIWorld.onActionDone(done);
+  if (done && done._kind) clumsyEnd(done);
+  // moves made of several steps report once, with the action the brain sent
+  const report = done && (done._report || (done._expanded || done._sub ? null : done));
+  if (report && typeof window.AIWorld.onActionDone === 'function') window.AIWorld.onActionDone(report);
   if (act.queue.length) startAction(act.queue.shift());
 }
 function turnToward(yaw, dt, speed = 6) {
@@ -338,12 +461,13 @@ function actionTick(t, dt) {
     if (dist < 0.05) {
       a._path.shift();
       if (a._path.length) return;   // next waypoint on the way around furniture
-      if (a._face !== undefined) { a.face = THREE.MathUtils.radToDeg(a._face); delete a.walk; a._yaw = a._face; act.walking = false; return; }
+      if (a._face !== undefined) { a.face = THREE.MathUtils.radToDeg(a._face); delete a.walk; a._yaw = a._face; act.walking = false; act.t = 0; return; }
       return finishAction();
     }
     turnToward(Math.atan2(d.x, d.z), dt);
     girl.position.addScaledVector(d.normalize(), Math.min(dist, WALK_SPEED * dt));
-  } else if (a._yaw !== undefined) { if (turnToward(a._yaw, dt) < 0.02 || act.t > 3) finishAction(); }
+  } else if (a._dur !== undefined) { if (act.t >= a._dur) finishAction(); }
+  else if (a._yaw !== undefined) { if (turnToward(a._yaw, dt) < 0.02 || act.t > 3) finishAction(); }
   else if (a.wave !== undefined) { act.waving -= dt; if (act.waving <= 0) { act.waving = 0; finishAction(); } }
   else if (a.wait !== undefined) { if (act.t >= +a.wait) finishAction(); }
 }
@@ -378,6 +502,203 @@ function prepareWave() {   // arm up beside the head, forearm up; worked out onc
   ua.quaternion.copy(save); fa.quaternion.copy(saveF); ua.updateMatrixWorld(true);
 }
 
+// ---------------------------------------------------------------- clumsy moves: trip, sit / miss the sofa, knock the glass, TV scare
+let SIDE_L = 1, SIDE_R = -1, restHipY = 0.9;
+const SGN = { thighL: 1, thighR: 1, shinL: 1, shinR: 1 };
+const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
+const clamp01 = (u) => Math.min(1, Math.max(0, u));
+const ease = (u) => { u = clamp01(u); return u * u * (3 - 2 * u); };
+const lerp = (a, b, u) => a + (b - a) * u;
+function localPos(bone) { return girl.worldToLocal(bone.getWorldPosition(new THREE.Vector3())); }
+// Works out from her own bones which way each joint bends, so the poses don't depend on the rig's axes.
+function prepareClumsy() {
+  girl.updateMatrixWorld(true);
+  if (bones.upper_armL) SIDE_L = Math.sign(localPos(bones.upper_armL).x) || 1;
+  if (bones.upper_armR) SIDE_R = Math.sign(localPos(bones.upper_armR).x) || -1;
+  const test = (name, child, wantForward) => {
+    if (!bones[name] || !bones[child]) return;
+    const z0 = localPos(bones[child]).z;
+    addRot(name, 0.5, 0, 0); girl.updateMatrixWorld(true);
+    const z1 = localPos(bones[child]).z;
+    bones[name].quaternion.copy(rest[name]); girl.updateMatrixWorld(true);
+    SGN[name] = (z1 > z0) === wantForward ? 1 : -1;
+  };
+  test('thighL', 'shinL', true);  test('thighR', 'shinR', true);    // thigh: knee goes forward
+  test('shinL', 'footL', false);  test('shinR', 'footR', false);    // shin: foot goes back (knee bends)
+  if (bones.spine) restHipY = bones.spine.getWorldPosition(new THREE.Vector3()).y;
+}
+// point a bone at a direction given in HER frame (x = her side, y = up, z = forward), blended by u
+function aimLocal(bone, child, dir, u) {
+  if (!bone || !child || u <= 0) return;
+  const save = bone.quaternion.clone();
+  aimBone(bone, child, dir.clone().applyQuaternion(girl.quaternion));
+  if (u < 1) { const tgt = bone.quaternion.clone(); bone.quaternion.copy(save).slerp(tgt, u); bone.updateMatrixWorld(true); }
+}
+function armL(x, y, z, u) { aimLocal(bones.upper_armL, bones.forearmL, V3(SIDE_L * x, y, z), u); aimLocal(bones.forearmL, bones.handL, V3(SIDE_L * x, y, z), u); }
+function armR(x, y, z, u) { aimLocal(bones.upper_armR, bones.forearmR, V3(SIDE_R * x, y, z), u); aimLocal(bones.forearmR, bones.handR, V3(SIDE_R * x, y, z), u); }
+function arms(x, y, z, u) { armL(x, y, z, u); armR(x, y, z, u); }
+// both arms with a separate forearm direction (x > 0 = outward on each side, x < 0 = inward)
+function armsBent(ux, uy, uz, fx, fy, fz, u) {
+  aimLocal(bones.upper_armL, bones.forearmL, V3(SIDE_L * ux, uy, uz), u); aimLocal(bones.forearmL, bones.handL, V3(SIDE_L * fx, fy, fz), u);
+  aimLocal(bones.upper_armR, bones.forearmR, V3(SIDE_R * ux, uy, uz), u); aimLocal(bones.forearmR, bones.handR, V3(SIDE_R * fx, fy, fz), u);
+}
+function legs(thigh, shin) {
+  addRot('thighL', SGN.thighL * thigh, 0, 0); addRot('thighR', SGN.thighR * thigh, 0, 0);
+  addRot('shinL', SGN.shinL * shin, 0, 0);    addRot('shinR', SGN.shinR * shin, 0, 0);
+}
+// Put her hip joint at height y, and (if given) right above floor point (x, z).
+// Leaning tips her around her feet, which would slide the hips; this pins them where they belong.
+function hipTo(y, x, z) {
+  if (!bones.spine) return;
+  girl.position.y = 0; girl.updateMatrixWorld(true);
+  const h = bones.spine.getWorldPosition(new THREE.Vector3());
+  girl.position.y = y - h.y;
+  if (x !== undefined) { girl.position.x += x - h.x; girl.position.z += z - h.z; }
+  girl.updateMatrixWorld(true);
+}
+const FACE_KEYS = ['jawOpen', 'mouthFunnel', 'mouthPucker', 'mouthSmileLeft', 'mouthSmileRight', 'mouthFrownLeft', 'mouthFrownRight'];
+function face(f) {
+  for (const k of FACE_KEYS) setMorph(k, f[k] || 0);
+  if (f.blink !== undefined) { setMorph('eyeBlinkLeft', f.blink); setMorph('eyeBlinkRight', f.blink); }
+}
+function forward() { return V3(Math.sin(girl.rotation.y), 0, Math.cos(girl.rotation.y)); }
+function drawStatic(text) {
+  const c = tvCanvas.getContext('2d');
+  c.fillStyle = '#000'; c.fillRect(0, 0, 768, 432);
+  for (let i = 0; i < 320; i++) {
+    const g = Math.floor(Math.random() * 255);
+    c.fillStyle = `rgb(${g},${g},${g})`;
+    c.fillRect(Math.random() * 768, Math.random() * 432, 6 + Math.random() * 40, 3 + Math.random() * 6);
+  }
+  if (text) { c.fillStyle = '#ef4444'; c.font = 'bold 150px Segoe UI, Arial'; c.fillText(text, 170, 280); }
+  tvTex.needsUpdate = true;
+}
+function clumsyEnd(a) {
+  girl.rotation.x = 0; girl.position.y = 0;
+  if (a._kind === 'sit' && a._start) { girl.position.x = a._start.x; girl.position.z = a._start.z; }
+  face({}); setMorph('eyeBlinkLeft', 0); setMorph('eyeBlinkRight', 0);
+  for (const n of ['forearmL', 'forearmR', 'handL', 'handR', 'spine006']) if (bones[n] && rest[n]) bones[n].quaternion.copy(rest[n]);
+  if (a._kind === 'glitch') drawTV(false);
+}
+function clumsyTick(t, dt) {
+  const a = act.cur;
+  if (!loaded || !a || !a._kind) return;
+  const T = act.t;
+  const k = (s, e) => clamp01((T - s) / (e - s));
+  for (const n of ['forearmL', 'forearmR', 'handL', 'handR']) if (bones[n] && rest[n]) bones[n].quaternion.copy(rest[n]);
+  if (!a._base) {   // where her hips are when the move starts
+    girl.updateMatrixWorld(true);
+    a._base = bones.spine ? bones.spine.getWorldPosition(new THREE.Vector3()) : girl.position.clone();
+    a._base.y = 0; a._start = girl.position.clone();
+  }
+
+  if (a._kind === 'trip') {
+    let pitch = 0, slide = a._slid;
+    if (T < 0.35) {                                    // stumble, arms flailing
+      const u = ease(k(0, 0.35));
+      pitch = 0.3 * u;
+      girl.rotation.x = pitch; girl.updateMatrixWorld(true);
+      arms(0.8, 0.5 + 0.35 * Math.sin(T * 28), 0.4, u);
+      face({ jawOpen: 0.5 * u, mouthFunnel: 0.4 * u });
+    } else if (T < 0.85) {                             // falling forward, hands out
+      const u = k(0.35, 0.85);
+      pitch = 0.3 + (1.42 - 0.3) * u * u; slide = 0.4 * u;
+      girl.rotation.x = pitch; girl.updateMatrixWorld(true);
+      arms(0.35, 0.45, 1, 1);
+      face({ jawOpen: 0.85, mouthFunnel: 0.3, blink: 0.5 });
+    } else if (T < 2.35) {                             // flat on the floor, dazed
+      const u = k(0.85, 1.05);
+      pitch = 1.42 - 0.07 * Math.sin(Math.PI * u); slide = 0.4;
+      girl.rotation.x = pitch; girl.updateMatrixWorld(true);
+      arms(0.35, 0.45, 1, 1);
+      legs(0.05 * Math.sin(T * 7), 0.4 + 0.3 * Math.sin(T * 7));   // feet kicking a little
+      addRot('spine004', 0, 0.25 * Math.sin(T * 5), 0);           // dizzy head
+      face({ jawOpen: 0.2, mouthFrownLeft: 0.8, mouthFrownRight: 0.8, blink: T < 1.6 ? 1 : 0 });
+    } else {                                           // getting back up
+      const u = ease(k(2.35, 3.6));
+      pitch = 1.42 * (1 - u); slide = 0.4;
+      girl.rotation.x = pitch; girl.updateMatrixWorld(true);
+      arms(0.35, 0.45, 1, 1 - u);
+      face({ mouthFrownLeft: 0.5 * (1 - u), mouthFrownRight: 0.5 * (1 - u) });
+    }
+    girl.position.addScaledVector(forward(), slide - a._slid); a._slid = slide;
+    girl.position.y = 0;
+    return;
+  }
+
+  if (a._kind === 'sit') {
+    const back = forward().multiplyScalar(-1);
+    let thigh, shin, hip, pitch, step;
+    if (a._mode === 'sofa') {
+      const H = a._hold, u = ease(k(0, 1.2)), up = ease(k(1.2 + H, 2.4 + H)), w = u * (1 - up);
+      thigh = 1.5 * w; shin = 1.5 * w; step = 0.45 * w;
+      hip = lerp(restHipY, 0.56, w);
+      pitch = 0.3 * Math.sin(Math.PI * u) * (1 - up) + 0.3 * Math.sin(Math.PI * up) - 0.05 * w;
+      girl.rotation.x = pitch;
+      legs(thigh, shin); hipTo(hip, a._base.x + back.x * step, a._base.z + back.z * step);
+      face({ mouthSmileLeft: 0.6 * w, mouthSmileRight: 0.6 * w });
+      return;
+    }
+    // miss: squats to sit, there is no sofa under her, lands on the floor
+    if (T < 1.0) {
+      const u = ease(k(0, 1.0));
+      thigh = 1.0 * u; shin = 1.0 * u; hip = lerp(restHipY, 0.62, u); pitch = 0.2 * u; step = 0.05 * u;
+    } else if (T < 1.3) {
+      const v = Math.pow(k(1.0, 1.3), 2);
+      thigh = lerp(1.0, 1.45, v); shin = lerp(1.0, 0.15, v); hip = lerp(0.62, 0.14, v); pitch = lerp(0.2, -0.3, v); step = 0.05;
+    } else if (T < 3.2) {
+      const b = k(1.3, 1.45);
+      thigh = 1.45; shin = 0.15; hip = 0.14 + 0.03 * Math.sin(Math.PI * b); pitch = -0.3; step = 0.05;
+    } else {
+      const r = ease(k(3.2, 4.4));
+      thigh = lerp(1.45, 0, r); shin = lerp(0.15, 0, r); hip = lerp(0.14, restHipY, r);
+      pitch = lerp(-0.3, 0, r) + 0.4 * Math.sin(Math.PI * r); step = 0.05 * (1 - r);
+    }
+    girl.rotation.x = pitch;
+    legs(thigh, shin); hipTo(hip, a._base.x + back.x * step, a._base.z + back.z * step);
+    if (T >= 1.0 && T < 1.6) arms(0.7, 0.8, 0.2, 1);                        // arms fly up
+    else if (T >= 1.6 && T < 3.2) arms(0.35, -0.8, -0.6, ease(k(1.6, 1.9)));  // propped on her hands
+    else if (T >= 3.2) arms(0.35, -0.8, -0.6, 1 - ease(k(3.2, 3.8)));
+    if (T >= 1.3 && T < 2.6) addRot('spine004', 0, 0.3 * Math.sin((T - 1.3) * 9) * (1 - k(1.3, 2.6)), 0);   // shakes her head
+    if (T < 1.0) face({});
+    else if (T < 1.6) face({ jawOpen: 0.9, mouthFunnel: 0.4, blink: 0.4 });
+    else face({ jawOpen: 0.15, mouthFrownLeft: 0.8 * (1 - k(3.4, 4.2)), mouthFrownRight: 0.8 * (1 - k(3.4, 4.2)) });
+    return;
+  }
+
+  if (a._kind === 'knock') {
+    girl.rotation.x = 0.4 * ease(k(0, 0.5)) * (1 - ease(k(0.85, 1.3)));     // leans over the table
+    girl.updateMatrixWorld(true);
+    if (T < 0.5) armR(0.15, -0.5, 0.85, ease(k(0, 0.5)));                       // reaches down for the glass
+    else if (T < 0.85) { const v = k(0.5, 0.85); armR(0.15 + 0.85 * v, -0.5, 0.85 - 0.55 * v, 1); }   // clumsy sweep
+    else if (T < 1.3) armR(1.0, -0.5, 0.3, 1 - ease(k(0.85, 1.2)));
+    if (T > 1.1) armsBent(0.75, 0.55, 0.2, -0.55, 0.8, 0.25, ease(k(1.1, 1.4)) * (1 - ease(k(2.2, 2.7))));   // hands on head: "oh no!"
+    if (T >= 0.62 && !a._pushed) {                                            // the glass flies off the table
+      a._pushed = true;
+      const side = V3(SIDE_R, 0, 0).applyQuaternion(girl.quaternion), toward = forward().multiplyScalar(-1);
+      pushProp(glassProp, side.x * 2.3 + toward.x * 0.5, 1.4, side.z * 2.3 + toward.z * 0.5, 14);
+    }
+    if (T > 1.0) { const g = glass.position; turnToward(Math.atan2(g.x - girl.position.x, g.z - girl.position.z), dt, 3); }
+    if (T < 0.85) face({});
+    else face({ jawOpen: 0.35 * (1 - k(2.2, 2.8)), mouthFunnel: 0.9 * (1 - k(2.2, 2.8)) });   // "oh no"
+    return;
+  }
+
+  if (a._kind === 'glitch') {
+    const D = a._dur, boo = T > D - 0.8;
+    drawStatic(boo ? 'BOO!' : '');
+    const hop1 = Math.sin(Math.PI * k(0, 0.45)) * (T < 0.45 ? 1 : 0);
+    const hop2 = boo ? Math.sin(Math.PI * k(D - 0.8, D - 0.4)) * (T < D - 0.4 ? 1 : 0) : 0;
+    girl.position.y = 0.18 * hop1 + 0.15 * hop2;
+    girl.rotation.x = -0.12 * Math.max(hop1, hop2);
+    const scare = boo ? 1 : clamp01(T / 0.1) * (1 - ease(k(0.45, 1.3)));
+    if (scare > 0) arms(0.7, 0.9, 0.3, scare);
+    if (T > 0.5) turnToward(Math.atan2(-6.8 - girl.position.x, 0 - girl.position.z), dt, 3);
+    if (boo || T < 1.3) face({ jawOpen: 0.9, mouthFunnel: 0.5, blink: boo ? 0 : undefined });
+    else face({ jawOpen: 0.1, mouthFrownLeft: 0.4, mouthFrownRight: 0.4 });
+  }
+}
+
 // ============================================================================
 // 4. HOOK FOR PARTNERS (brain / voice / face) — use window.AIWorld
 // ============================================================================
@@ -386,7 +707,8 @@ window.AIWorld = {
   idle: true,                 // set false to stop the built-in breathing/blink
   THREE, scene, camera, renderer, controls, room, girl, bones, morphMeshes, ROOM_SPOTS,
   act(list) { list = Array.isArray(list) ? list : [list]; for (const a of list) act.queue.push({ ...a }); if (!act.cur && act.queue.length) startAction(act.queue.shift()); },
-  stop() { act.queue = []; act.cur = null; act.walking = false; act.waving = 0; },
+  stop() { if (act.cur && act.cur._kind) clumsyEnd(act.cur); act.queue = []; act.cur = null; act.walking = false; act.waving = 0; },
+  resetProps,
   busy: () => !!act.cur,
   onActionDone: null,         // function (action) {} — called after each action
   setMorph,                   // AIWorld.setMorph('jawOpen', 0.6) — for Audio2Face lip sync
@@ -400,6 +722,8 @@ function animate() {
   idleTick(t, dt);
   actionTick(t, dt);
   limbsTick(t, dt);
+  clumsyTick(t, dt);
+  physicsTick(dt);
   for (const f of window.AIWorld.onFrame) { try { f(t, dt); } catch (e) { console.error(e); } }
   controls.update();
   renderer.render(scene, camera);
