@@ -18,11 +18,11 @@ Planned later for the body: a cartoon-style (stylized, not realistic) character,
 
 ## Run it (Windows)
 Double-click `run_girl_room.bat`. It opens http://localhost:8081/Girl_Room.html (needs Python, used only as a tiny local file server).
-Opening the html file directly does not work: the browser blocks loading `Girl_character.glb` from disk.
+Opening the html file directly does not work: the browser blocks loading `Girl_character_mixamo.glb` from disk.
 
 ## Files
 - `Girl_Room.html` — the room + the girl + the action door. One file, three.js r128 from CDN.
-- `Girl_character.glb` — the girl (29 bones, 10 face shapes).
+- `Girl_character_mixamo.glb` — the girl (65-bone Mixamo skeleton incl. fingers, 10 face shapes).
 - `run_girl_room.bat` — starts it.
 
 ## The action door (for Guy 1 — Brain)
