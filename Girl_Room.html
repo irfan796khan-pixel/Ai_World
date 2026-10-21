@@ -294,7 +294,6 @@ new THREE.GLTFLoader().load('Girl_character_mixamo.glb', (gltf) => {
 
 // ---------------------------------------------------------------- small idle life: breathing + blinking
 const clock = new THREE.Clock();
-let blinkIn = 2.5, blinkT = -1;
 const tmpQ = new THREE.Quaternion(), tmpE = new THREE.Euler();
 function addRot(name, x, y, z) {
   const b = bones[name]; if (!b || !rest[name]) return;
@@ -305,15 +304,199 @@ function idleTick(t, dt) {
   if (!loaded || window.AIWorld.idle === false) return;
   const br = Math.sin(t * 1.6);                       // breathing
   addRot('spine002', 0.012 * br, 0, 0);
-  addRot('spine004', 0.015 * Math.sin(t * 0.5), 0.03 * Math.sin(t * 0.37), 0);  // slow head sway
-  blinkIn -= dt;                                      // blink every 2–5 s
-  if (blinkIn <= 0 && blinkT < 0) { blinkT = 0; blinkIn = 2 + Math.random() * 3; }
-  if (blinkT >= 0) {
-    blinkT += dt;
-    const v = blinkT < 0.08 ? blinkT / 0.08 : Math.max(0, 1 - (blinkT - 0.08) / 0.1);
-    setMorph('eyeBlinkLeft', v); setMorph('eyeBlinkRight', v);
-    if (blinkT > 0.18) { blinkT = -1; setMorph('eyeBlinkLeft', 0); setMorph('eyeBlinkRight', 0); }
+  // slow head sway + head moves from the face system (nods while talking, nod / shake gestures, tilt for "confused")
+  addRot('spine004', 0.015 * Math.sin(t * 0.5) + FX.headX, 0.03 * Math.sin(t * 0.37) + FX.headY, FX.headZ);
+  // blinking now lives in faceTick (section 2b)
+}
+
+// ============================================================================
+// 2b. THE FACE — four layers mixed every frame, so she looks alive and human:
+//   1. mood     the brain's emotion as a soft face (fades in/out, never 100%)
+//   2. alive    natural blinks (sometimes double), tiny face movement, a little uneven
+//   3. talking  mouth, brows and head follow her voice (loudness + sound type)
+//   4. action   the clumsy moves (trip, sit, knock, TV scare) set their own face on top
+// Her model has 28 face shapes (ARKit names). "Left" shapes sit on the +x side of the model.
+// ============================================================================
+const MOODS = {
+  neutral:     {},
+  happy:       { mouthSmileLeft: .85, mouthSmileRight: .8, cheekSquintLeft: .7, cheekSquintRight: .65, eyeSquintLeft: .35, eyeSquintRight: .3, browInnerUp: .15, jawOpen: .12 },
+  amused:      { mouthSmileLeft: .9, mouthLeft: .45, cheekSquintLeft: .5, browOuterUpRight: .85, browDownLeft: .25, eyeSquintLeft: .35 },          // sassy smirk
+  annoyed:     { browDownLeft: .85, browDownRight: .8, mouthFrownLeft: .45, mouthFrownRight: .4, noseSneerLeft: .3, noseSneerRight: .3, eyeSquintLeft: .3, eyeSquintRight: .3, mouthClose: .4 },
+  confused:    { browDownLeft: .75, browOuterUpRight: 1, mouthRight: .4, mouthSmileRight: .2, eyeSquintLeft: .35 },                                 // one brow up, mouth to the side
+  sad:         { browInnerUp: 1, mouthFrownLeft: .75, mouthFrownRight: .7, eyeSquintLeft: .15, eyeSquintRight: .15, browDownLeft: .15, browDownRight: .15 },
+  surprised:   { browInnerUp: 1, browOuterUpLeft: 1, browOuterUpRight: 1, eyeWideLeft: 1, eyeWideRight: 1, jawOpen: .4, mouthFunnel: .3 },
+  ew:          { noseSneerLeft: 1, noseSneerRight: .9, browDownLeft: .6, browDownRight: .55, mouthFrownLeft: .4, mouthFrownRight: .4, mouthStretchLeft: .5, mouthStretchRight: .45, eyeSquintLeft: .4, eyeSquintRight: .4 },
+  unimpressed: { cheekPuff: 1, mouthPucker: .4, browDownLeft: .3, browDownRight: .3, eyeSquintLeft: .25, eyeSquintRight: .2 }
+};
+MOODS.sassy = MOODS.amused; MOODS.skeptical = MOODS.confused; MOODS.angry = MOODS.annoyed; MOODS.shocked = MOODS.surprised; MOODS.bored = MOODS.unimpressed;
+const HEAD_FOR_MOOD = { confused: [0, 0, 0.12], skeptical: [0, 0, 0.12], sad: [0.08, 0, 0], unimpressed: [-0.04, 0, -0.05], amused: [-0.03, 0, 0.06], sassy: [-0.03, 0, 0.06] };
+
+const FX = {
+  mood: 'neutral', moodAmt: 1, moodUntil: 0,
+  cur: {},                      // the value each face shape has right now (smoothed)
+  action: null,                 // face from a clumsy move this frame
+  blinkIn: 2, blinkT: -1, blinkDouble: false,
+  level: 0, levelAvg: 0, low: 0, high: 0, talking: false, extLevel: null,
+  emph: 0, nod: 0, gesture: null, gestureT: 0,
+  headX: 0, headY: 0, headZ: 0,
+  seed: Math.random() * 100
+};
+const ALL_FACE = ['jawOpen', 'mouthClose', 'mouthFunnel', 'mouthPucker', 'mouthSmileLeft', 'mouthSmileRight', 'mouthFrownLeft', 'mouthFrownRight',
+  'eyeBlinkLeft', 'eyeBlinkRight', 'browInnerUp', 'browDownLeft', 'browDownRight', 'browOuterUpLeft', 'browOuterUpRight', 'eyeWideLeft', 'eyeWideRight',
+  'eyeSquintLeft', 'eyeSquintRight', 'cheekSquintLeft', 'cheekSquintRight', 'cheekPuff', 'noseSneerLeft', 'noseSneerRight',
+  'mouthLeft', 'mouthRight', 'mouthStretchLeft', 'mouthStretchRight'];
+const wobble = (t, a, b) => Math.sin(t * a + FX.seed) * 0.6 + Math.sin(t * b + FX.seed * 1.7) * 0.4;   // smooth "random" -1..1
+
+// ---- voice: plays her audio and listens to it, so the face can follow the sound
+const VOICE = { ctx: null, analyser: null, src: null, time: null, freq: null, resolve: null };
+function voiceCtx() {
+  if (!VOICE.ctx) {
+    VOICE.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    VOICE.analyser = VOICE.ctx.createAnalyser(); VOICE.analyser.fftSize = 1024; VOICE.analyser.smoothingTimeConstant = 0.3;
+    VOICE.analyser.connect(VOICE.ctx.destination);
+    VOICE.time = new Float32Array(VOICE.analyser.fftSize); VOICE.freq = new Uint8Array(VOICE.analyser.frequencyBinCount);
   }
+  if (VOICE.ctx.state === 'suspended') VOICE.ctx.resume();
+  return VOICE.ctx;
+}
+// browsers only allow sound after the person clicks or presses a key once
+['pointerdown', 'keydown'].forEach(ev => window.addEventListener(ev, () => { try { voiceCtx(); } catch (e) {} }, { once: true }));
+
+async function speak(audio) {             // audio: a URL, a Blob (e.g. from ElevenLabs), or an ArrayBuffer
+  const ctx = voiceCtx();
+  stopSpeaking();
+  let buf = audio;
+  if (typeof audio === 'string') buf = await (await fetch(audio)).arrayBuffer();
+  else if (audio instanceof Blob) buf = await audio.arrayBuffer();
+  const decoded = await ctx.decodeAudioData(buf.slice(0));
+  return new Promise(res => {
+    const s = ctx.createBufferSource(); s.buffer = decoded; s.connect(VOICE.analyser);
+    s.onended = () => { if (VOICE.src === s) { VOICE.src = null; FX.talking = false; } res(); };
+    VOICE.src = s; VOICE.resolve = res; FX.talking = true; s.start();
+  });
+}
+function stopSpeaking() {
+  if (VOICE.src) { const s = VOICE.src; VOICE.src = null; try { s.stop(); } catch (e) {} if (VOICE.resolve) VOICE.resolve(); }
+  FX.talking = false;
+}
+function readVoice() {                    // loudness (0..1) plus how "round" (low) or "wide" (high) the sound is
+  if (FX.extLevel !== null) return { level: FX.extLevel, low: 0.5, high: 0.3 };
+  if (!VOICE.src || !VOICE.analyser) return { level: 0, low: 0, high: 0 };
+  VOICE.analyser.getFloatTimeDomainData(VOICE.time);
+  let sum = 0; for (let i = 0; i < VOICE.time.length; i++) sum += VOICE.time[i] * VOICE.time[i];
+  const rms = Math.sqrt(sum / VOICE.time.length);
+  VOICE.analyser.getByteFrequencyData(VOICE.freq);
+  const hz = VOICE.ctx.sampleRate / VOICE.analyser.fftSize; let lo = 0, hi = 0;
+  for (let i = 1; i < VOICE.freq.length; i++) { const f = i * hz, v = VOICE.freq[i]; if (f > 150 && f < 900) lo += v; else if (f >= 1800 && f < 5000) hi += v; }
+  const tot = lo + hi + 1;
+  return { level: clamp01((rms - 0.012) * 7), low: lo / tot, high: hi / tot };
+}
+
+function setMood(name, amount, seconds) {
+  name = String(name || 'neutral').toLowerCase();
+  if (!MOODS[name]) { console.warn('AIWorld: unknown mood "' + name + '" — using neutral. Moods:', Object.keys(MOODS).join(', ')); name = 'neutral'; }
+  if (name !== FX.mood && Math.random() < 0.6) FX.blinkIn = Math.min(FX.blinkIn, 0.15);   // people often blink when their face changes
+  FX.mood = name; FX.moodAmt = amount === undefined ? 1 : clamp01(amount);
+  FX.moodUntil = seconds ? clock.elapsedTime + seconds : 0;
+}
+function gesture(kind) { FX.gesture = kind; FX.gestureT = 0; }   // 'nod' | 'shake'
+
+function faceTick(t, dt) {
+  if (!loaded || window.AIWorld.idle === false) return;   // idle off = someone else drives the face (e.g. Audio2Face)
+  if (FX.moodUntil && t > FX.moodUntil) { FX.mood = 'neutral'; FX.moodUntil = 0; }
+  if (!(act.cur && act.cur._kind)) FX.action = null;      // a clumsy move only owns the face while it runs
+
+  const tgt = {};
+  const add = (k, v) => { tgt[k] = (tgt[k] || 0) + v; };
+
+  // 1. mood
+  const M = MOODS[FX.mood] || {};
+  for (const k in M) add(k, M[k] * FX.moodAmt);
+
+  // 2. alive: tiny slow movement, a little different on each side
+  add('browInnerUp', 0.06 * (1 + wobble(t, 0.31, 0.53)));
+  add('browOuterUpLeft', 0.04 * (1 + wobble(t, 0.27, 0.71)));
+  add('mouthSmileLeft', 0.05 * (1 + wobble(t, 0.19, 0.43)));
+  add('mouthSmileRight', 0.035 * (1 + wobble(t, 0.23, 0.37)));
+  add('eyeSquintLeft', 0.04 * (1 + wobble(t, 0.41, 0.29)));
+  add('eyeSquintRight', 0.04 * (1 + wobble(t, 0.37, 0.33)));
+
+  // 3. talking
+  const v = readVoice();
+  const k1 = 1 - Math.exp(-dt * (v.level > FX.level ? 28 : 11));   // opens fast, closes a bit slower
+  FX.level += (v.level - FX.level) * k1;
+  FX.low += (v.low - FX.low) * k1; FX.high += (v.high - FX.high) * k1;
+  FX.levelAvg += (FX.level - FX.levelAvg) * (1 - Math.exp(-dt * 1.5));
+  if (FX.level > 0.35 && FX.level > FX.levelAvg * 1.7 && FX.emph < 0.2) { FX.emph = 1; FX.nod = 1; }   // a strong word: brows + small nod
+  FX.emph = Math.max(0, FX.emph - dt * 3); FX.nod = Math.max(0, FX.nod - dt * 2.5);
+  const L = FX.level;
+  if (L > 0.01) {
+    add('jawOpen', 0.62 * L);
+    add('mouthFunnel', 0.45 * L * FX.low);         // "oo / oh" sounds: round lips
+    add('mouthPucker', 0.2 * L * FX.low);
+    add('mouthStretchLeft', 0.35 * L * FX.high);   // "ee / s" sounds: wide lips
+    add('mouthStretchRight', 0.35 * L * FX.high);
+    add('mouthClose', 0.25 * (1 - L) * (FX.talking ? 1 : 0));
+  }
+  add('browInnerUp', 0.35 * FX.emph); add('browOuterUpLeft', 0.25 * FX.emph); add('browOuterUpRight', 0.25 * FX.emph);
+
+  // blinking: every 1.5–5 s, sometimes twice, faster while talking
+  FX.blinkIn -= dt;
+  if (FX.blinkIn <= 0 && FX.blinkT < 0) { FX.blinkT = 0; FX.blinkDouble = Math.random() < 0.18; FX.blinkIn = (FX.talking ? 1.2 : 1.8) + Math.random() * 3.2; }
+  let blink = 0;
+  if (FX.blinkT >= 0) {
+    FX.blinkT += dt;
+    const one = x => x < 0.07 ? x / 0.07 : x < 0.1 ? 1 : Math.max(0, 1 - (x - 0.1) / 0.12);
+    blink = one(FX.blinkT);
+    if (FX.blinkDouble && FX.blinkT > 0.24) blink = one(FX.blinkT - 0.24);
+    if (FX.blinkT > (FX.blinkDouble ? 0.48 : 0.24)) FX.blinkT = -1;
+  }
+  const squintBlink = Math.max(tgt.eyeSquintLeft || 0, tgt.eyeSquintRight || 0) * 0.25;   // happy / annoyed eyes sit a little more closed
+  add('eyeBlinkLeft', blink + squintBlink * 0.5); add('eyeBlinkRight', blink + squintBlink * 0.5);
+
+  // 4. a clumsy move overrides the keys it sets
+  if (FX.action) {
+    for (const k of ['jawOpen', 'mouthFunnel', 'mouthPucker', 'mouthSmileLeft', 'mouthSmileRight', 'mouthFrownLeft', 'mouthFrownRight'])
+      tgt[k] = FX.action[k] || 0;
+    if (FX.action.blink !== undefined) { tgt.eyeBlinkLeft = FX.action.blink; tgt.eyeBlinkRight = FX.action.blink; }
+  }
+
+  // smooth everything toward the target, so nothing snaps
+  for (const k of ALL_FACE) {
+    const target = clamp01(tgt[k] || 0);
+    const fast = k === 'eyeBlinkLeft' || k === 'eyeBlinkRight' || FX.action || (L > 0.01 && /^(jaw|mouthF|mouthP|mouthS|mouthC)/.test(k));
+    const c = FX.cur[k] || 0;
+    FX.cur[k] = fast ? target : c + (target - c) * (1 - Math.exp(-dt * 7));
+    setMorph(k, FX.cur[k]);
+  }
+
+  // head: mood tilt + talking nods + nod/shake gestures (used by idleTick)
+  const hm = HEAD_FOR_MOOD[FX.mood] || [0, 0, 0];
+  let hx = hm[0] * FX.moodAmt, hy = hm[1], hz = hm[2] * FX.moodAmt;
+  hx += 0.06 * Math.sin(Math.PI * FX.nod) + 0.02 * L * Math.sin(t * 9);
+  if (FX.gesture) {
+    FX.gestureT += dt; const g = FX.gestureT, fade = 1 - clamp01((g - 0.9) / 0.3);
+    if (FX.gesture === 'nod') hx += 0.14 * Math.sin(g * 10) * fade;
+    if (FX.gesture === 'shake') hy += 0.2 * Math.sin(g * 11) * fade;
+    if (g > 1.2) FX.gesture = null;
+  }
+  const kh = 1 - Math.exp(-dt * 8);
+  FX.headX += (hx - FX.headX) * kh; FX.headY += (hy - FX.headY) * kh; FX.headZ += (hz - FX.headZ) * kh;
+}
+
+// one call for the whole brain package: { response, emotion, animation | actions, audio }
+const ANIM_TO_ACTION = { wave: [{ wave: 2 }], nod: 'nod', shake_head: 'shake', idle: null };
+async function handleReply(r) {
+  if (!r) return;
+  if (r.emotion) setMood(r.emotion);
+  if (Array.isArray(r.actions)) window.AIWorld.act(r.actions);
+  else if (r.animation) {
+    const a = ANIM_TO_ACTION[r.animation];
+    if (a === 'nod' || a === 'shake') gesture(a);
+    else if (Array.isArray(a)) window.AIWorld.act(a);
+    else if (a === undefined) console.warn('AIWorld: no body move for animation "' + r.animation + '" yet');
+  }
+  if (r.audio) await speak(r.audio);
 }
 
 // ============================================================================
@@ -556,11 +739,9 @@ function hipTo(y, x, z) {
   if (x !== undefined) { girl.position.x += x - h.x; girl.position.z += z - h.z; }
   girl.updateMatrixWorld(true);
 }
-const FACE_KEYS = ['jawOpen', 'mouthFunnel', 'mouthPucker', 'mouthSmileLeft', 'mouthSmileRight', 'mouthFrownLeft', 'mouthFrownRight'];
-function face(f) {
-  for (const k of FACE_KEYS) setMorph(k, f[k] || 0);
-  if (f.blink !== undefined) { setMorph('eyeBlinkLeft', f.blink); setMorph('eyeBlinkRight', f.blink); }
-}
+// The clumsy moves call face({...}) every frame. It no longer writes the morphs itself:
+// it hands the values to the face system (faceTick), which mixes them on top of mood + talking.
+function face(f) { FX.action = f; }
 function forward() { return V3(Math.sin(girl.rotation.y), 0, Math.cos(girl.rotation.y)); }
 function drawStatic(text) {
   const c = tvCanvas.getContext('2d');
@@ -711,8 +892,17 @@ window.AIWorld = {
   resetProps,
   busy: () => !!act.cur,
   onActionDone: null,         // function (action) {} — called after each action
-  setMorph,                   // AIWorld.setMorph('jawOpen', 0.6) — for Audio2Face lip sync
+  setMorph,                   // AIWorld.setMorph('jawOpen', 0.6) — only sticks when AIWorld.idle = false (else the face system drives)
   morphNames: () => morphMeshes.length ? Object.keys(morphMeshes[0].morphTargetDictionary) : [],
+  // ---- face + voice
+  mood: setMood,              // AIWorld.mood('happy')  or  AIWorld.mood('annoyed', 0.6, 3)  (strength 0..1, seconds then back to neutral)
+  moods: () => Object.keys(MOODS),
+  gesture,                    // AIWorld.gesture('nod') | AIWorld.gesture('shake')
+  speak,                      // await AIWorld.speak(blobOrUrl) — plays her voice, mouth/brows/head follow the sound
+  stopSpeaking,
+  speakLevel(v) { FX.extLevel = (v === null || v === undefined) ? null : clamp01(v); },   // if the voice plays somewhere else: feed loudness 0..1 each frame, null to stop
+  talking: () => FX.talking || FX.level > 0.05,
+  reply: handleReply,         // AIWorld.reply({response, emotion:'amused', animation:'wave' | actions:[...], audio: blob})
   onFrame: []                 // push functions (t, dt) => {...} to run every frame
 };
 
@@ -723,6 +913,7 @@ function animate() {
   actionTick(t, dt);
   limbsTick(t, dt);
   clumsyTick(t, dt);
+  faceTick(t, dt);
   physicsTick(dt);
   for (const f of window.AIWorld.onFrame) { try { f(t, dt); } catch (e) { console.error(e); } }
   controls.update();

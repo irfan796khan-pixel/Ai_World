@@ -22,7 +22,7 @@ Opening the html file directly does not work: the browser blocks loading `Girl_c
 
 ## Files
 - `Girl_Room.html` — the room + the girl + the action door. One file, three.js r128 from CDN.
-- `Girl_character_mixamo.glb` — the girl (65-bone Mixamo skeleton incl. fingers, 10 face shapes).
+- `Girl_character_mixamo.glb` — the girl (65-bone Mixamo skeleton incl. fingers, 28 face shapes).
 - `run_girl_room.bat` — starts it.
 
 ## The action door (for Guy 1 — Brain)
@@ -53,15 +53,32 @@ AIWorld.stop();   // clear everything
 ```
 Actions run one after another. Unknown actions are skipped with a console warning.
 
-## The face door (for Guy 3 — Voice / Audio2Face)
+## The face door (for Guy 3 — Voice, and for the Brain)
+Her face runs by itself with 4 layers mixed every frame: **mood** (from the brain's emotion), **alive** (natural blinks, sometimes double, tiny uneven movement), **talking** (mouth, brows and head follow her voice) and **action** (the clumsy moves set their own face).
+
 ```js
-AIWorld.morphNames();            // jawOpen, mouthClose, mouthFunnel, mouthPucker, mouthSmileLeft,
-                                 // mouthSmileRight, mouthFrownLeft, mouthFrownRight, eyeBlinkLeft, eyeBlinkRight
-AIWorld.setMorph("jawOpen", 0.6);   // 0..1 — feed Audio2Face / viseme values here every frame
-AIWorld.onFrame.push((t, dt) => { /* runs every frame */ });
-AIWorld.idle = false;            // turns off the built-in breathing + blinking
+AIWorld.mood("happy");                 // neutral, happy, amused, annoyed, confused, sad, surprised, ew, unimpressed
+                                       // (also: sassy, skeptical, angry, shocked, bored)
+AIWorld.mood("annoyed", 0.6, 3);       // strength 0..1, back to neutral after 3 s
+AIWorld.gesture("nod");                // or "shake"
+await AIWorld.speak(blobOrUrl);        // plays her voice (e.g. the MP3 Blob from ElevenLabs) — mouth, brows and head follow the sound
+AIWorld.stopSpeaking();
+AIWorld.speakLevel(0.7);               // if the voice plays somewhere else: feed loudness 0..1 every frame, null to stop
+AIWorld.talking();                     // true while she talks
+
+// the whole brain package in one call (matches Brain.py: response / emotion / animation)
+AIWorld.reply({ response: "Oh great.", emotion: "amused", animation: "wave", audio: mp3Blob });
+AIWorld.reply({ response: "Fine.", emotion: "annoyed", actions: [{walk:"sofa"}, {sit:"miss"}] });
+// animation: wave -> waves, nod / shake_head -> head gesture, idle -> nothing. shrug / cross_arms: no body move yet.
+
+AIWorld.morphNames();                  // 28 face shapes (ARKit names), see below
+AIWorld.idle = false;                  // hand the face to someone else (e.g. Audio2Face); then use AIWorld.setMorph(name, 0..1)
 ```
-Only these 10 face shapes exist in the model now. Full ARKit (52 shapes) is not in the model yet.
+Sound only plays after the person clicks or presses a key once on the page (browser rule).
+
+Face shapes in the model (28, ARKit names): jawOpen, mouthClose, mouthFunnel, mouthPucker, mouthSmileLeft/Right, mouthFrownLeft/Right, eyeBlinkLeft/Right,
+browInnerUp, browDownLeft/Right, browOuterUpLeft/Right, eyeWideLeft/Right, eyeSquintLeft/Right, cheekSquintLeft/Right, cheekPuff, noseSneerLeft/Right,
+mouthLeft/Right, mouthStretchLeft/Right. "Left" shapes sit on the model's +x side. The full ARKit set is 52.
 
 ## Known limits (facts)
 - Walking goes around the sofa, coffee table and plant (grid path search).
