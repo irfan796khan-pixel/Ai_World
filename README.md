@@ -59,6 +59,27 @@ AIWorld.stop();   // clear everything
 ```
 Actions run one after another. Unknown actions are skipped with a console warning.
 
+## Her own mind (sass, stats, chaos)
+She has 4 bars (top right): **Energy, Mood, Focus, Annoyed**. They change by themselves and with what you say.
+- **Bossing her around** raises Annoyed (more orders in a row = more). "please" lowers it. Compliments raise Mood and lower Annoyed, insults do the opposite.
+- **Rebels** when Annoyed is very high: crosses her arms + eye roll, walks up and taps on your screen (ripple + tap sound), or throws the glass at you (the screen cracks).
+- **Hostage:** too many "walk" orders and she picks up the glass, holds it out, stares into the camera: "Ask me to walk one more time and the glass dies." Type anything and she drops it.
+- **Tantrum:** missing the sofa or stubbing her toe on the ball. She throws the book at the camera (THWACK), flips the coffee table upside down, flails every bone on the floor, then stands up calmly: "Anyway."
+- **On her own:** when nobody talks to her she decides what to do. Tired = slow walk to the sofa and a nap. Bored = window, plant, TV, whiteboard, ball. Happy = waves.
+- **Room builder:** "spawn a red box on the table", "add three big blue balls near the plant", "make it rain balls", "clear all the stuff". She "types" the three.js code on screen and the objects drop in with physics. The code shown comes from a fixed recipe; AI-written code is never run (one bad line could break the page, and live-chat viewers could abuse it).
+- Screen effects and sound effects are recorded by the Clip button too.
+
+```js
+AIWorld.stats();                         // {energy, mood, focus, annoyed, hostage, tantrum}
+AIWorld.setStats({ energy: 20 });
+AIWorld.sassy(0);                        // 0 = obeys everything, 1 = normal, 2 = extra rebellious
+AIWorld.autonomous(false);               // stop her deciding things on her own
+AIWorld.showStats(false);
+AIWorld.act([{ tantrum: true }]);        // also: {hostage:"glass"}, {rebel:"cross"|"tap"|"throw"}, {spawn:{shape:"ball", color:"pink", size:0.3, count:3, at:"on the table"}}, {clearSpawned:true}
+AIWorld.build("spawn a red box on the table");
+```
+Her model has no eye-look face shapes, so the eye roll is faked with the head and heavy lids. The flailing is code (strong random turns on every bone), not real ragdoll physics.
+
 ## Quick replies + talk bar (fast answers, no waiting for the brain)
 Type in the bar at the bottom (or call `AIWorld.hear(text)`). If the text matches `quick_replies.json`, she answers at once: speech bubble, browser voice with mouth movement, face mood, and the moves.
 If nothing matches, the text goes to the brain:

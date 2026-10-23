@@ -1593,7 +1593,8 @@
   "mood": "annoyed",
   "actions": [
    {
-    "face": "camera"
+    "rebel": "cross",
+    "quiet": true
    }
   ],
   "tag": "talk"
@@ -1732,6 +1733,57 @@
    "Same."
   ],
   "mood": "unimpressed",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "throw a tantrum",
+   "have a tantrum",
+   "freak out",
+   "lose it",
+   "go crazy",
+   "meltdown",
+   "have a meltdown"
+  ],
+  "say": [
+   "You asked for it.",
+   "Oh, I'll show you a tantrum."
+  ],
+  "mood": "annoyed",
+  "actions": [
+   {
+    "tantrum": true
+   }
+  ],
+  "tag": "funny"
+ },
+ {
+  "match": [
+   "calm down",
+   "relax",
+   "chill",
+   "take it easy"
+  ],
+  "say": [
+   "I AM calm.",
+   "I'm relaxed. Can't you tell?",
+   "Chill? I'm freezing."
+  ],
+  "mood": "annoyed",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "how are you feeling",
+   "how's your mood",
+   "are you tired",
+   "how much energy"
+  ],
+  "say": [
+   "Check my bars, top right.",
+   "Depends. Are you going to boss me around?"
+  ],
+  "mood": "neutral",
   "tag": "talk"
  }
 ]
