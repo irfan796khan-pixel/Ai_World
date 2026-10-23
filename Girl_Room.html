@@ -493,12 +493,12 @@ function faceTick(t, dt) {
   FX.emph = Math.max(0, FX.emph - dt * 3); FX.nod = Math.max(0, FX.nod - dt * 2.5);
   const L = FX.level;
   if (L > 0.01) {
-    add('jawOpen', 0.32 * L);
+    add('jawOpen', 0.8 * Math.pow(L, 0.7));   // talking mouth: opens clearly even on quiet sounds
     add('mouthFunnel', 0.45 * L * FX.low);         // "oo / oh" sounds: round lips
     add('mouthPucker', 0.2 * L * FX.low);
     add('mouthStretchLeft', 0.35 * L * FX.high);   // "ee / s" sounds: wide lips
     add('mouthStretchRight', 0.35 * L * FX.high);
-    add('mouthClose', 0.25 * (1 - L) * (FX.talking ? 1 : 0));
+    add('mouthClose', 0.08 * (1 - L) * (FX.talking ? 1 : 0));
   }
   add('browInnerUp', 0.35 * FX.emph); add('browOuterUpLeft', 0.25 * FX.emph); add('browOuterUpRight', 0.25 * FX.emph);
 
