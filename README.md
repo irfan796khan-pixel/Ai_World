@@ -22,7 +22,10 @@ Opening the html file directly does not work: the browser blocks loading `Girl_c
 
 ## Files
 - `Girl_Room.html` — the room + the girl + the action door. One file, three.js r128 from CDN.
-- `Girl_character_mixamo.glb` — the girl (65-bone Mixamo skeleton incl. fingers, 28 face shapes).
+- `Girl_character_mixamo.glb` — the girl (65-bone Mixamo skeleton incl. fingers, 28 face shapes), 83 MB.
+- `Girl_character_mixamo_packed.glb` — the same girl packed with meshopt (17 MB). The page loads this one first (about 5x less to download); `Girl_Room.html?model=original` forces the big one.
+- `moves.json` — real motion from Imran's Mixamo clips (Idle, Walking, Running, Waving, Talking), baked so they fit her bones.
+- `quick_replies.json` — about 80 instant replies (around 490 trigger phrases, 240 answers), each tied to a face mood and body moves.
 - `run_girl_room.bat` — starts it.
 - `VOICESTUDIO.md` — idea: free local voice (VoiceStudio) for the characters, with test code.
 
@@ -31,9 +34,11 @@ Everything goes through `window.AIWorld` in the page.
 
 ```js
 AIWorld.act([
-  { walk: "sofa" },          // walk to a spot: center, sofa, window, plant, front, tv, ball — or {walk:{x:1, z:-2}}
+  { walk: "sofa" },          // walk to a spot: center, sofa, window, plant, front, tv, ball — or {walk:{x:1, z:-2}}. Over 5 m she runs (run:true / run:false to force)
   { face: "camera" },        // turn to the person (or a number in degrees)
-  { wave: 2 },               // wave for 2 seconds
+  { wave: 2 },               // wave for 2 seconds (Mixamo waving clip)
+  { point: "tv" },           // point at it with arm + index finger: tv, sofa, plant, window, table, ball, lamp, board, camera (time: 3)
+  { thumbs: 2 },             // thumbs-up for 2 seconds
   { lamp: true },            // lamp on / off
   { tv: "hello" },           // TV on with text, or true / false
   { board: "Hi Irfan" },     // write on the whiteboard
@@ -53,6 +58,28 @@ AIWorld.busy();   // true while she is doing something
 AIWorld.stop();   // clear everything
 ```
 Actions run one after another. Unknown actions are skipped with a console warning.
+
+## Quick replies + talk bar (fast answers, no waiting for the brain)
+Type in the bar at the bottom (or call `AIWorld.hear(text)`). If the text matches `quick_replies.json`, she answers at once: speech bubble, browser voice with mouth movement, face mood, and the moves.
+If nothing matches, the text goes to the brain:
+```js
+AIWorld.onUnmatched = (text) => { /* Guy 1: send to the brain, then AIWorld.reply({...}) */ };
+// or a small web door: POST {text} to this URL, it must answer with the Brain.py JSON ({response, emotion, animation | actions})
+AIWorld.brainUrl = "http://localhost:5005/brain";
+AIWorld.learn({ match: ["what is two plus two"], say: ["Four. Easy."], mood: "amused", actions: [{ thumbs: 2 }] });  // new reply, kept in this browser
+AIWorld.say("Hello!");        // bubble + browser voice
+AIWorld.quick.voice = false;  // turn the browser voice off when the real voice (ElevenLabs / VoiceStudio) is wired in
+```
+Answers from the brain through `brainUrl` are saved as new quick replies automatically, so the second time is instant.
+
+## Clip button (TikTok)
+"Clip 15s" records 15 seconds of the room as a vertical 9:16 video (720 x 1280, 30 fps) with her voice if `AIWorld.speak` is playing, and downloads it as `.webm`.
+`await AIWorld.record(15, { download: false })` gives the video Blob instead.
+
+## Real motion (Mixamo)
+Idle, walking, running, waving and talking now come from Imran's Mixamo clips (`moves.json`). Her bones have other names (spine, thigh.L …) and some finger names are on the opposite hand in the file, so bones are matched by where they are on her body.
+Turning on the spot uses small walking steps, and her head turns first toward where she goes. The clumsy moves (trip, sit, knock, TV scare) still use the code moves, and the clips fade out while they run.
+To add a clip: download it from Mixamo as FBX, bake it with the same method into `moves.json` (new key), then use it in `mocapTick`.
 
 ## The face door (for Guy 3 — Voice, and for the Brain)
 Her face runs by itself with 4 layers mixed every frame: **mood** (from the brain's emotion), **alive** (natural blinks, sometimes double, tiny uneven movement), **talking** (mouth, brows and head follow her voice) and **action** (the clumsy moves set their own face).
@@ -83,7 +110,9 @@ mouthLeft/Right, mouthStretchLeft/Right. "Left" shapes sit on the model's +x sid
 
 ## Known limits (facts)
 - Walking goes around the sofa, coffee table and plant (grid path search).
-- Movements are code (procedural), not motion-capture clips.
+- Idle, walk, run, wave and talk are Mixamo clips. Trip, sit, knock, TV scare, point and thumbs-up are code moves.
 - Physics is simple and home-made (falling, bouncing, rolling, the glass breaking) — no physics library.
-- No fingers move. Hair does not swing yet.
-- Tested in a headless Chromium browser (all actions, incl. the clumsy moves). Not yet tested on the Windows PC.
+- Fingers move (from the clips, plus point and thumbs-up). Hair and clothes do not swing yet.
+- Face: 28 of the 52 ARKit shapes. The other 24 (eye look, tongue, jaw sideways, lip roll and press …) need sculpting in Blender.
+- The browser voice (speechSynthesis) gives no sound data, so its mouth movement is made up. A real voice through `AIWorld.speak` follows the sound.
+- Tested in a headless Chromium browser (all actions, the clips, point, thumbs-up, quick replies, the clip recorder, packed vs original file). Not yet tested on the Windows PC.

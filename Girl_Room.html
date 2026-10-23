@@ -10,13 +10,26 @@
       background: rgba(15, 23, 42, 0.72); color: #e2e8f0; padding: 8px 12px; border-radius: 12px;
       font-family: 'Consolas', monospace; font-size: 12px; }
     #status:empty { display: none; }
+    #bubble { position: absolute; left: 50%; bottom: 92px; transform: translateX(-50%); max-width: 70vw; z-index: 10; pointer-events: none;
+      background: #fff; color: #0f172a; padding: 10px 16px; border-radius: 18px; font-size: 17px; box-shadow: 0 4px 16px rgba(0,0,0,.18);
+      opacity: 0; transition: opacity .25s; }
+    #bubble.show { opacity: 1; }
+    #bar { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 10; display: flex; gap: 8px; align-items: center;
+      background: rgba(15, 23, 42, 0.78); padding: 8px 10px; border-radius: 999px; }
+    #bar input { width: min(52vw, 440px); border: 0; outline: 0; border-radius: 999px; padding: 9px 14px; font-size: 15px; font-family: inherit; }
+    #bar button { white-space: nowrap; border: 0; border-radius: 999px; padding: 9px 14px; font-size: 14px; font-family: inherit; cursor: pointer; background: #e2e8f0; color: #0f172a; }
+    #bar button.rec { background: #ef4444; color: #fff; }
+    #bar button:disabled { opacity: .5; cursor: default; }
   </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/libs/meshopt_decoder.js"></script>
 </head>
 <body>
 <div id="status">loading the girl…</div>
+<div id="bubble"></div>
+<div id="bar"><input id="say" placeholder="say something: sit, wave, trip, go to the window, tell me a joke…" autocomplete="off"><button id="send">Send</button><button id="clip" class="rec" title="record a 15 s vertical clip (9:16) for TikTok">Clip 15s</button></div>
 <script>
 // ============================================================================
 // AI World — ONLY the girl and the room.
@@ -245,14 +258,37 @@ function aimBone(bone, child, want) {
   bone.updateMatrixWorld(true);
 }
 
-new THREE.GLTFLoader().load('Girl_character_mixamo.glb', (gltf) => {
+// Size of the body as it is drawn (bones applied). Box3.setFromObject reads the raw vertex numbers, which are
+// small whole numbers in the packed file, so it would size her wrong. Same result for the packed and the original file.
+function skinnedBox(root) {
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3();
+  root.traverse(m => {
+    if (!m.isMesh) return;
+    if (!m.isSkinnedMesh) { box.expandByObject(m); return; }
+    const g = m.geometry, P = g.attributes.position, I = g.attributes.skinIndex, Wt = g.attributes.skinWeight;
+    const den = (a) => !a.normalized ? 1 : a.array instanceof Int8Array ? 127 : a.array instanceof Uint8Array ? 255 : a.array instanceof Int16Array ? 32767 : a.array instanceof Uint16Array ? 65535 : 1;
+    const pn = den(P), wn = den(Wt);
+    const mats = m.skeleton.bones.map((b, k) => new THREE.Matrix4().multiplyMatrices(b.matrixWorld, m.skeleton.boneInverses[k]).multiply(m.bindMatrix));
+    const v = new THREE.Vector3(), o = new THREE.Vector3(), t = new THREE.Vector3();
+    const step = Math.max(1, Math.floor(P.count / 40000));
+    for (let i = 0; i < P.count; i += step) {
+      v.set(P.getX(i) / pn, P.getY(i) / pn, P.getZ(i) / pn); o.set(0, 0, 0);
+      const w = [Wt.getX(i), Wt.getY(i), Wt.getZ(i), Wt.getW(i)], j = [I.getX(i), I.getY(i), I.getZ(i), I.getW(i)];
+      for (let c = 0; c < 4; c++) if (w[c]) o.addScaledVector(t.copy(v).applyMatrix4(mats[j[c]]), w[c] / wn);
+      box.expandByPoint(o);
+    }
+  });
+  return box;
+}
+function onGirl(gltf) {
   const obj = gltf.scene;
   // same size rule as index.html: biggest side = 1.9, feet on the floor, centered
-  const box = new THREE.Box3().setFromObject(obj);
+  const box = skinnedBox(obj);
   const size = box.getSize(new THREE.Vector3());
   obj.scale.setScalar(1.9 / Math.max(size.x, size.y, size.z));
   obj.updateMatrixWorld(true);
-  const sBox = new THREE.Box3().setFromObject(obj);
+  const sBox = skinnedBox(obj);
   const c = sBox.getCenter(new THREE.Vector3());
   obj.position.set(-c.x, -sBox.min.y, -c.z);
   obj.traverse(o => {
@@ -269,6 +305,7 @@ new THREE.GLTFLoader().load('Girl_character_mixamo.glb', (gltf) => {
   holder.add(obj);
   girl.add(holder);
   girl.updateMatrixWorld(true);
+  captureTPose();                         // her T-pose, before the arms are relaxed (the Mixamo clips start from a T-pose too)
 
   // relax the arms out of the T-pose (about 15 degrees from the body)
   const down = 0.26;
@@ -283,14 +320,27 @@ new THREE.GLTFLoader().load('Girl_character_mixamo.glb', (gltf) => {
   for (const n in bones) rest[n] = bones[n].quaternion.clone();
   prepareWave();
   prepareClumsy();
+  prepareHands();
 
   loaded = true;
+  prepareMocap();                         // starts the Mixamo clips if moves.json is already here (else when it arrives)
   statusEl.textContent = '';
   window.AIWorld.ready = true;
-}, undefined, (err) => {
-  console.error(err);
-  statusEl.textContent = 'Could not load Girl_character_mixamo.glb. Start with run_girl_room.bat (not by double-clicking the html).';
-});
+}
+// The packed file (17 MB, meshopt) loads about 5x faster than the original (83 MB). Same mesh, bones and 28 face shapes.
+// Girl_Room.html?model=original forces the big file.
+const MODEL_FILES = /model=original/.test(location.search) ? ['Girl_character_mixamo.glb'] : ['Girl_character_mixamo_packed.glb', 'Girl_character_mixamo.glb'];
+const gltfLoader = new THREE.GLTFLoader();
+if (window.MeshoptDecoder) gltfLoader.setMeshoptDecoder(window.MeshoptDecoder);
+function loadGirl(i) {
+  statusEl.textContent = 'loading the girl… (' + MODEL_FILES[i] + ')';
+  gltfLoader.load(MODEL_FILES[i], (g) => { window.AIWorld.modelFile = MODEL_FILES[i]; onGirl(g); }, undefined, (err) => {
+    if (i + 1 < MODEL_FILES.length) { console.warn('could not load ' + MODEL_FILES[i] + ', trying ' + MODEL_FILES[i + 1], err); return loadGirl(i + 1); }
+    console.error(err);
+    statusEl.textContent = 'Could not load Girl_character_mixamo.glb. Start with run_girl_room.bat (not by double-clicking the html).';
+  });
+}
+loadGirl(0);
 
 // ---------------------------------------------------------------- small idle life: breathing + blinking
 const clock = new THREE.Clock();
@@ -472,7 +522,7 @@ function faceTick(t, dt) {
 
   // head: mood tilt + talking nods + nod/shake gestures (used by idleTick)
   const hm = HEAD_FOR_MOOD[FX.mood] || [0, 0, 0];
-  let hx = hm[0] * FX.moodAmt, hy = hm[1], hz = hm[2] * FX.moodAmt;
+  let hx = hm[0] * FX.moodAmt, hy = hm[1] + (FX.leadY || 0), hz = hm[2] * FX.moodAmt;
   hx += 0.06 * Math.sin(Math.PI * FX.nod) + 0.02 * L * Math.sin(t * 9);
   if (FX.gesture) {
     FX.gestureT += dt; const g = FX.gestureT, fade = 1 - clamp01((g - 0.9) / 0.3);
@@ -503,9 +553,11 @@ async function handleReply(r) {
 // 3. ACTIONS — the body does what the brain sends (loop: talk > brain > words + action > ACTION)
 // ============================================================================
 // AIWorld.act([{walk:"sofa"}, {wave:2}, {lamp:true}])  — runs one after another
-//   {walk:"sofa"} or {walk:{x:1,z:2}}   walk to a room spot (names in ROOM_SPOTS)
+//   {walk:"sofa"} or {walk:{x:1,z:2}}   walk to a room spot (names in ROOM_SPOTS); trips over 5 m she runs ({run:true} / {run:false} to force)
 //   {face:"camera"} | {face:90}         turn to the person, or to an angle in degrees
 //   {wave:2}                            wave for 2 seconds
+//   {point:"tv"} | {point:"camera"}     points at it with her arm and index finger (2 s; time:3 to change)
+//   {thumbs:2}                          thumbs-up for 2 seconds
 //   {lamp:true|false}  {tv:true|false|"text on screen"}  {board:"text"}
 //   {wait:1.5}                          stand still 1.5 s
 //   --- clumsy / funny moves ---
@@ -515,8 +567,9 @@ async function handleReply(r) {
 //   {tv:"glitch", time:4}               TV goes crazy by itself, she jumps in fright, then "BOO!"
 //   {reset:true}                        puts the ball, glass and book back (cleans up the shards)
 //   Walking into the ball kicks it.
-const act = { queue: [], cur: null, t: 0, walking: false, waving: 0, onDone: null };
+const act = { queue: [], cur: null, t: 0, walking: false, waving: 0, onDone: null, turnD: 0, turnT: 0, pointing: 0, pointAt: null, thumbs: 0 };
 const WALK_SPEED = 1.1;   // metres per second
+const RUN_SPEED = 2.6;    // long trips (over 5 m) she runs, with the Mixamo running clip
 
 // Furniture she must walk around (footprints, in metres). M = her body radius.
 const OBSTACLES = [
@@ -601,9 +654,18 @@ function startAction(a) {
     const s = typeof a.walk === 'string' ? ROOM_SPOTS[a.walk] : a.walk;
     if (!s) { console.warn('unknown spot', a.walk); return finishAction(); }
     a._to = new THREE.Vector3(s.x, 0, s.z); a._path = findPath(girl.position, a._to); a._face = s.face; act.walking = true;
+    let len = 0, prevP = girl.position; for (const q of a._path) { len += q.distanceTo(prevP); prevP = q; }
+    act.running = !!(a.run || (a.run !== false && len > 5 && MOCAP.ready));
   } else if (a.face !== undefined) {
     a._yaw = a.face === 'camera' ? Math.atan2(camera.position.x - girl.position.x, camera.position.z - girl.position.z) : THREE.MathUtils.degToRad(+a.face);
   } else if (a.wave !== undefined) { act.waving = +a.wave || 2; }
+  else if (a.point !== undefined) {           // {point:"tv"} | {point:"camera"} | {point:{x,y,z}}  — arm + index finger at it, 2 s
+    let p = a.point === 'camera' ? camera.position.clone() : typeof a.point === 'string' ? ROOM_SPOTS[a.point] : a.point;
+    if (!p) { console.warn('unknown point target', a.point); return finishAction(); }
+    if (a.point !== 'camera') { const o = POINT_AT[a.point]; p = new THREE.Vector3(o ? o.x : p.x, o ? o.y : 0.9, o ? o.z : p.z); }
+    act.pointAt = p; act.pointing = +a.time || 2; a._dur = act.pointing + 0.4;
+  }
+  else if (a.thumbs !== undefined) { act.thumbs = +a.thumbs || 2; a._dur = act.thumbs + 0.4; }
   else if (a.trip !== undefined) { a._kind = 'trip'; a._dur = 3.6; a._slid = 0; }
   else if (a.sit !== undefined) {
     const miss = a.sit === 'miss', hold = +a.time || 3;
@@ -624,7 +686,7 @@ function startAction(a) {
   else if (a.wait === undefined) { console.warn('unknown action', a); return finishAction(); }
 }
 function finishAction() {
-  const done = act.cur; act.cur = null; act.walking = false;
+  const done = act.cur; act.cur = null; act.walking = false; act.running = false;
   if (done && done._kind) clumsyEnd(done);
   // moves made of several steps report once, with the action the brain sent
   const report = done && (done._report || (done._expanded || done._sub ? null : done));
@@ -633,7 +695,11 @@ function finishAction() {
 }
 function turnToward(yaw, dt, speed = 6) {
   let d = yaw - girl.rotation.y; d = Math.atan2(Math.sin(d), Math.cos(d));
-  girl.rotation.y += d * Math.min(1, dt * speed); return Math.abs(d);
+  // human-like: a big turn starts slower (she shifts her weight first) and the body follows the head
+  const ramp = Math.abs(d) > 0.6 ? 0.55 + 0.45 * clamp01(act.turnT / 0.35) : 1;
+  girl.rotation.y += d * Math.min(1, dt * speed * ramp);
+  act.turnD = d; act.turnT += dt;
+  return Math.abs(d);
 }
 function actionTick(t, dt) {
   const a = act.cur; if (!a || !loaded) return;
@@ -648,7 +714,7 @@ function actionTick(t, dt) {
       return finishAction();
     }
     turnToward(Math.atan2(d.x, d.z), dt);
-    girl.position.addScaledVector(d.normalize(), Math.min(dist, WALK_SPEED * dt));
+    girl.position.addScaledVector(d.normalize(), Math.min(dist, (act.running ? RUN_SPEED : WALK_SPEED) * dt));
   } else if (a._dur !== undefined) { if (act.t >= a._dur) finishAction(); }
   else if (a._yaw !== undefined) { if (turnToward(a._yaw, dt) < 0.02 || act.t > 3) finishAction(); }
   else if (a.wave !== undefined) { act.waving -= dt; if (act.waving <= 0) { act.waving = 0; finishAction(); } }
@@ -658,6 +724,7 @@ function actionTick(t, dt) {
 let walkPhase = 0, walkW = 0, waveW = 0;
 function limbsTick(t, dt) {
   if (!loaded) return;
+  if (MOCAP.ready && MOCAP.w > 0.5) { walkW = 0; waveW = 0; return; }   // the Mixamo clips walk and wave for her
   walkW += ((act.walking ? 1 : 0) - walkW) * Math.min(1, dt * 8);
   waveW += ((act.waving > 0 ? 1 : 0) - waveW) * Math.min(1, dt * 8);
   walkPhase += dt * 7 * walkW;
@@ -881,6 +948,275 @@ function clumsyTick(t, dt) {
 }
 
 // ============================================================================
+// 3b. HANDS + HUMAN-LIKE TURNING
+//   Her Mixamo rig has every finger bone (…HandIndex1-4, Thumb1-4 …). At rest the fingers were
+//   straight like a paddle; now they keep a relaxed curl, open for a wave, point, and make a thumbs-up.
+//   Turning no longer spins her like a statue: the head leads, the feet shuffle, the arms swing a bit.
+// ============================================================================
+const POINT_AT = {    // where the real objects are (ROOM_SPOTS are the places she stands in front of them)
+  tv: { x: -6.8, y: 1.9, z: 0 }, sofa: { x: 2.2, y: 0.6, z: -4.6 }, plant: { x: -5.2, y: 0.85, z: -4.5 }, window: { x: -3, y: 3.2, z: -5.95 },
+  table: { x: 2.2, y: 0.42, z: -2.8 }, ball: { x: -1.6, y: 0.16, z: 1.6 }, lamp: { x: 5.4, y: 1.8, z: -5.3 }, board: { x: 1.2, y: 2.6, z: -5.84 }, center: { x: 0, y: 0, z: 0 }, front: { x: 0, y: 0, z: 1.7 }
+};
+const FINGERS = ['Index', 'Middle', 'Ring', 'Pinky'];
+const fingerAxis = {};            // bone name -> local axis to curl around (sign included)
+// side 'L' / 'R' = the fingers hanging from bones.handL / bones.handR (in her file the "Right…" finger names hang from hand.L, so names are not trusted)
+const FINGER_OF = { L: {}, R: {} };
+function fingerBone(side, finger, j) { return FINGER_OF[side][finger + j]; }
+function sortFingers() {
+  for (const n in bones) {
+    const f = /^mixamorig(?:Left|Right)Hand(Thumb|Index|Middle|Ring|Pinky)([1-4])$/.exec(n); if (!f) continue;
+    let p = bones[n].parent; while (p && p !== bones.handL && p !== bones.handR) p = p.parent;
+    if (p) FINGER_OF[p === bones.handL ? 'L' : 'R'][f[1] + f[2]] = bones[n];
+  }
+}
+// Finds, from her own bones, which local axis curls each joint toward the palm (the tip goes down at rest, palms face down in a T-pose).
+function prepareHands() {
+  girl.updateMatrixWorld(true);
+  sortFingers();
+  const cands = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0]];
+  for (const side of ['L', 'R']) for (const f of [...FINGERS, 'Thumb']) {
+    const tip = fingerBone(side, f, 4) || fingerBone(side, f, 3); if (!tip) continue;
+    const hand = bones['hand' + side]; const palmY = hand ? hand.getWorldPosition(new THREE.Vector3()).y : 0;
+    for (let j = 1; j <= 3; j++) {
+      const b = fingerBone(side, f, j); if (!b) continue;
+      let best = null, bestDrop = -1;
+      for (const c of cands) {
+        const wq = b.getWorldQuaternion(new THREE.Quaternion()).invert();
+        const axis = new THREE.Vector3(...c).applyQuaternion(wq).normalize();
+        const y0 = tip.getWorldPosition(new THREE.Vector3()).y;
+        b.quaternion.copy(rest[b.name]).multiply(new THREE.Quaternion().setFromAxisAngle(axis, 0.6)); b.updateMatrixWorld(true);
+        const y1 = tip.getWorldPosition(new THREE.Vector3()).y;
+        b.quaternion.copy(rest[b.name]); b.updateMatrixWorld(true);
+        const drop = y0 - y1;
+        if (drop > bestDrop) { bestDrop = drop; best = axis; }
+      }
+      fingerAxis[b.name] = best;
+    }
+  }
+}
+const hand = { L: { curl: 0.35, thumb: 0.2, index: null }, R: { curl: 0.35, thumb: 0.2, index: null }, cur: { L: {}, R: {} } };
+function applyHand(side, want, dt, blend = 1) {
+  const c = hand.cur[side]; const k = 1 - Math.exp(-dt * 9);
+  for (const key in want) {
+    if (want[key] === null) { c[key] = null; continue; }                       // null = "no special value" (index follows the other fingers)
+    const from = (c[key] === undefined || c[key] === null) ? (key === 'index' ? (c.curl ?? want.curl) : want[key]) : c[key];
+    c[key] = from + (want[key] - from) * k;
+  }
+  const gains = [1.0, 1.05, 0.7];
+  for (const f of FINGERS) {
+    const curl = (f === 'Index' && c.index !== null && c.index !== undefined) ? c.index : c.curl;
+    for (let j = 1; j <= 3; j++) {
+      const b = fingerBone(side, f, j); if (!b || !fingerAxis[b.name]) continue;
+      const a = curl * gains[j - 1] * (f === 'Pinky' ? 1.1 : f === 'Ring' ? 1.05 : 1);
+      const base = (MOCAP.tposeLocal && MOCAP.tposeLocal[b.name]) || rest[b.name];
+      const q = base.clone().multiply(tmpQ.setFromAxisAngle(fingerAxis[b.name], a));
+      blend >= 1 ? b.quaternion.copy(q) : b.quaternion.slerp(q, blend);
+    }
+  }
+  for (let j = 1; j <= 3; j++) {
+    const b = fingerBone(side, 'Thumb', j); if (!b || !fingerAxis[b.name]) continue;
+    const base = (MOCAP.tposeLocal && MOCAP.tposeLocal[b.name]) || rest[b.name];
+    const q = base.clone().multiply(tmpQ.setFromAxisAngle(fingerAxis[b.name], c.thumb * [0.5, 0.8, 0.6][j - 1]));
+    blend >= 1 ? b.quaternion.copy(q) : b.quaternion.slerp(q, blend);
+  }
+}
+let turnW = 0, shufflePhase = 0, pointW = 0, thumbW = 0;
+function handsAndTurnTick(t, dt) {
+  if (!loaded) return;
+  const a = act.cur, clumsy = a && a._kind;
+  // ---- turning on the spot: feet shuffle, arms counter-swing, head leads the way
+  const turning = a && !act.walking && a._yaw !== undefined && Math.abs(act.turnD) > 0.08;
+  turnW += ((turning ? 1 : 0) - turnW) * Math.min(1, dt * 7);
+  if (!(a && (a._yaw !== undefined || act.walking))) { act.turnD = 0; act.turnT = 0; }
+  if (turnW > 0.01 && !clumsy && !MOCAP.ready) {
+    const dir = Math.sign(act.turnD) || 1;
+    shufflePhase += dt * 9 * turnW;
+    const s1 = Math.max(0, Math.sin(shufflePhase)), s2 = Math.max(0, Math.sin(shufflePhase + Math.PI));
+    addRot('thighL', SGN.thighL * 0.22 * s1 * turnW, 0.12 * dir * turnW, 0); addRot('shinL', SGN.shinL * 0.3 * s1 * turnW, 0, 0);
+    addRot('thighR', SGN.thighR * 0.22 * s2 * turnW, 0.12 * dir * turnW, 0); addRot('shinR', SGN.shinR * 0.3 * s2 * turnW, 0, 0);
+    if (bones.upper_armL) bones.upper_armL.rotateX(0.18 * dir * turnW);        // arms lag behind the turn (inertia)
+    if (bones.upper_armR) bones.upper_armR.rotateX(0.18 * dir * turnW);
+    addRot('spine002', 0.012 * Math.sin(t * 1.6), -0.1 * dir * turnW, 0);        // chest twists a little ahead of the hips
+    girl.position.y += 0.012 * Math.abs(Math.sin(shufflePhase)) * turnW;
+  }
+  // head looks where she is going: ahead of the body while turning, toward the next waypoint while walking
+  let lead = 0;
+  if (a && act.walking && a._path && a._path.length > 1) {
+    const d = new THREE.Vector3().subVectors(a._path[1], girl.position); let yaw = Math.atan2(d.x, d.z) - girl.rotation.y;
+    lead = Math.atan2(Math.sin(yaw), Math.cos(yaw)) * 0.5;
+  } else if (turning) lead = act.turnD * 0.6;
+  FX.leadY = Math.max(-0.5, Math.min(0.5, lead));
+
+  // ---- hands: relaxed by default, open when waving, pointing, thumbs-up
+  const wantL = { curl: 0.35, thumb: 0.2, index: null }, wantR = { curl: 0.35, thumb: 0.2, index: null };
+  if (act.waving > 0) { wantR.curl = 0.08 + 0.05 * Math.sin(t * 9); wantR.thumb = 0.05; }
+  if (act.walking) { wantL.curl = 0.45; wantR.curl = 0.45; }
+  if (act.pointing > 0) { act.pointing -= dt; } if (act.thumbs > 0) { act.thumbs -= dt; }
+  pointW += ((act.pointing > 0 ? 1 : 0) - pointW) * Math.min(1, dt * 6);
+  thumbW += ((act.thumbs > 0 ? 1 : 0) - thumbW) * Math.min(1, dt * 6);
+  if (pointW > 0.01 && act.pointAt && !clumsy) {
+    const sh = bones.upper_armR; if (sh) {
+      const from = girl.worldToLocal(sh.getWorldPosition(new THREE.Vector3()));
+      const to = girl.worldToLocal(act.pointAt.clone()); const dir = to.sub(from).normalize();
+      aimLocal(bones.upper_armR, bones.forearmR, dir, pointW); aimLocal(bones.forearmR, bones.handR, dir, pointW);
+    }
+    wantR.curl = 1.2; wantR.index = 0.02; wantR.thumb = 0.9;
+  }
+  if (thumbW > 0.01 && !clumsy) {
+    aimLocal(bones.upper_armR, bones.forearmR, V3(SIDE_R * 0.35, -0.75, 0.35), thumbW);
+    aimLocal(bones.forearmR, bones.handR, V3(SIDE_R * 0.05, 0.35, 0.95), thumbW);
+    wantR.curl = 1.35; wantR.thumb = -0.15;
+  }
+  if (clumsy) { wantL.curl = 0.6; wantR.curl = 0.6; }
+  if (!MOCAP.ready || MOCAP.w < 0.5) { applyHand('L', wantL, dt); applyHand('R', wantR, dt); }
+  else if (pointW > 0.01 || thumbW > 0.01) applyHand('R', wantR, dt, Math.max(pointW, thumbW));   // the clips move her fingers; point / thumbs-up take the right hand
+  else hand.cur.R = {};
+  // thumbs-up: twist the wrist (around the forearm) until the thumb tip points at the ceiling
+  if (thumbW > 0.05 && !clumsy && bones.handR && bones.forearmR) {
+    const tip = fingerBone('R', 'Thumb', 4) || fingerBone('R', 'Thumb', 3);
+    if (tip) {
+      girl.updateMatrixWorld(true);
+      const hp = bones.handR.getWorldPosition(new THREE.Vector3()), fp = bones.forearmR.getWorldPosition(new THREE.Vector3());
+      const axis = hp.clone().sub(fp).normalize();
+      const th = tip.getWorldPosition(new THREE.Vector3()).sub(hp);
+      const up = new THREE.Vector3(0, 1, 0);
+      const a = th.clone().projectOnPlane(axis).normalize(), b = up.clone().projectOnPlane(axis).normalize();
+      let ang = Math.acos(Math.max(-1, Math.min(1, a.dot(b)))); if (a.clone().cross(b).dot(axis) < 0) ang = -ang;
+      const wq = new THREE.Quaternion().setFromAxisAngle(axis, ang * thumbW);
+      const handW = bones.handR.getWorldQuaternion(new THREE.Quaternion());
+      const parW = bones.handR.parent.getWorldQuaternion(new THREE.Quaternion());
+      bones.handR.quaternion.copy(parW.invert().multiply(wq.multiply(handW)));
+    }
+  }
+}
+
+
+// ============================================================================
+// 3c. REAL MOTION (Mixamo clips: idle, walking, running, waving, talking) — moves.json
+//   The clips were baked from Imran's Mixamo FBX files as "how much each bone turned in the world"
+//   (T-pose to clip pose). Her bones have other names (spine, thigh.L …) and some finger names sit on the
+//   other hand, so bones are matched by where they are on her body, not by name.
+//   The hand-made moves (trip, sit, knock, point, thumbs-up) fade the clips out while they run.
+// ============================================================================
+const MOCAP = { ready: false, clips: null, map: {}, order: [], tposeGL: {}, parentGL: {}, layers: {}, w: 0, armQ: null, hipRest: null, hipH: 0.9 };
+fetch('moves.json').then(r => r.json()).then(j => { MOCAP.clips = j.clips; if (loaded) prepareMocap(); }).catch(e => console.warn('moves.json not loaded — hand-made moves only', e));
+const gl = (obj) => girl.quaternion.clone().invert().multiply(obj.getWorldQuaternion(new THREE.Quaternion()));
+function captureTPose() {
+  girl.updateMatrixWorld(true);
+  MOCAP.tposeLocal = {};
+  for (const n in bones) { MOCAP.tposeGL[n] = gl(bones[n]); MOCAP.tposeLocal[n] = bones[n].quaternion.clone(); }
+  const arm = bones.spine && bones.spine.parent; if (arm) MOCAP.armQ = gl(arm);
+}
+function prepareMocap() {
+  if (MOCAP.ready || !MOCAP.clips || !loaded) return;
+  girl.updateMatrixWorld(true);
+  const x = (n) => bones[n] ? girl.worldToLocal(bones[n].getWorldPosition(new THREE.Vector3())).x : 0;
+  // which of her ".L"/".R" bones is on her left (+x in her frame, same as the Mixamo clips)
+  const leftIsL = x('thighL') > x('thighR');
+  const S = (part) => ({ Left: part + (leftIsL ? 'L' : 'R'), Right: part + (leftIsL ? 'R' : 'L') });
+  const m = { Hips: 'spine', Spine: 'spine001', Spine1: 'spine002', Spine2: 'spine003', Neck: 'spine004', Head: 'spine006' };
+  for (const side of ['Left', 'Right']) {
+    m[side + 'Shoulder'] = S('shoulder')[side]; m[side + 'Arm'] = S('upper_arm')[side]; m[side + 'ForeArm'] = S('forearm')[side]; m[side + 'Hand'] = S('hand')[side];
+    m[side + 'UpLeg'] = S('thigh')[side]; m[side + 'Leg'] = S('shin')[side]; m[side + 'Foot'] = S('foot')[side]; m[side + 'ToeBase'] = S('toe')[side];
+  }
+  // fingers: follow the hand they really hang from
+  for (const n in bones) {
+    const f = /^mixamorig(?:Left|Right)Hand(Thumb|Index|Middle|Ring|Pinky)([1-4])$/.exec(n); if (!f) continue;
+    let p = bones[n].parent; while (p && !/^hand[LR]$/.test(p.name.replace('.', ''))) p = p.parent;
+    if (!p) continue;
+    const side = x(p.name.replace('.', '')) > 0 ? 'Left' : 'Right';
+    m[side + 'Hand' + f[1] + f[2]] = n;
+  }
+  for (const k in m) if (bones[m[k]] && MOCAP.clips.idle.tracks[k]) MOCAP.map[m[k]] = k;
+  // parents before children
+  const seen = new Set(); const visit = (o) => { if (o.isBone && MOCAP.map[o.name] && !seen.has(o.name)) { seen.add(o.name); MOCAP.order.push(o.name); } o.children.forEach(visit); };
+  visit(girl);
+  if (bones.spine) { MOCAP.hipRest = bones.spine.position.clone(); MOCAP.hipH = bones.spine.position.y; }
+  for (const k in MOCAP.clips) MOCAP.layers[k] = { t: 0, w: k === 'idle' ? 1 : 0, speed: 1 };
+  MOCAP.restRelaxed = {}; for (const n of MOCAP.order) MOCAP.restRelaxed[n] = rest[n].clone();
+  MOCAP.ready = true; MOCAP.w = 1;
+  learnFingerAxes();
+  console.log('mocap: ' + MOCAP.order.length + ' bones follow the Mixamo clips (her left = ' + (leftIsL ? '.L' : '.R') + ' bones)');
+}
+// The real bend direction of each finger joint, read from the Mixamo idle clip (fingers there are
+// naturally curled): the turn from her T-pose finger to the idle finger is a "close the hand" turn.
+function learnFingerAxes() {
+  const save = {}; for (const n of MOCAP.order) save[n] = bones[n].quaternion.clone();
+  const saveL = {}; for (const k in MOCAP.layers) { saveL[k] = { ...MOCAP.layers[k] }; MOCAP.layers[k].w = k === 'idle' ? 1 : 0; MOCAP.layers[k].t = 0; }
+  const keepAct = act.cur; act.cur = null; mocapTick(0, 0); act.cur = keepAct;
+  let n0 = 0; const learned = new Set();
+  for (const n in fingerAxis) {
+    if (!MOCAP.tposeLocal[n]) continue;
+    const rel = MOCAP.tposeLocal[n].clone().invert().multiply(bones[n].quaternion);
+    if (rel.w < 0) { rel.x = -rel.x; rel.y = -rel.y; rel.z = -rel.z; rel.w = -rel.w; }
+    const sinH = Math.hypot(rel.x, rel.y, rel.z);
+    if (2 * Math.atan2(sinH, rel.w) > 0.06) { fingerAxis[n] = new THREE.Vector3(rel.x, rel.y, rel.z).divideScalar(sinH); learned.add(n); n0++; }
+  }
+  // a finger that is almost straight in the clip (often the index) bends the same way as its neighbour
+  for (const side of ['L', 'R']) for (const f of FINGERS) for (let j = 1; j <= 3; j++) {
+    const b = fingerBone(side, f, j); if (!b || learned.has(b.name)) continue;
+    for (const g of ['Middle', 'Ring', 'Index', 'Pinky']) { const o = fingerBone(side, g, j); if (o && learned.has(o.name)) { fingerAxis[b.name] = fingerAxis[o.name].clone(); break; } }
+  }
+  for (const n of MOCAP.order) bones[n].quaternion.copy(save[n]);
+  for (const k in saveL) Object.assign(MOCAP.layers[k], saveL[k]);
+  console.log('hands: bend direction from the idle clip for ' + n0 + ' finger joints');
+}
+function clipDelta(clip, t, key, out) {
+  const tr = clip.tracks[key]; if (!tr) return out.set(0, 0, 0, 1);
+  const f = (t * 30) % clip.frames, i = Math.floor(f), j = (i + 1) % clip.frames, u = f - i;
+  out.fromArray(tr, i * 4); return out.slerp(_q2.fromArray(tr, j * 4), u);
+}
+function clipHip(clip, t, out) {
+  const f = (t * 30) % clip.frames, i = Math.floor(f), j = (i + 1) % clip.frames, u = f - i;
+  out.set(lerp(clip.hipXZ[i * 2], clip.hipXZ[j * 2], u), lerp(clip.hipY[i], clip.hipY[j], u), lerp(clip.hipXZ[i * 2 + 1], clip.hipXZ[j * 2 + 1], u)); return out;
+}
+const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _q3 = new THREE.Quaternion(), _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3();
+let lastLocomotion = 'idle';
+function mocapTick(t, dt) {
+  if (!loaded || !MOCAP.ready) return;
+  const a = act.cur;
+  // 1. which clip should play
+  const clumsy = a && a._kind;
+  const turning = a && !act.walking && a._yaw !== undefined && Math.abs(act.turnD) > 0.1;
+  let want = 'idle', speed = 1;
+  if (act.walking) { want = act.running ? 'running' : 'walking'; }
+  else if (turning) { want = 'walking'; speed = 0.85; }            // small steps while she turns on the spot
+  else if (act.waving > 0) want = 'waving';
+  else if (FX.talking || FX.level > 0.08) want = 'talking';
+  for (const k in MOCAP.layers) {
+    const L = MOCAP.layers[k];
+    if (k === want) { if (L.w < 0.01) L.t = 0; L.speed = speed; }
+    L.w += ((k === want ? 1 : 0) - L.w) * Math.min(1, dt * (k === 'walking' || k === 'running' ? 9 : 5));
+    if (L.w > 0.001) L.t += dt * L.speed;
+  }
+  // 2. how much the clips own the body: not during clumsy moves / sitting
+  MOCAP.w += ((clumsy ? 0 : 1) - MOCAP.w) * Math.min(1, dt * 7);
+  const W = MOCAP.w; if (W < 0.001) { for (const n of MOCAP.order) rest[n].copy(MOCAP.restRelaxed[n]); return; }
+  // 3. blend the clip deltas and pose every bone, parents first
+  const layers = Object.entries(MOCAP.layers).filter(([, L]) => L.w > 0.001);
+  const tot = layers.reduce((s, [, L]) => s + L.w, 0);
+  const done = {};
+  for (const n of MOCAP.order) {
+    const key = MOCAP.map[n];
+    let acc = 0; _q1.set(0, 0, 0, 1);
+    for (const [k, L] of layers) { clipDelta(MOCAP.clips[k], L.t, key, _q3); acc += L.w; _q1.slerp(_q3, L.w / acc); }
+    const want = _q1.multiply(MOCAP.tposeGL[n]);                     // where this bone should point, in her frame
+    const par = bones[n].parent;
+    const parGL = done[par.name] ? done[par.name] : gl(par);
+    const local = parGL.clone().invert().multiply(want);
+    done[n] = want.clone();
+    const q = MOCAP.restRelaxed[n].clone().slerp(local, W);
+    rest[n].copy(q); bones[n].quaternion.copy(q);
+  }
+  // hips: up/down + a little sway (clips are in place; her group does the travelling)
+  if (bones.spine && MOCAP.hipRest) {
+    _v2.set(0, 0, 0);
+    let acc = 0; for (const [k, L] of layers) { clipHip(MOCAP.clips[k], L.t, _v1); acc += L.w; _v2.lerp(_v1, L.w / acc); }
+    bones.spine.position.set(MOCAP.hipRest.x - _v2.x * MOCAP.hipH * W, MOCAP.hipRest.y + _v2.y * MOCAP.hipH * W, MOCAP.hipRest.z - _v2.z * MOCAP.hipH * W);
+  }
+}
+
+// ============================================================================
 // 4. HOOK FOR PARTNERS (brain / voice / face) — use window.AIWorld
 // ============================================================================
 window.AIWorld = {
@@ -906,18 +1242,143 @@ window.AIWorld = {
   onFrame: []                 // push functions (t, dt) => {...} to run every frame
 };
 
+// ============================================================================
+// 5. QUICK REPLIES (instant answers, no brain needed), TALK BAR, CLIP RECORDER
+//   quick_replies.json: [{match:["sit down",…], say:["…"], mood:"happy", actions:[{sit:"sofa"}], gesture:"nod"}]
+//   AIWorld.hear(text)  → runs the matching entry at once and returns it; returns null when nothing matches
+//                         (then the text goes to the brain: AIWorld.onUnmatched(text) if a partner set it, else AIWorld.brainUrl)
+//   AIWorld.learn({match, say, mood, actions})  → the brain adds a new reply; it is kept in the browser (localStorage)
+//   AIWorld.say(text)   → speech bubble + browser voice (speechSynthesis) with mouth movement; off when a real voice is wired in
+//   AIWorld.record(15)  → records a 9:16 vertical clip of the canvas and downloads it (webm)
+// ============================================================================
+const QUICK = { lib: [], learned: [], lastSay: {}, voice: true };
+const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim();
+try { QUICK.learned = JSON.parse(localStorage.getItem('aiworld_quick_learned') || '[]'); } catch (e) { QUICK.learned = []; }
+fetch('quick_replies.json').then(r => r.json()).then(j => { QUICK.lib = j; console.log('quick replies:', j.length, 'entries'); }).catch(e => console.warn('quick_replies.json not loaded', e));
+
+function findQuick(text) {
+  const q = norm(text); if (!q) return null;
+  const words = q.split(' ').length;
+  let best = null, bestLen = 0;
+  for (const e of [...QUICK.learned, ...QUICK.lib]) for (const m of e.match) {
+    const p = norm(m); if (!p) continue;
+    if (p === q) return e;                                                   // exact wins at once
+    const short = p.split(' ').length === 1 && p.length <= 4;                // "yes", "no", "ok": only when the whole message is short
+    if (short && words > 3) continue;
+    if (new RegExp('(^| )' + p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '( |$)').test(q) && p.length > bestLen) { best = e; bestLen = p.length; }
+  }
+  return best;
+}
+function pickSay(e) {
+  const opts = e.say || []; if (!opts.length) return '';
+  let i = Math.floor(Math.random() * opts.length);
+  if (opts.length > 1 && opts[i] === QUICK.lastSay[e.match[0]]) i = (i + 1) % opts.length;
+  QUICK.lastSay[e.match[0]] = opts[i]; return opts[i];
+}
+const bubbleEl = document.getElementById('bubble'); let bubbleTimer = 0;
+function showBubble(text, seconds) {
+  bubbleEl.textContent = text; bubbleEl.classList.add('show'); clearTimeout(bubbleTimer);
+  bubbleTimer = setTimeout(() => bubbleEl.classList.remove('show'), (seconds || Math.max(2.5, text.length * 0.07)) * 1000);
+}
+const TTS = { utter: null, level: 0 };
+function say(text) {
+  if (!text) return; showBubble(text);
+  if (!QUICK.voice || !window.speechSynthesis) return;
+  speechSynthesis.cancel(); stopSpeaking();
+  const u = new SpeechSynthesisUtterance(text); u.rate = 1.05; u.pitch = 1.15;
+  const voices = speechSynthesis.getVoices(); const fem = voices.find(v => /female|zira|aria|jenny|samantha|google uk english female/i.test(v.name)) || voices.find(v => /en/i.test(v.lang));
+  if (fem) u.voice = fem;
+  u.onstart = () => { TTS.utter = u; TTS.level = 0.6; FX.talking = true; window.AIWorld.speakLevel(0.6); };
+  u.onboundary = () => { TTS.level = 0.55 + 0.4 * Math.random(); };
+  u.onend = u.onerror = () => { if (TTS.utter === u) { TTS.utter = null; FX.talking = false; window.AIWorld.speakLevel(null); } };
+  speechSynthesis.speak(u);
+}
+window.AIWorld.onFrame.push((t, dt) => {   // the browser voice gives no sound data, so the mouth follows a made-up loudness
+  if (!TTS.utter) return;
+  TTS.level = Math.max(0.12, TTS.level - dt * 2.2) ;
+  window.AIWorld.speakLevel(TTS.level * (0.75 + 0.25 * Math.sin(t * 23)));
+});
+function runQuick(e) {
+  const text = pickSay(e);
+  if (e.mood) setMood(e.mood);
+  if (e.gesture) gesture(e.gesture);
+  if (Array.isArray(e.actions) && e.actions.length) { window.AIWorld.stop(); window.AIWorld.act(e.actions); }
+  say(text);
+  return { entry: e, say: text };
+}
+async function hear(text) {
+  const e = findQuick(text);
+  if (e) return runQuick(e);
+  if (typeof window.AIWorld.onUnmatched === 'function') { window.AIWorld.onUnmatched(text); return null; }
+  if (window.AIWorld.brainUrl) {
+    showBubble('…', 20);
+    try {
+      const r = await fetch(window.AIWorld.brainUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+      const j = await r.json();
+      if (j && j.response && !j.audio) say(j.response);
+      await handleReply(j);
+      if (j && j.learn !== false && j.response) learn({ match: [norm(text)], say: [j.response], mood: j.emotion || 'neutral', actions: j.actions, gesture: j.animation === 'nod' ? 'nod' : j.animation === 'shake_head' ? 'shake' : undefined });
+    } catch (err) { console.warn('brain door failed', err); say("The brain is not answering. Try one of my quick ones."); }
+    return null;
+  }
+  say("I don't know that one yet. No brain is connected.");
+  return null;
+}
+function learn(entry) {
+  if (!entry || !entry.match || !entry.say) return false;
+  const e = { match: [].concat(entry.match), say: [].concat(entry.say), mood: entry.mood || 'neutral' };
+  if (entry.actions) e.actions = entry.actions; if (entry.gesture) e.gesture = entry.gesture;
+  QUICK.learned.unshift(e); QUICK.learned = QUICK.learned.slice(0, 2000);
+  try { localStorage.setItem('aiworld_quick_learned', JSON.stringify(QUICK.learned)); } catch (err) {}
+  return true;
+}
+// ---- talk bar
+const sayEl = document.getElementById('say'), sendEl = document.getElementById('send'), clipEl = document.getElementById('clip');
+function sendText() { const t = sayEl.value.trim(); if (!t) return; sayEl.value = ''; hear(t); }
+sendEl.addEventListener('click', sendText);
+sayEl.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') sendText(); ev.stopPropagation(); });
+// ---- clip recorder: 9:16 vertical crop of the live canvas, 30 fps, saved as .webm (TikTok takes webm and mp4)
+const REC = { active: false };
+async function record(seconds = 15, opts = {}) {
+  if (REC.active) return null;
+  const W = opts.width || 720, H = opts.height || 1280;
+  const off = document.createElement('canvas'); off.width = W; off.height = H; const c2 = off.getContext('2d');
+  const src = renderer.domElement;
+  const draw = () => { const sh = src.height, sw = Math.round(sh * W / H); const sx = Math.round((src.width - sw) / 2); c2.drawImage(src, sx, 0, sw, sh, 0, 0, W, H); };
+  window.AIWorld.afterRender.push(draw);
+  const stream = off.captureStream(30);
+  try { if (VOICE.ctx && VOICE.analyser) { const dest = VOICE.ctx.createMediaStreamDestination(); VOICE.analyser.connect(dest); for (const tr of dest.stream.getAudioTracks()) stream.addTrack(tr); } } catch (e) {}
+  const mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m)) || '';
+  const rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 6e6 } : {});
+  const chunks = []; rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  REC.active = true; clipEl.disabled = true; let left = seconds;
+  const tick = setInterval(() => { left--; clipEl.textContent = 'REC ' + left + 's'; }, 1000);
+  rec.start(250);
+  const blob = await new Promise(res => { rec.onstop = () => res(new Blob(chunks, { type: mime || 'video/webm' })); setTimeout(() => rec.stop(), seconds * 1000); });
+  clearInterval(tick); REC.active = false; clipEl.disabled = false; clipEl.textContent = 'Clip 15s';
+  window.AIWorld.afterRender.splice(window.AIWorld.afterRender.indexOf(draw), 1);
+  if (opts.download !== false) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'aiworld_clip_' + Date.now() + '.webm'; a.click(); }
+  return blob;
+}
+clipEl.addEventListener('click', () => record(15));
+Object.assign(window.AIWorld, { hear, learn, say, record, quick: QUICK, brainUrl: null, onUnmatched: null, afterRender: [],
+  quickList: () => [...QUICK.learned, ...QUICK.lib], forgetLearned() { QUICK.learned = []; localStorage.removeItem('aiworld_quick_learned'); } });
+
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+  mocapTick(t, dt);
   idleTick(t, dt);
   actionTick(t, dt);
   limbsTick(t, dt);
   clumsyTick(t, dt);
+  handsAndTurnTick(t, dt);
   faceTick(t, dt);
   physicsTick(dt);
   for (const f of window.AIWorld.onFrame) { try { f(t, dt); } catch (e) { console.error(e); } }
   controls.update();
   renderer.render(scene, camera);
+  for (const f of window.AIWorld.afterRender) { try { f(); } catch (e) { console.error(e); } }
 }
 animate();
 
