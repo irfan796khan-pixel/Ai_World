@@ -24,6 +24,7 @@ Opening the html file directly does not work: the browser blocks loading `Girl_c
 - `Girl_Room.html` — the room + the girl + the action door. One file, three.js r128 from CDN.
 - `Girl_character_mixamo.glb` — the girl (65-bone Mixamo skeleton incl. fingers, 28 face shapes).
 - `run_girl_room.bat` — starts it.
+- `VOICESTUDIO.md` — idea: free local voice (VoiceStudio) for the characters, with test code.
 
 ## The action door (for Guy 1 — Brain)
 Everything goes through `window.AIWorld` in the page.
