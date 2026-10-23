@@ -28,7 +28,6 @@ Opening the html file directly does not work: the browser blocks loading `Girl_c
 - `quick_replies.json` — about 80 instant replies (around 490 trigger phrases, 240 answers), each tied to a face mood and body moves.
 - `run_girl_room.bat` — starts it.
 - `tools/` — the Python scripts that rebuilt the face (cut the lips open, added teeth/tongue/mouth, new face shapes). Run `python build_face.py out.glb` with the old model saved as `orig.glb` (paths inside the script point to /home/claude/work).
-- `VOICESTUDIO.md` — idea: free local voice (VoiceStudio) for the characters, with test code.
 
 ## The action door (for Guy 1 — Brain)
 Everything goes through `window.AIWorld` in the page.
@@ -82,15 +81,15 @@ AIWorld.build("spawn a red box on the table");
 Her model has no eye-look face shapes, so the eye roll is faked with the head and heavy lids. The flailing is code (strong random turns on every bone), not real ragdoll physics.
 
 ## Quick replies + talk bar (fast answers, no waiting for the brain)
-Type in the bar at the bottom (or call `AIWorld.hear(text)`). If the text matches `quick_replies.json`, she answers at once: speech bubble, browser voice with mouth movement, face mood, and the moves.
+Type in the bar at the bottom (or call `AIWorld.hear(text)`). If the text matches `quick_replies.json`, she answers at once: speech bubble, face mood, and the moves. There is no built-in voice: the voice partner plugs in with `AIWorld.onSay(text)` and plays the sound with `AIWorld.speak`.
 If nothing matches, the text goes to the brain:
 ```js
 AIWorld.onUnmatched = (text) => { /* Guy 1: send to the brain, then AIWorld.reply({...}) */ };
 // or a small web door: POST {text} to this URL, it must answer with the Brain.py JSON ({response, emotion, animation | actions})
 AIWorld.brainUrl = "http://localhost:5005/brain";
 AIWorld.learn({ match: ["what is two plus two"], say: ["Four. Easy."], mood: "amused", actions: [{ thumbs: 2 }] });  // new reply, kept in this browser
-AIWorld.say("Hello!");        // bubble + browser voice
-AIWorld.quick.voice = false;  // turn the browser voice off when the real voice (ElevenLabs / VoiceStudio) is wired in
+AIWorld.say("Hello!");        // speech bubble (and AIWorld.onSay if set)
+AIWorld.onSay = (text) => { /* voice partner: make the audio, then AIWorld.speak(audio) */ };
 ```
 Answers from the brain through `brainUrl` are saved as new quick replies automatically, so the second time is instant.
 
@@ -138,5 +137,4 @@ mouthLeft/Right, mouthStretchLeft/Right. "Left" shapes sit on the model's +x sid
 - Physics is simple and home-made (falling, bouncing, rolling, the glass breaking) — no physics library.
 - Fingers move (from the clips, plus point and thumbs-up). Hair and clothes do not swing yet.
 - Face: 28 of the 52 ARKit shapes. The other 24 (eye look, tongue, jaw sideways, lip roll and press …) need sculpting in Blender.
-- The browser voice (speechSynthesis) gives no sound data, so its mouth movement is made up. A real voice through `AIWorld.speak` follows the sound.
 - Tested in a headless Chromium browser (all actions, the clips, point, thumbs-up, quick replies, the clip recorder, packed vs original file). Not yet tested on the Windows PC.

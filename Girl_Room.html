@@ -329,7 +329,7 @@ function onGirl(gltf) {
   statusEl.textContent = '';
   window.AIWorld.ready = true;
 }
-// The packed file (17 MB, meshopt) loads about 5x faster than the original (83 MB). Same mesh, bones and 28 face shapes.
+// The packed file (14 MB, meshopt) loads about 4x faster than the original (63 MB). Same mesh, bones and 31 face shapes.
 // Girl_Room.html?model=original forces the big file.
 const MODEL_FILES = /model=original/.test(location.search) ? ['Girl_character_mixamo.glb'] : ['Girl_character_mixamo_packed.glb', 'Girl_character_mixamo.glb'];
 const gltfLoader = new THREE.GLTFLoader();
@@ -1265,10 +1265,10 @@ window.AIWorld = {
 //   AIWorld.hear(text)  → runs the matching entry at once and returns it; returns null when nothing matches
 //                         (then the text goes to the brain: AIWorld.onUnmatched(text) if a partner set it, else AIWorld.brainUrl)
 //   AIWorld.learn({match, say, mood, actions})  → the brain adds a new reply; it is kept in the browser (localStorage)
-//   AIWorld.say(text)   → speech bubble + browser voice (speechSynthesis) with mouth movement; off when a real voice is wired in
+//   AIWorld.say(text)   → speech bubble; the text also goes to AIWorld.onSay(text) if the voice partner set it (no built-in voice)
 //   AIWorld.record(15)  → records a 9:16 vertical clip of the canvas and downloads it (webm)
 // ============================================================================
-const QUICK = { lib: [], learned: [], lastSay: {}, voice: true };
+const QUICK = { lib: [], learned: [], lastSay: {} };
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim();
 try { QUICK.learned = JSON.parse(localStorage.getItem('aiworld_quick_learned') || '[]'); } catch (e) { QUICK.learned = []; }
 fetch('quick_replies.json').then(r => r.json()).then(j => { QUICK.lib = j; console.log('quick replies:', j.length, 'entries'); }).catch(e => console.warn('quick_replies.json not loaded', e));
@@ -1297,24 +1297,10 @@ function showBubble(text, seconds) {
   bubbleEl.textContent = text; bubbleEl.classList.add('show'); clearTimeout(bubbleTimer);
   bubbleTimer = setTimeout(() => bubbleEl.classList.remove('show'), (seconds || Math.max(2.5, text.length * 0.07)) * 1000);
 }
-const TTS = { utter: null, level: 0 };
-function say(text) {
+function say(text) {                       // bubble only; the voice is the voice partner's part
   if (!text) return; showBubble(text);
-  if (!QUICK.voice || !window.speechSynthesis) return;
-  speechSynthesis.cancel(); stopSpeaking();
-  const u = new SpeechSynthesisUtterance(text); u.rate = 1.05; u.pitch = 1.15;
-  const voices = speechSynthesis.getVoices(); const fem = voices.find(v => /female|zira|aria|jenny|samantha|google uk english female/i.test(v.name)) || voices.find(v => /en/i.test(v.lang));
-  if (fem) u.voice = fem;
-  u.onstart = () => { TTS.utter = u; TTS.level = 0.6; FX.talking = true; window.AIWorld.speakLevel(0.6); };
-  u.onboundary = () => { TTS.level = 0.55 + 0.4 * Math.random(); };
-  u.onend = u.onerror = () => { if (TTS.utter === u) { TTS.utter = null; FX.talking = false; window.AIWorld.speakLevel(null); } };
-  speechSynthesis.speak(u);
+  if (typeof window.AIWorld.onSay === 'function') { try { window.AIWorld.onSay(text); } catch (e) { console.warn('onSay failed', e); } }
 }
-window.AIWorld.onFrame.push((t, dt) => {   // the browser voice gives no sound data, so the mouth follows a made-up loudness
-  if (!TTS.utter) return;
-  TTS.level = Math.max(0.12, TTS.level - dt * 2.2) ;
-  window.AIWorld.speakLevel(TTS.level * (0.75 + 0.25 * Math.sin(t * 23)));
-});
 function runQuick(e) {
   const text = pickSay(e);
   if (e.mood) setMood(e.mood);
