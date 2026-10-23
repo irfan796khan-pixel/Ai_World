@@ -21,12 +21,13 @@ Double-click `run_girl_room.bat`. It opens http://localhost:8081/Girl_Room.html 
 Opening the html file directly does not work: the browser blocks loading `Girl_character_mixamo.glb` from disk.
 
 ## Files
-- `Girl_Room.html` — the room + the girl + the action door. One file, three.js r128 from CDN.
-- `Girl_character_mixamo.glb` — the girl (65-bone Mixamo skeleton incl. fingers, 28 face shapes), 83 MB.
-- `Girl_character_mixamo_packed.glb` — the same girl packed with meshopt (17 MB). The page loads this one first (about 5x less to download); `Girl_Room.html?model=original` forces the big one.
+- `Girl_Room.html` — the room + the girl + the action door. One file, three.js r147 from CDN (r128 could only blend 8 face shapes at once, so moods with many shapes lost the jaw).
+- `Girl_character_mixamo.glb` — the girl (65-bone Mixamo skeleton incl. fingers, 31 face shapes, a real openable mouth with teeth and tongue).
+- `Girl_character_mixamo_packed.glb` — the same girl packed with meshopt, much smaller. The page loads this one first; `Girl_Room.html?model=original` forces the big one.
 - `moves.json` — real motion from Imran's Mixamo clips (Idle, Walking, Running, Waving, Talking), baked so they fit her bones.
 - `quick_replies.json` — about 80 instant replies (around 490 trigger phrases, 240 answers), each tied to a face mood and body moves.
 - `run_girl_room.bat` — starts it.
+- `tools/` — the Python scripts that rebuilt the face (cut the lips open, added teeth/tongue/mouth, new face shapes). Run `python build_face.py out.glb` with the old model saved as `orig.glb` (paths inside the script point to /home/claude/work).
 - `VOICESTUDIO.md` — idea: free local voice (VoiceStudio) for the characters, with test code.
 
 ## The action door (for Guy 1 — Brain)
@@ -106,8 +107,8 @@ To add a clip: download it from Mixamo as FBX, bake it with the same method into
 Her face runs by itself with 4 layers mixed every frame: **mood** (from the brain's emotion), **alive** (natural blinks, sometimes double, tiny uneven movement), **talking** (mouth, brows and head follow her voice) and **action** (the clumsy moves set their own face).
 
 ```js
-AIWorld.mood("happy");                 // neutral, happy, amused, annoyed, confused, sad, surprised, ew, unimpressed
-                                       // (also: sassy, skeptical, angry, shocked, bored)
+AIWorld.mood("happy");                 // neutral, happy, laugh, amused, annoyed, angry, confused, sad, surprised, ew, unimpressed
+                                       // (also: sassy, skeptical, shocked, bored, laughing, mad)
 AIWorld.mood("annoyed", 0.6, 3);       // strength 0..1, back to neutral after 3 s
 AIWorld.gesture("nod");                // or "shake"
 await AIWorld.speak(blobOrUrl);        // plays her voice (e.g. the MP3 Blob from ElevenLabs) — mouth, brows and head follow the sound
@@ -125,11 +126,13 @@ AIWorld.idle = false;                  // hand the face to someone else (e.g. Au
 ```
 Sound only plays after the person clicks or presses a key once on the page (browser rule).
 
-Face shapes in the model (28, ARKit names): jawOpen, mouthClose, mouthFunnel, mouthPucker, mouthSmileLeft/Right, mouthFrownLeft/Right, eyeBlinkLeft/Right,
+Face shapes in the model (31 = 28 ARKit names + mouthUpperUp, mouthLowerDown, mouthShrugLower; all re-made stronger, the mouth shapes are new): jawOpen, mouthClose, mouthFunnel, mouthPucker, mouthSmileLeft/Right, mouthFrownLeft/Right, eyeBlinkLeft/Right,
 browInnerUp, browDownLeft/Right, browOuterUpLeft/Right, eyeWideLeft/Right, eyeSquintLeft/Right, cheekSquintLeft/Right, cheekPuff, noseSneerLeft/Right,
 mouthLeft/Right, mouthStretchLeft/Right. "Left" shapes sit on the model's +x side. The full ARKit set is 52.
 
 ## Known limits (facts)
+- The mouth: lips are cut along the lip line; jaw opens up to about 2.9 cm at jawOpen = 1. Teeth are simple rounded blocks, the tongue a flat blob. No tears on the sad face. Eyes: the white of the eyeball can show at the corners when she laughs.
+- Not yet tested on the Windows PC (the model has 737k vertices; r147 keeps 31 morph targets as textures, about 365 MB of GPU memory).
 - Walking goes around the sofa, coffee table and plant (grid path search).
 - Idle, walk, run, wave and talk are Mixamo clips. Trip, sit, knock, TV scare, point and thumbs-up are code moves.
 - Physics is simple and home-made (falling, bouncing, rolling, the glass breaking) — no physics library.

@@ -21,10 +21,10 @@
     #bar button.rec { background: #ef4444; color: #fff; }
     #bar button:disabled { opacity: .5; cursor: default; }
   </style>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/libs/meshopt_decoder.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/libs/meshopt_decoder.js"></script>
 </head>
 <body>
 <div id="status">loading the girl…</div>
@@ -367,21 +367,30 @@ function idleTick(t, dt) {
 //   2. alive    natural blinks (sometimes double), tiny face movement, a little uneven
 //   3. talking  mouth, brows and head follow her voice (loudness + sound type)
 //   4. action   the clumsy moves (trip, sit, knock, TV scare) set their own face on top
-// Her model has 28 face shapes (ARKit names). "Left" shapes sit on the +x side of the model.
+// Her model has 31 face shapes (28 ARKit names + mouthUpperUp, mouthLowerDown, mouthShrugLower) and a real mouth (slit lips, teeth, tongue). "Left" shapes sit on the +x side of the model.
 // ============================================================================
 const MOODS = {
   neutral:     {},
-  happy:       { mouthSmileLeft: .85, mouthSmileRight: .8, cheekSquintLeft: .7, cheekSquintRight: .65, eyeSquintLeft: .35, eyeSquintRight: .3, browInnerUp: .15, jawOpen: .12 },
+  happy:       { mouthSmileLeft: .9, mouthSmileRight: .9, cheekSquintLeft: .8, cheekSquintRight: .8, eyeSquintLeft: .3, eyeSquintRight: .3, eyeWideLeft: .25, eyeWideRight: .25,
+                 browInnerUp: .15, browOuterUpLeft: .3, browOuterUpRight: .3, mouthUpperUp: .35, jawOpen: .3 },
+  laugh:       { mouthSmileLeft: 1, mouthSmileRight: 1, cheekSquintLeft: 1, cheekSquintRight: 1, eyeBlinkLeft: 1, eyeBlinkRight: 1, eyeSquintLeft: .9, eyeSquintRight: .9,
+                 browOuterUpLeft: .3, browOuterUpRight: .3, mouthUpperUp: .6, mouthStretchLeft: .25, mouthStretchRight: .25, jawOpen: .6 },
   amused:      { mouthSmileLeft: .9, mouthLeft: .45, cheekSquintLeft: .5, browOuterUpRight: .85, browDownLeft: .25, eyeSquintLeft: .35 },          // sassy smirk
   annoyed:     { browDownLeft: .85, browDownRight: .8, mouthFrownLeft: .45, mouthFrownRight: .4, noseSneerLeft: .3, noseSneerRight: .3, eyeSquintLeft: .3, eyeSquintRight: .3, mouthClose: .4 },
+  angry:       { browDownLeft: 1, browDownRight: 1, eyeSquintLeft: .75, eyeSquintRight: .75, noseSneerLeft: .9, noseSneerRight: .9, cheekSquintLeft: .4, cheekSquintRight: .4,
+                 mouthUpperUp: .7, mouthLowerDown: .3, mouthFrownLeft: .5, mouthFrownRight: .5, mouthStretchLeft: .2, mouthStretchRight: .2, jawOpen: .4 },
   confused:    { browDownLeft: .75, browOuterUpRight: 1, mouthRight: .4, mouthSmileRight: .2, eyeSquintLeft: .35 },                                 // one brow up, mouth to the side
-  sad:         { browInnerUp: 1, mouthFrownLeft: .75, mouthFrownRight: .7, eyeSquintLeft: .15, eyeSquintRight: .15, browDownLeft: .15, browDownRight: .15 },
-  surprised:   { browInnerUp: 1, browOuterUpLeft: 1, browOuterUpRight: 1, eyeWideLeft: 1, eyeWideRight: 1, jawOpen: .4, mouthFunnel: .3 },
+  sad:         { browInnerUp: 1, browDownLeft: .3, browDownRight: .3, eyeSquintLeft: .3, eyeSquintRight: .3, cheekSquintLeft: .25, cheekSquintRight: .25,
+                 mouthFrownLeft: .9, mouthFrownRight: .9, mouthShrugLower: .85, mouthPucker: .12 },
+  surprised:   { eyeWideLeft: 1, eyeWideRight: 1, browInnerUp: 1, browOuterUpLeft: 1, browOuterUpRight: 1, jawOpen: .55, mouthFunnel: 1 },
   ew:          { noseSneerLeft: 1, noseSneerRight: .9, browDownLeft: .6, browDownRight: .55, mouthFrownLeft: .4, mouthFrownRight: .4, mouthStretchLeft: .5, mouthStretchRight: .45, eyeSquintLeft: .4, eyeSquintRight: .4 },
   unimpressed: { cheekPuff: 1, mouthPucker: .4, browDownLeft: .3, browDownRight: .3, eyeSquintLeft: .25, eyeSquintRight: .2 }
 };
-MOODS.sassy = MOODS.amused; MOODS.skeptical = MOODS.confused; MOODS.angry = MOODS.annoyed; MOODS.shocked = MOODS.surprised; MOODS.bored = MOODS.unimpressed;
-const HEAD_FOR_MOOD = { confused: [0, 0, 0.12], skeptical: [0, 0, 0.12], sad: [0.08, 0, 0], unimpressed: [-0.04, 0, -0.05], amused: [-0.03, 0, 0.06], sassy: [-0.03, 0, 0.06] };
+MOODS.sassy = MOODS.amused; MOODS.skeptical = MOODS.confused; MOODS.shocked = MOODS.surprised; MOODS.bored = MOODS.unimpressed; MOODS.laughing = MOODS.laugh; MOODS.mad = MOODS.angry;
+// how strong every mood looks on her face: 1 = full (looks scary), 0.45 = soft and natural. Change live: AIWorld.moodStrength = 0.6
+let MOOD_STRENGTH = 0.45;
+const HEAD_FOR_MOOD = { confused: [0, 0, 0.12], skeptical: [0, 0, 0.12], sad: [0.08, 0, 0], unimpressed: [-0.04, 0, -0.05], amused: [-0.03, 0, 0.06], sassy: [-0.03, 0, 0.06],
+                        laugh: [-0.1, 0, 0], laughing: [-0.1, 0, 0], angry: [0.05, 0, 0], mad: [0.05, 0, 0], surprised: [-0.04, 0, 0], shocked: [-0.04, 0, 0] };
 
 const FX = {
   mood: 'neutral', moodAmt: 1, moodUntil: 0,
@@ -396,7 +405,8 @@ const FX = {
 const ALL_FACE = ['jawOpen', 'mouthClose', 'mouthFunnel', 'mouthPucker', 'mouthSmileLeft', 'mouthSmileRight', 'mouthFrownLeft', 'mouthFrownRight',
   'eyeBlinkLeft', 'eyeBlinkRight', 'browInnerUp', 'browDownLeft', 'browDownRight', 'browOuterUpLeft', 'browOuterUpRight', 'eyeWideLeft', 'eyeWideRight',
   'eyeSquintLeft', 'eyeSquintRight', 'cheekSquintLeft', 'cheekSquintRight', 'cheekPuff', 'noseSneerLeft', 'noseSneerRight',
-  'mouthLeft', 'mouthRight', 'mouthStretchLeft', 'mouthStretchRight'];
+  'mouthLeft', 'mouthRight', 'mouthStretchLeft', 'mouthStretchRight',
+  'mouthUpperUp', 'mouthLowerDown', 'mouthShrugLower'];
 const wobble = (t, a, b) => Math.sin(t * a + FX.seed) * 0.6 + Math.sin(t * b + FX.seed * 1.7) * 0.4;   // smooth "random" -1..1
 
 // ---- voice: plays her audio and listens to it, so the face can follow the sound
@@ -463,7 +473,7 @@ function faceTick(t, dt) {
 
   // 1. mood
   const M = MOODS[FX.mood] || {};
-  for (const k in M) add(k, M[k] * FX.moodAmt);
+  for (const k in M) add(k, M[k] * FX.moodAmt * MOOD_STRENGTH);
 
   // 2. alive: tiny slow movement, a little different on each side
   add('browInnerUp', 0.06 * (1 + wobble(t, 0.31, 0.53)));
@@ -483,7 +493,7 @@ function faceTick(t, dt) {
   FX.emph = Math.max(0, FX.emph - dt * 3); FX.nod = Math.max(0, FX.nod - dt * 2.5);
   const L = FX.level;
   if (L > 0.01) {
-    add('jawOpen', 0.62 * L);
+    add('jawOpen', 0.32 * L);
     add('mouthFunnel', 0.45 * L * FX.low);         // "oo / oh" sounds: round lips
     add('mouthPucker', 0.2 * L * FX.low);
     add('mouthStretchLeft', 0.35 * L * FX.high);   // "ee / s" sounds: wide lips
@@ -1244,6 +1254,7 @@ window.AIWorld = {
   stopSpeaking,
   speakLevel(v) { FX.extLevel = (v === null || v === undefined) ? null : clamp01(v); },   // if the voice plays somewhere else: feed loudness 0..1 each frame, null to stop
   talking: () => FX.talking || FX.level > 0.05,
+  get moodStrength() { return MOOD_STRENGTH; }, set moodStrength(v) { MOOD_STRENGTH = Math.max(0, +v || 0); },
   reply: handleReply,         // AIWorld.reply({response, emotion:'amused', animation:'wave' | actions:[...], audio: blob})
   onFrame: []                 // push functions (t, dt) => {...} to run every frame
 };
