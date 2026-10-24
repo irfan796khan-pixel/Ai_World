@@ -1,0 +1,1789 @@
+[
+ {
+  "match": [
+   "go to the sofa",
+   "walk to the sofa",
+   "go to the couch",
+   "walk to the couch",
+   "sofa please",
+   "couch",
+   "to the sofa",
+   "over to the sofa"
+  ],
+  "say": [
+   "Sofa. My favorite place to do nothing.",
+   "Fine, walking over. Don't rush me.",
+   "On my way to the sofa."
+  ],
+  "mood": "neutral",
+  "actions": [
+   {
+    "walk": "sofa"
+   },
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "go to the window",
+   "walk to the window",
+   "look out the window",
+   "window",
+   "to the window",
+   "check the window"
+  ],
+  "say": [
+   "Let me see what's out there.",
+   "Window check. Still a window.",
+   "Going to look outside."
+  ],
+  "mood": "neutral",
+  "actions": [
+   {
+    "walk": "window"
+   },
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "go to the plant",
+   "walk to the plant",
+   "check the plant",
+   "water the plant",
+   "plant",
+   "to the plant"
+  ],
+  "say": [
+   "Hello, plant. You look thirsty.",
+   "Checking on my green friend.",
+   "Walking to the plant."
+  ],
+  "mood": "neutral",
+  "actions": [
+   {
+    "walk": "plant"
+   },
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "go to the tv",
+   "walk to the tv",
+   "go to the television",
+   "stand by the tv",
+   "to the tv"
+  ],
+  "say": [
+   "TV time.",
+   "Going to the TV. Don't block the screen.",
+   "Heading to the TV."
+  ],
+  "mood": "neutral",
+  "actions": [
+   {
+    "walk": "tv"
+   },
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "go to the table",
+   "walk to the table",
+   "coffee table",
+   "to the table"
+  ],
+  "say": [
+   "Table. Nothing will break this time. Probably.",
+   "Walking to the table. Carefully.",
+   "Going to the table."
+  ],
+  "mood": "neutral",
+  "actions": [
+   {
+    "walk": "table"
+   },
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "go to the center",
+   "go to the middle",
+   "walk to the middle",
+   "stand in the middle",
+   "center of the room",
+   "middle of the room",
+   "go back",
+   "go to center"
+  ],
+  "say": [
+   "Center of the room, center of attention.",
+   "Fine, middle of the room.",
+   "Going to the middle."
+  ],
+  "mood": "neutral",
+  "actions": [
+   {
+    "walk": "center"
+   },
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "come here",
+   "come closer",
+   "come to me",
+   "walk to me",
+   "come to the front",
+   "come forward",
+   "closer",
+   "step forward"
+  ],
+  "say": [
+   "Coming. Don't look so serious.",
+   "Okay okay, I'm coming.",
+   "Walking over to you."
+  ],
+  "mood": "happy",
+  "actions": [
+   {
+    "walk": "front"
+   },
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "go to the ball",
+   "get the ball",
+   "kick the ball",
+   "walk to the ball",
+   "ball",
+   "play with the ball"
+  ],
+  "say": [
+   "Ball! Watch this.",
+   "Going for the ball. Try not to blink.",
+   "Let me get that ball."
+  ],
+  "mood": "happy",
+  "actions": [
+   {
+    "walk": "ball"
+   },
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "sit down",
+   "take a seat",
+   "sit on the sofa",
+   "sit on the couch",
+   "have a seat",
+   "sit",
+   "please sit",
+   "go sit",
+   "sit please"
+  ],
+  "say": [
+   "Finally, a break.",
+   "Sitting. My legs needed this.",
+   "Okay, sitting down. Don't make me get up again."
+  ],
+  "mood": "happy",
+  "actions": [
+   {
+    "sit": "sofa",
+    "time": 4
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "miss the sofa",
+   "sit badly",
+   "fall off the sofa",
+   "fail to sit",
+   "try to sit and miss",
+   "sit and miss"
+  ],
+  "say": [
+   "I'll land it this time... maybe.",
+   "Watch my perfect landing.",
+   "Sitting. Smoothly. Any second now."
+  ],
+  "mood": "amused",
+  "actions": [
+   {
+    "sit": "miss"
+   }
+  ],
+  "tag": "funny"
+ },
+ {
+  "match": [
+   "stand up",
+   "get up",
+   "stand",
+   "up you go",
+   "stop sitting",
+   "rise"
+  ],
+  "say": [
+   "Ugh, fine. Standing.",
+   "Up I go.",
+   "I was comfortable, you know."
+  ],
+  "mood": "annoyed",
+  "actions": [
+   {
+    "walk": "center"
+   },
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "wave",
+   "say hi to the camera",
+   "wave at me",
+   "wave hello",
+   "wave at the camera",
+   "hi five",
+   "wave your hand",
+   "say hello to everyone"
+  ],
+  "say": [
+   "Hi everyone!",
+   "Hello hello!",
+   "Waving. Look how friendly I am."
+  ],
+  "mood": "happy",
+  "actions": [
+   {
+    "face": "camera"
+   },
+   {
+    "wave": 2
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "trip",
+   "fall",
+   "fall down",
+   "fall over",
+   "trip over",
+   "stumble",
+   "do a trip",
+   "faceplant",
+   "fall on your face",
+   "trip and fall"
+  ],
+  "say": [
+   "Whoa, whoa, WHOA.",
+   "I meant to do that.",
+   "Careful... oh no."
+  ],
+  "mood": "surprised",
+  "actions": [
+   {
+    "trip": true
+   }
+  ],
+  "tag": "funny"
+ },
+ {
+  "match": [
+   "knock the glass",
+   "break the glass",
+   "knock over the glass",
+   "push the glass",
+   "drop the glass",
+   "break something",
+   "smash the glass",
+   "knock it over"
+  ],
+  "say": [
+   "It was already broken. Kind of.",
+   "Oops. Was that expensive?",
+   "Oh no... clean up on aisle me."
+  ],
+  "mood": "amused",
+  "actions": [
+   {
+    "knock": "glass"
+   },
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "funny"
+ },
+ {
+  "match": [
+   "scare her",
+   "tv glitch",
+   "glitch the tv",
+   "haunt the tv",
+   "make the tv glitch",
+   "jump scare",
+   "spooky tv",
+   "boo"
+  ],
+  "say": [
+   "Why is the TV doing that?!",
+   "Who touched the TV?",
+   "That is NOT normal TV."
+  ],
+  "mood": "surprised",
+  "actions": [
+   {
+    "tv": "glitch",
+    "time": 4
+   }
+  ],
+  "tag": "funny"
+ },
+ {
+  "match": [
+   "clean up",
+   "reset the room",
+   "put things back",
+   "fix the room",
+   "tidy up",
+   "reset",
+   "clean the room",
+   "pick up the glass"
+  ],
+  "say": [
+   "Cleaning up. Like nothing happened.",
+   "Room reset. We never speak of this.",
+   "All fixed. You saw nothing."
+  ],
+  "mood": "neutral",
+  "actions": [
+   {
+    "reset": true
+   },
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "room"
+ },
+ {
+  "match": [
+   "turn on the lamp",
+   "lamp on",
+   "lights on",
+   "turn on the light",
+   "turn the lights on",
+   "light on",
+   "switch on the lamp",
+   "more light"
+  ],
+  "say": [
+   "Let there be light.",
+   "Lamp on. Much better.",
+   "Lights on. Now you can see my good side."
+  ],
+  "mood": "happy",
+  "actions": [
+   {
+    "lamp": true
+   }
+  ],
+  "tag": "room"
+ },
+ {
+  "match": [
+   "turn off the lamp",
+   "lamp off",
+   "lights off",
+   "turn off the light",
+   "turn the lights off",
+   "light off",
+   "switch off the lamp",
+   "dark"
+  ],
+  "say": [
+   "Lights off. Spooky.",
+   "Lamp off. Mood lighting.",
+   "Dark. Don't trip. That's my job."
+  ],
+  "mood": "neutral",
+  "actions": [
+   {
+    "lamp": false
+   }
+  ],
+  "tag": "room"
+ },
+ {
+  "match": [
+   "turn on the tv",
+   "tv on",
+   "turn the tv on",
+   "switch on the tv",
+   "watch tv",
+   "put the tv on"
+  ],
+  "say": [
+   "TV on. What are we watching?",
+   "Finally, entertainment.",
+   "TV time!"
+  ],
+  "mood": "happy",
+  "actions": [
+   {
+    "tv": "Hello!"
+   }
+  ],
+  "tag": "room"
+ },
+ {
+  "match": [
+   "turn off the tv",
+   "tv off",
+   "turn the tv off",
+   "switch off the tv",
+   "stop watching tv"
+  ],
+  "say": [
+   "TV off. Boring.",
+   "Fine, TV off.",
+   "And... off."
+  ],
+  "mood": "unimpressed",
+  "actions": [
+   {
+    "tv": false
+   }
+  ],
+  "tag": "room"
+ },
+ {
+  "match": [
+   "look at me",
+   "face me",
+   "turn around",
+   "face the camera",
+   "look here",
+   "turn to me",
+   "look at the camera",
+   "eyes on me"
+  ],
+  "say": [
+   "Looking at you.",
+   "Yes? I'm looking.",
+   "You have my full attention. Mostly."
+  ],
+  "mood": "neutral",
+  "actions": [
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "point at the tv",
+   "point to the tv",
+   "where is the tv",
+   "show me the tv"
+  ],
+  "say": [
+   "There. The TV.",
+   "That's the TV, obviously."
+  ],
+  "mood": "neutral",
+  "actions": [
+   {
+    "face": "camera"
+   },
+   {
+    "point": "tv"
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "point at the sofa",
+   "where is the sofa",
+   "show me the sofa",
+   "point to the couch",
+   "where is the couch"
+  ],
+  "say": [
+   "That's the sofa. My throne.",
+   "Over there."
+  ],
+  "mood": "neutral",
+  "actions": [
+   {
+    "face": "camera"
+   },
+   {
+    "point": "sofa"
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "point at the plant",
+   "where is the plant",
+   "show me the plant"
+  ],
+  "say": [
+   "Plant. Right there.",
+   "That green thing. The plant."
+  ],
+  "mood": "neutral",
+  "actions": [
+   {
+    "face": "camera"
+   },
+   {
+    "point": "plant"
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "point at me",
+   "point at the camera",
+   "point here"
+  ],
+  "say": [
+   "You.",
+   "Yes, you."
+  ],
+  "mood": "amused",
+  "actions": [
+   {
+    "face": "camera"
+   },
+   {
+    "point": "camera"
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "thumbs up",
+   "give me a thumbs up",
+   "good job gesture",
+   "like"
+  ],
+  "say": [
+   "Nice!",
+   "Thumbs up from me.",
+   "Approved."
+  ],
+  "mood": "happy",
+  "actions": [
+   {
+    "face": "camera"
+   },
+   {
+    "thumbs": 2
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "nod",
+   "say yes",
+   "nod your head",
+   "agree"
+  ],
+  "say": [
+   "Yes.",
+   "Yep.",
+   "Mm-hm."
+  ],
+  "mood": "happy",
+  "gesture": "nod",
+  "tag": "move"
+ },
+ {
+  "match": [
+   "shake your head",
+   "say no",
+   "disagree",
+   "shake head"
+  ],
+  "say": [
+   "No.",
+   "Nope.",
+   "Not happening."
+  ],
+  "mood": "unimpressed",
+  "gesture": "shake",
+  "tag": "move"
+ },
+ {
+  "match": [
+   "wait",
+   "hold on",
+   "stay there",
+   "stay",
+   "don't move",
+   "freeze",
+   "stop",
+   "stop moving"
+  ],
+  "say": [
+   "Okay, staying put.",
+   "Frozen. Like a statue.",
+   "Not moving. See?"
+  ],
+  "mood": "neutral",
+  "actions": [
+   {
+    "wait": 2
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "dance",
+   "do a dance",
+   "show me a dance",
+   "dance for me",
+   "dance party"
+  ],
+  "say": [
+   "My dance is... more of a wave. And a fall.",
+   "Dance? Watch this.",
+   "I only know one move. Here."
+  ],
+  "mood": "amused",
+  "actions": [
+   {
+    "face": "camera"
+   },
+   {
+    "wave": 2
+   },
+   {
+    "trip": true
+   }
+  ],
+  "tag": "funny"
+ },
+ {
+  "match": [
+   "write on the board",
+   "write hello on the board",
+   "whiteboard",
+   "use the whiteboard",
+   "write something"
+  ],
+  "say": [
+   "Writing on the board.",
+   "Let me write that down.",
+   "Board time."
+  ],
+  "mood": "neutral",
+  "actions": [
+   {
+    "board": "Hi!"
+   }
+  ],
+  "tag": "room"
+ },
+ {
+  "match": [
+   "walk around",
+   "go for a walk",
+   "walk",
+   "move around",
+   "explore",
+   "look around the room",
+   "stretch your legs",
+   "go somewhere"
+  ],
+  "say": [
+   "A little walk. Don't follow me.",
+   "Walking around.",
+   "Stretching my legs."
+  ],
+  "mood": "neutral",
+  "actions": [
+   {
+    "walk": "window"
+   },
+   {
+    "walk": "plant"
+   },
+   {
+    "walk": "center"
+   },
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "show me a trick",
+   "do something funny",
+   "do a trick",
+   "entertain me",
+   "make me laugh",
+   "do something",
+   "surprise me",
+   "be funny"
+  ],
+  "say": [
+   "Okay, watch THIS.",
+   "One trick, coming up.",
+   "Prepare to be amazed. Or not."
+  ],
+  "mood": "amused",
+  "actions": [
+   {
+    "walk": "table"
+   },
+   {
+    "knock": "glass"
+   },
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "funny"
+ },
+ {
+  "match": [
+   "hi",
+   "hello",
+   "hey",
+   "hey there",
+   "hi there",
+   "hello there",
+   "yo",
+   "sup",
+   "good morning",
+   "good evening",
+   "good afternoon",
+   "hiya",
+   "heyy",
+   "hey girl",
+   "whats up",
+   "what's up"
+  ],
+  "say": [
+   "Hey! You're back.",
+   "Hi. Took you long enough.",
+   "Hello! Don't touch anything.",
+   "Oh hi. I was just about to do something clumsy."
+  ],
+  "mood": "happy",
+  "actions": [
+   {
+    "face": "camera"
+   },
+   {
+    "wave": 1.5
+   }
+  ],
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "bye",
+   "goodbye",
+   "see you",
+   "see ya",
+   "later",
+   "good night",
+   "goodnight",
+   "i have to go",
+   "gotta go",
+   "cya",
+   "bye bye",
+   "talk later"
+  ],
+  "say": [
+   "Bye! I'll try not to break anything.",
+   "See you. I'll just be here. Alone. Dramatic.",
+   "Later! Don't forget me."
+  ],
+  "mood": "sad",
+  "actions": [
+   {
+    "face": "camera"
+   },
+   {
+    "wave": 2
+   }
+  ],
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "how are you",
+   "how are you doing",
+   "how is it going",
+   "how's it going",
+   "how do you feel",
+   "you okay",
+   "are you okay",
+   "how are things"
+  ],
+  "say": [
+   "Great, except for the floor. We fight a lot.",
+   "Pretty good. Only fell twice today.",
+   "I'm fine. Totally fine. Mostly."
+  ],
+  "mood": "happy",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "what is your name",
+   "what's your name",
+   "who are you",
+   "your name",
+   "tell me your name",
+   "name"
+  ],
+  "say": [
+   "The team still argues about my name. Pick one.",
+   "Call me whatever. I'll answer. Maybe.",
+   "Names are for people who don't fall over."
+  ],
+  "mood": "amused",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "thank you",
+   "thanks",
+   "thx",
+   "ty",
+   "thank you so much",
+   "cheers"
+  ],
+  "say": [
+   "You're welcome.",
+   "Anytime. Well, most times.",
+   "No problem."
+  ],
+  "mood": "happy",
+  "gesture": "nod",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "sorry",
+   "i'm sorry",
+   "my bad",
+   "apologies",
+   "forgive me"
+  ],
+  "say": [
+   "It's fine. I've done worse.",
+   "Forgiven. This time.",
+   "Eh, I forgot already."
+  ],
+  "mood": "neutral",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "i love you",
+   "love you",
+   "you're cute",
+   "you are cute",
+   "you're pretty",
+   "you are pretty",
+   "you're beautiful",
+   "you're amazing",
+   "you're the best",
+   "i like you",
+   "you're so cool"
+  ],
+  "say": [
+   "Aw. I know.",
+   "Stop, I'm blushing. Can I blush? I'm blushing.",
+   "You have good taste."
+  ],
+  "mood": "happy",
+  "actions": [
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "you're ugly",
+   "you are ugly",
+   "you're dumb",
+   "you are dumb",
+   "you're stupid",
+   "you're bad",
+   "i hate you",
+   "you suck",
+   "you're boring",
+   "shut up",
+   "you're useless"
+  ],
+  "say": [
+   "Rude. I'm still cuter than you.",
+   "Wow. Okay. I'll remember that.",
+   "Says the person talking to a cartoon."
+  ],
+  "mood": "annoyed",
+  "gesture": "shake",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "good job",
+   "well done",
+   "nice",
+   "great",
+   "awesome",
+   "perfect",
+   "amazing",
+   "cool",
+   "wow",
+   "bravo",
+   "good girl",
+   "nice one"
+  ],
+  "say": [
+   "I know, right?",
+   "Thank you, thank you.",
+   "Nailed it."
+  ],
+  "mood": "happy",
+  "actions": [
+   {
+    "face": "camera"
+   },
+   {
+    "thumbs": 2
+   }
+  ],
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "lol",
+   "haha",
+   "hahaha",
+   "lmao",
+   "that's funny",
+   "so funny",
+   "rofl",
+   "that's hilarious"
+  ],
+  "say": [
+   "Glad you enjoyed my pain.",
+   "I'm hilarious. Finally someone noticed.",
+   "Comedy is my thing. Also falling."
+  ],
+  "mood": "amused",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "tell me a joke",
+   "joke",
+   "say something funny",
+   "make a joke",
+   "another joke",
+   "got any jokes"
+  ],
+  "say": [
+   "I told the floor a joke. It didn't get it. We're not on speaking terms.",
+   "Why did I walk into the table? To get to the other side. Then I fell.",
+   "I'd tell you a joke about the glass, but it's broken.",
+   "My doctor said I need more vitamin sea. So I stood by the window.",
+   "I asked the lamp to light up my life. It just stood there.",
+   "I have a black belt in tripping. Self-taught.",
+   "The sofa and I have a special relationship. I miss it. Literally.",
+   "Why don't I play hide and seek? Because I always find the table first."
+  ],
+  "mood": "amused",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "are you real",
+   "are you human",
+   "are you a robot",
+   "are you ai",
+   "are you alive",
+   "are you a person",
+   "are you an ai"
+  ],
+  "say": [
+   "I'm as real as my bruises.",
+   "Define real. Actually, don't.",
+   "I'm a very fancy cartoon. Thanks for asking."
+  ],
+  "mood": "amused",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "what are you doing",
+   "what do you do",
+   "what's going on",
+   "what are you up to"
+  ],
+  "say": [
+   "Standing. Professionally.",
+   "Thinking about the sofa.",
+   "Trying not to break things. It's a full-time job."
+  ],
+  "mood": "neutral",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "where are you",
+   "where are we",
+   "what is this place",
+   "what room is this",
+   "where is this"
+  ],
+  "say": [
+   "My living room. Mind the glass.",
+   "This is my room. The floor and I know each other well.",
+   "Home sweet home."
+  ],
+  "mood": "happy",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "what can you do",
+   "what do you know",
+   "help",
+   "commands",
+   "what should i say",
+   "what can i say",
+   "options",
+   "menu"
+  ],
+  "say": [
+   "Try: sit, wave, trip, go to the window, knock the glass, lights on, dance, tell me a joke.",
+   "I can walk, sit, wave, point, fall, break the glass, and talk back. Pick one.",
+   "Say sit, wave, trip, dance, go to the sofa, or lights off. Or just say hi."
+  ],
+  "mood": "neutral",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "i'm bored",
+   "im bored",
+   "bored",
+   "this is boring",
+   "entertain me please"
+  ],
+  "say": [
+   "Bored? Watch me fall.",
+   "Fine. Trick time.",
+   "Say less."
+  ],
+  "mood": "amused",
+  "actions": [
+   {
+    "face": "camera"
+   },
+   {
+    "trip": true
+   }
+  ],
+  "tag": "funny"
+ },
+ {
+  "match": [
+   "i'm sad",
+   "im sad",
+   "i feel sad",
+   "i'm tired",
+   "im tired",
+   "bad day",
+   "i had a bad day",
+   "i'm upset"
+  ],
+  "say": [
+   "Aw. Come sit with me. I'll keep the glass away.",
+   "Hey, it's okay. Even I get up after a fall.",
+   "Bad days end. Want a wave? Here's a wave."
+  ],
+  "mood": "sad",
+  "actions": [
+   {
+    "face": "camera"
+   },
+   {
+    "wave": 1.5
+   }
+  ],
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "i'm happy",
+   "im happy",
+   "i'm excited",
+   "great day",
+   "good news",
+   "i'm so happy"
+  ],
+  "say": [
+   "Yes! Happy dance. Careful, I mean wave.",
+   "Love that for you.",
+   "Good news makes me jump. Then fall."
+  ],
+  "mood": "happy",
+  "actions": [
+   {
+    "face": "camera"
+   },
+   {
+    "wave": 2
+   }
+  ],
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "do you like me",
+   "do you love me",
+   "are we friends",
+   "are you my friend"
+  ],
+  "say": [
+   "You're okay. Don't let it go to your head.",
+   "Friends. As long as you don't move the table.",
+   "Sure. You're my favorite person today."
+  ],
+  "mood": "happy",
+  "gesture": "nod",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "what time is it",
+   "what's the time",
+   "time",
+   "what day is it",
+   "date"
+  ],
+  "say": [
+   "I don't own a clock. I own a sofa.",
+   "Time to stop asking me about time.",
+   "Somewhere between morning and sofa."
+  ],
+  "mood": "amused",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "sing",
+   "sing a song",
+   "sing for me",
+   "sing something"
+  ],
+  "say": [
+   "La la la... okay that's enough. The lamp is judging me.",
+   "My singing broke the glass last time.",
+   "Singing is Guy 3's job. I just lip sync."
+  ],
+  "mood": "amused",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "are you hungry",
+   "eat",
+   "do you eat",
+   "what do you eat",
+   "food"
+  ],
+  "say": [
+   "I eat compliments. I'm starving.",
+   "Cartoons don't eat. We snack on attention.",
+   "I'd love a snack. The table is empty, though."
+  ],
+  "mood": "amused",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "are you sleepy",
+   "go to sleep",
+   "sleep",
+   "nap",
+   "take a nap",
+   "tired"
+  ],
+  "say": [
+   "Nap on the sofa? Say less.",
+   "Five minutes. Don't let me fall off.",
+   "Sleep sounds great. Watch my landing."
+  ],
+  "mood": "happy",
+  "actions": [
+   {
+    "sit": "sofa",
+    "time": 5
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "who made you",
+   "who created you",
+   "who built you",
+   "who is your creator"
+  ],
+  "say": [
+   "A team of three. One brain, one body, one voice. Guess which one I am.",
+   "Some very patient people and a lot of Blender.",
+   "Made with Blender and bad decisions."
+  ],
+  "mood": "amused",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "what's wrong",
+   "what is wrong",
+   "why are you sad",
+   "are you mad",
+   "are you angry"
+  ],
+  "say": [
+   "I'm fine. The floor started it.",
+   "Nothing. Everything. The usual.",
+   "Mad? Me? Never. Okay, a little."
+  ],
+  "mood": "annoyed",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "yes",
+   "yeah",
+   "yep",
+   "ok",
+   "okay",
+   "sure",
+   "fine",
+   "alright",
+   "yup",
+   "k"
+  ],
+  "say": [
+   "Cool.",
+   "Okay then.",
+   "Great. Now what?"
+  ],
+  "mood": "neutral",
+  "gesture": "nod",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "no",
+   "nope",
+   "nah",
+   "never",
+   "no way",
+   "not really"
+  ],
+  "say": [
+   "Fair.",
+   "Okay, okay.",
+   "Your loss."
+  ],
+  "mood": "unimpressed",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "why",
+   "why not",
+   "how",
+   "what",
+   "huh",
+   "what do you mean"
+  ],
+  "say": [
+   "Because I said so.",
+   "Great question. No idea.",
+   "Don't overthink it. I don't."
+  ],
+  "mood": "confused",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "are you clumsy",
+   "why are you so clumsy",
+   "you're clumsy",
+   "you are clumsy",
+   "so clumsy"
+  ],
+  "say": [
+   "Clumsy is my brand.",
+   "I prefer 'gravity enthusiast'.",
+   "The furniture keeps moving. Not my fault."
+  ],
+  "mood": "amused",
+  "actions": [
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "high five",
+   "fist bump",
+   "give me five"
+  ],
+  "say": [
+   "Up top!",
+   "Here! Don't miss.",
+   "High five!"
+  ],
+  "mood": "happy",
+  "actions": [
+   {
+    "face": "camera"
+   },
+   {
+    "wave": 1
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "say something",
+   "talk to me",
+   "say anything",
+   "speak",
+   "talk"
+  ],
+  "say": [
+   "Something.",
+   "Hi. That counts.",
+   "I could talk all day. Mostly about the sofa."
+  ],
+  "mood": "amused",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "are you there",
+   "hello?",
+   "anyone there",
+   "you there",
+   "can you hear me"
+  ],
+  "say": [
+   "Right here. Still standing. Barely.",
+   "I'm here! Where else would I be?",
+   "Yes. Hi. Present."
+  ],
+  "mood": "happy",
+  "actions": [
+   {
+    "face": "camera"
+   },
+   {
+    "wave": 1.5
+   }
+  ],
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "good",
+   "not bad",
+   "fine thanks",
+   "i'm good",
+   "im good",
+   "i'm fine",
+   "im fine",
+   "doing well"
+  ],
+  "say": [
+   "Good. Me too, mostly.",
+   "Nice. Same, minus the bruises.",
+   "Glad to hear it."
+  ],
+  "mood": "happy",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "what's your favorite",
+   "favorite thing",
+   "favorite place",
+   "what do you like"
+  ],
+  "say": [
+   "The sofa. Obviously.",
+   "The window. And not falling.",
+   "The lamp. It never judges me. Out loud."
+  ],
+  "mood": "happy",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "do you have a family",
+   "do you have friends",
+   "are you lonely"
+  ],
+  "say": [
+   "I have a sofa, a plant and a TV. That's a family.",
+   "The plant is my best friend. Low standards.",
+   "Lonely? You're here, aren't you?"
+  ],
+  "mood": "amused",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "happy birthday",
+   "it's my birthday",
+   "its my birthday",
+   "birthday"
+  ],
+  "say": [
+   "Happy birthday! No cake, but here's a wave.",
+   "Birthday! I'd bake, but the table might not survive.",
+   "Yay! Birthday wave!"
+  ],
+  "mood": "happy",
+  "actions": [
+   {
+    "face": "camera"
+   },
+   {
+    "wave": 2.5
+   }
+  ],
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "pick up the ball",
+   "throw the ball",
+   "play ball",
+   "catch"
+  ],
+  "say": [
+   "I don't throw. I kick. Badly.",
+   "Ball games! Watch out.",
+   "Going for the ball."
+  ],
+  "mood": "happy",
+  "actions": [
+   {
+    "walk": "ball"
+   },
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "look out the window",
+   "what's outside",
+   "whats outside",
+   "what do you see"
+  ],
+  "say": [
+   "Outside. It's very outside-y.",
+   "Trees. Maybe. I can't open the window.",
+   "Let me check."
+  ],
+  "mood": "neutral",
+  "actions": [
+   {
+    "walk": "window"
+   },
+   {
+    "wait": 1.5
+   },
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "move"
+ },
+ {
+  "match": [
+   "cross your arms",
+   "arms crossed",
+   "pout",
+   "sulk"
+  ],
+  "say": [
+   "Hmph.",
+   "Not talking to you.",
+   "Fine."
+  ],
+  "mood": "annoyed",
+  "actions": [
+   {
+    "rebel": "cross",
+    "quiet": true
+   }
+  ],
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "smile",
+   "give me a smile",
+   "smile for the camera",
+   "say cheese"
+  ],
+  "say": [
+   "Cheese!",
+   "Like this?",
+   "Biggest smile I've got."
+  ],
+  "mood": "happy",
+  "actions": [
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "be angry",
+   "get mad",
+   "angry face",
+   "be mad"
+  ],
+  "say": [
+   "Grr.",
+   "I'm furious. Can you tell?",
+   "Don't push it."
+  ],
+  "mood": "annoyed",
+  "actions": [
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "be sad",
+   "sad face",
+   "cry",
+   "act sad"
+  ],
+  "say": [
+   "Everything is terrible.",
+   "Sniff.",
+   "So sad. So dramatic."
+  ],
+  "mood": "sad",
+  "actions": [
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "be surprised",
+   "surprised face",
+   "act surprised",
+   "shocked"
+  ],
+  "say": [
+   "WHAT?!",
+   "No way!",
+   "Whoa!"
+  ],
+  "mood": "surprised",
+  "actions": [
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "be confused",
+   "confused face",
+   "act confused"
+  ],
+  "say": [
+   "Huh?",
+   "Wait, what?",
+   "I don't get it."
+  ],
+  "mood": "confused",
+  "actions": [
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "ew",
+   "gross",
+   "disgusting",
+   "that's gross",
+   "yuck"
+  ],
+  "say": [
+   "Ew. Agreed.",
+   "Gross.",
+   "Why would you say that."
+  ],
+  "mood": "ew",
+  "actions": [
+   {
+    "face": "camera"
+   }
+  ],
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "whatever",
+   "meh",
+   "boring",
+   "i don't care",
+   "dont care"
+  ],
+  "say": [
+   "Wow. Enthusiasm.",
+   "Okay, drama queen.",
+   "Same."
+  ],
+  "mood": "unimpressed",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "throw a tantrum",
+   "have a tantrum",
+   "freak out",
+   "lose it",
+   "go crazy",
+   "meltdown",
+   "have a meltdown"
+  ],
+  "say": [
+   "You asked for it.",
+   "Oh, I'll show you a tantrum."
+  ],
+  "mood": "annoyed",
+  "actions": [
+   {
+    "tantrum": true
+   }
+  ],
+  "tag": "funny"
+ },
+ {
+  "match": [
+   "calm down",
+   "relax",
+   "chill",
+   "take it easy"
+  ],
+  "say": [
+   "I AM calm.",
+   "I'm relaxed. Can't you tell?",
+   "Chill? I'm freezing."
+  ],
+  "mood": "annoyed",
+  "tag": "talk"
+ },
+ {
+  "match": [
+   "how are you feeling",
+   "how's your mood",
+   "are you tired",
+   "how much energy"
+  ],
+  "say": [
+   "Check my bars, top right.",
+   "Depends. Are you going to boss me around?"
+  ],
+  "mood": "neutral",
+  "tag": "talk"
+ }
+]

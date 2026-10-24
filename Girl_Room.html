@@ -10,13 +10,26 @@
       background: rgba(15, 23, 42, 0.72); color: #e2e8f0; padding: 8px 12px; border-radius: 12px;
       font-family: 'Consolas', monospace; font-size: 12px; }
     #status:empty { display: none; }
+    #bubble { position: absolute; left: 50%; bottom: 92px; transform: translateX(-50%); max-width: 70vw; z-index: 10; pointer-events: none;
+      background: #fff; color: #0f172a; padding: 10px 16px; border-radius: 18px; font-size: 17px; box-shadow: 0 4px 16px rgba(0,0,0,.18);
+      opacity: 0; transition: opacity .25s; }
+    #bubble.show { opacity: 1; }
+    #bar { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 10; display: flex; gap: 8px; align-items: center;
+      background: rgba(15, 23, 42, 0.78); padding: 8px 10px; border-radius: 999px; }
+    #bar input { width: min(52vw, 440px); border: 0; outline: 0; border-radius: 999px; padding: 9px 14px; font-size: 15px; font-family: inherit; }
+    #bar button { white-space: nowrap; border: 0; border-radius: 999px; padding: 9px 14px; font-size: 14px; font-family: inherit; cursor: pointer; background: #e2e8f0; color: #0f172a; }
+    #bar button.rec { background: #ef4444; color: #fff; }
+    #bar button:disabled { opacity: .5; cursor: default; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/loaders/GLTFLoader.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/libs/meshopt_decoder.js"></script>
 </head>
 <body>
 <div id="status">loading the girl…</div>
+<div id="bubble"></div>
+<div id="bar"><input id="say" placeholder="say something: sit, wave, trip, go to the window, tell me a joke…" autocomplete="off"><button id="send">Send</button><button id="clip" class="rec" title="record a 15 s vertical clip (9:16) for TikTok">Clip 15s</button></div>
 <script>
 // ============================================================================
 // AI World — ONLY the girl and the room.
@@ -146,7 +159,7 @@ const glassProp = addProp(glass, { r: 0.07, bounce: 0.2, breakable: true });
 const bookProp = addProp(book, { r: 0.025, bounce: 0.1, flat: true });
 // height of whatever is under a point (floor, coffee table, sofa seat, TV stand)
 function supportY(x, z) {
-  if (x > 1.35 && x < 3.05 && z > -3.25 && z < -2.35) return 0.42;
+  if (x > TBL.rect.x0 && x < TBL.rect.x1 && z > TBL.rect.z0 && z < TBL.rect.z1) return 0.42;   // coffee table (moves when she flips it)
   if (x > 0.5 && x < 3.9 && z > -5.2 && z < -4.0) return 0.45;
   if (x > -6.85 && x < -6.35 && z > -1.0 && z < 1.0) return 0.6;
   return 0;
@@ -158,6 +171,7 @@ function pushProp(p, vx, vy, vz, spin = 6) {
   p.sleep = false;
 }
 function shatter(p) {
+  sfx('shatter');
   p.mesh.visible = false; p.sleep = true; p.broken = true;
   const mat = new THREE.MeshStandardMaterial({ color: 0xbae6fd, transparent: true, opacity: 0.85 });
   for (let i = 0; i < 10; i++) {
@@ -178,12 +192,13 @@ function resetProps() {
     p.mesh.position.copy(p.home.pos); p.mesh.rotation.copy(p.home.rot); p.mesh.visible = true;
     p.v.set(0, 0, 0); p.w.set(0, 0, 0); p.sleep = true; p.broken = false;
   }
+  sassReset();
 }
 function physicsTick(dt) {
   // walking into the ball kicks it
   if (typeof act !== 'undefined' && act.walking && !ballProp.broken) {
     const dx = ball.position.x - girl.position.x, dz = ball.position.z - girl.position.z, d = Math.hypot(dx, dz);
-    if (d > 0.01 && d < 0.4 && ball.position.y < 0.3 && ballProp.v.lengthSq() < 0.5) pushProp(ballProp, dx / d * 2.4, 1.1, dz / d * 2.4, 0);
+    if (d > 0.01 && d < 0.4 && ball.position.y < 0.3 && ballProp.v.lengthSq() < 0.5) { pushProp(ballProp, dx / d * 2.4, 1.1, dz / d * 2.4, 0); sassStub(); }
   }
   for (const p of props) {
     if (p.sleep) continue;
@@ -245,14 +260,37 @@ function aimBone(bone, child, want) {
   bone.updateMatrixWorld(true);
 }
 
-new THREE.GLTFLoader().load('Girl_character_mixamo.glb', (gltf) => {
+// Size of the body as it is drawn (bones applied). Box3.setFromObject reads the raw vertex numbers, which are
+// small whole numbers in the packed file, so it would size her wrong. Same result for the packed and the original file.
+function skinnedBox(root) {
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3();
+  root.traverse(m => {
+    if (!m.isMesh) return;
+    if (!m.isSkinnedMesh) { box.expandByObject(m); return; }
+    const g = m.geometry, P = g.attributes.position, I = g.attributes.skinIndex, Wt = g.attributes.skinWeight;
+    const den = (a) => !a.normalized ? 1 : a.array instanceof Int8Array ? 127 : a.array instanceof Uint8Array ? 255 : a.array instanceof Int16Array ? 32767 : a.array instanceof Uint16Array ? 65535 : 1;
+    const pn = den(P), wn = den(Wt);
+    const mats = m.skeleton.bones.map((b, k) => new THREE.Matrix4().multiplyMatrices(b.matrixWorld, m.skeleton.boneInverses[k]).multiply(m.bindMatrix));
+    const v = new THREE.Vector3(), o = new THREE.Vector3(), t = new THREE.Vector3();
+    const step = Math.max(1, Math.floor(P.count / 40000));
+    for (let i = 0; i < P.count; i += step) {
+      v.set(P.getX(i) / pn, P.getY(i) / pn, P.getZ(i) / pn); o.set(0, 0, 0);
+      const w = [Wt.getX(i), Wt.getY(i), Wt.getZ(i), Wt.getW(i)], j = [I.getX(i), I.getY(i), I.getZ(i), I.getW(i)];
+      for (let c = 0; c < 4; c++) if (w[c]) o.addScaledVector(t.copy(v).applyMatrix4(mats[j[c]]), w[c] / wn);
+      box.expandByPoint(o);
+    }
+  });
+  return box;
+}
+function onGirl(gltf) {
   const obj = gltf.scene;
   // same size rule as index.html: biggest side = 1.9, feet on the floor, centered
-  const box = new THREE.Box3().setFromObject(obj);
+  const box = skinnedBox(obj);
   const size = box.getSize(new THREE.Vector3());
   obj.scale.setScalar(1.9 / Math.max(size.x, size.y, size.z));
   obj.updateMatrixWorld(true);
-  const sBox = new THREE.Box3().setFromObject(obj);
+  const sBox = skinnedBox(obj);
   const c = sBox.getCenter(new THREE.Vector3());
   obj.position.set(-c.x, -sBox.min.y, -c.z);
   obj.traverse(o => {
@@ -269,6 +307,7 @@ new THREE.GLTFLoader().load('Girl_character_mixamo.glb', (gltf) => {
   holder.add(obj);
   girl.add(holder);
   girl.updateMatrixWorld(true);
+  captureTPose();                         // her T-pose, before the arms are relaxed (the Mixamo clips start from a T-pose too)
 
   // relax the arms out of the T-pose (about 15 degrees from the body)
   const down = 0.26;
@@ -283,14 +322,27 @@ new THREE.GLTFLoader().load('Girl_character_mixamo.glb', (gltf) => {
   for (const n in bones) rest[n] = bones[n].quaternion.clone();
   prepareWave();
   prepareClumsy();
+  prepareHands();
 
   loaded = true;
+  prepareMocap();                         // starts the Mixamo clips if moves.json is already here (else when it arrives)
   statusEl.textContent = '';
   window.AIWorld.ready = true;
-}, undefined, (err) => {
-  console.error(err);
-  statusEl.textContent = 'Could not load Girl_character_mixamo.glb. Start with run_girl_room.bat (not by double-clicking the html).';
-});
+}
+// The packed file (14 MB, meshopt) loads about 4x faster than the original (63 MB). Same mesh, bones and 31 face shapes.
+// Girl_Room.html?model=original forces the big file.
+const MODEL_FILES = /model=original/.test(location.search) ? ['Girl_character_mixamo.glb'] : ['Girl_character_mixamo_packed.glb', 'Girl_character_mixamo.glb'];
+const gltfLoader = new THREE.GLTFLoader();
+if (window.MeshoptDecoder) gltfLoader.setMeshoptDecoder(window.MeshoptDecoder);
+function loadGirl(i) {
+  statusEl.textContent = 'loading the girl… (' + MODEL_FILES[i] + ')';
+  gltfLoader.load(MODEL_FILES[i], (g) => { window.AIWorld.modelFile = MODEL_FILES[i]; onGirl(g); }, undefined, (err) => {
+    if (i + 1 < MODEL_FILES.length) { console.warn('could not load ' + MODEL_FILES[i] + ', trying ' + MODEL_FILES[i + 1], err); return loadGirl(i + 1); }
+    console.error(err);
+    statusEl.textContent = 'Could not load Girl_character_mixamo.glb. Start with run_girl_room.bat (not by double-clicking the html).';
+  });
+}
+loadGirl(0);
 
 // ---------------------------------------------------------------- small idle life: breathing + blinking
 const clock = new THREE.Clock();
@@ -441,12 +493,12 @@ function faceTick(t, dt) {
   FX.emph = Math.max(0, FX.emph - dt * 3); FX.nod = Math.max(0, FX.nod - dt * 2.5);
   const L = FX.level;
   if (L > 0.01) {
-    add('jawOpen', 0.32 * L);
+    add('jawOpen', 0.8 * Math.pow(L, 0.7));   // talking mouth: opens clearly even on quiet sounds
     add('mouthFunnel', 0.45 * L * FX.low);         // "oo / oh" sounds: round lips
     add('mouthPucker', 0.2 * L * FX.low);
     add('mouthStretchLeft', 0.35 * L * FX.high);   // "ee / s" sounds: wide lips
     add('mouthStretchRight', 0.35 * L * FX.high);
-    add('mouthClose', 0.25 * (1 - L) * (FX.talking ? 1 : 0));
+    add('mouthClose', 0.08 * (1 - L) * (FX.talking ? 1 : 0));
   }
   add('browInnerUp', 0.35 * FX.emph); add('browOuterUpLeft', 0.25 * FX.emph); add('browOuterUpRight', 0.25 * FX.emph);
 
@@ -482,7 +534,7 @@ function faceTick(t, dt) {
 
   // head: mood tilt + talking nods + nod/shake gestures (used by idleTick)
   const hm = HEAD_FOR_MOOD[FX.mood] || [0, 0, 0];
-  let hx = hm[0] * FX.moodAmt, hy = hm[1], hz = hm[2] * FX.moodAmt;
+  let hx = hm[0] * FX.moodAmt, hy = hm[1] + (FX.leadY || 0), hz = hm[2] * FX.moodAmt;
   hx += 0.06 * Math.sin(Math.PI * FX.nod) + 0.02 * L * Math.sin(t * 9);
   if (FX.gesture) {
     FX.gestureT += dt; const g = FX.gestureT, fade = 1 - clamp01((g - 0.9) / 0.3);
@@ -513,9 +565,11 @@ async function handleReply(r) {
 // 3. ACTIONS — the body does what the brain sends (loop: talk > brain > words + action > ACTION)
 // ============================================================================
 // AIWorld.act([{walk:"sofa"}, {wave:2}, {lamp:true}])  — runs one after another
-//   {walk:"sofa"} or {walk:{x:1,z:2}}   walk to a room spot (names in ROOM_SPOTS)
+//   {walk:"sofa"} or {walk:{x:1,z:2}}   walk to a room spot (names in ROOM_SPOTS); trips over 5 m she runs ({run:true} / {run:false} to force)
 //   {face:"camera"} | {face:90}         turn to the person, or to an angle in degrees
 //   {wave:2}                            wave for 2 seconds
+//   {point:"tv"} | {point:"camera"}     points at it with her arm and index finger (2 s; time:3 to change)
+//   {thumbs:2}                          thumbs-up for 2 seconds
 //   {lamp:true|false}  {tv:true|false|"text on screen"}  {board:"text"}
 //   {wait:1.5}                          stand still 1.5 s
 //   --- clumsy / funny moves ---
@@ -525,8 +579,9 @@ async function handleReply(r) {
 //   {tv:"glitch", time:4}               TV goes crazy by itself, she jumps in fright, then "BOO!"
 //   {reset:true}                        puts the ball, glass and book back (cleans up the shards)
 //   Walking into the ball kicks it.
-const act = { queue: [], cur: null, t: 0, walking: false, waving: 0, onDone: null };
+const act = { queue: [], cur: null, t: 0, walking: false, waving: 0, onDone: null, turnD: 0, turnT: 0, pointing: 0, pointAt: null, thumbs: 0 };
 const WALK_SPEED = 1.1;   // metres per second
+const RUN_SPEED = 2.6;    // long trips (over 5 m) she runs, with the Mixamo running clip
 
 // Furniture she must walk around (footprints, in metres). M = her body radius.
 const OBSTACLES = [
@@ -607,13 +662,24 @@ function writeBoard(text) {
 function startAction(a) {
   act.cur = a; act.t = 0;
   if (a._kind) return;   // internal step of a clumsy move (sit / knock): clumsyTick runs it
+  if (sassStart(a)) return;   // tantrum, hostage, rebel, spawn (section 6)
   if (a.walk !== undefined) {
     const s = typeof a.walk === 'string' ? ROOM_SPOTS[a.walk] : a.walk;
     if (!s) { console.warn('unknown spot', a.walk); return finishAction(); }
     a._to = new THREE.Vector3(s.x, 0, s.z); a._path = findPath(girl.position, a._to); a._face = s.face; act.walking = true;
+    let len = 0, prevP = girl.position; for (const q of a._path) { len += q.distanceTo(prevP); prevP = q; }
+    act.running = !!(a.run || (a.run !== false && len > 5 && MOCAP.ready && STATS.energy > 30));
+    act.lazy = !act.running && STATS.energy < 35;   // tired: slow, dragging walk
   } else if (a.face !== undefined) {
     a._yaw = a.face === 'camera' ? Math.atan2(camera.position.x - girl.position.x, camera.position.z - girl.position.z) : THREE.MathUtils.degToRad(+a.face);
   } else if (a.wave !== undefined) { act.waving = +a.wave || 2; }
+  else if (a.point !== undefined) {           // {point:"tv"} | {point:"camera"} | {point:{x,y,z}}  — arm + index finger at it, 2 s
+    let p = a.point === 'camera' ? camera.position.clone() : typeof a.point === 'string' ? ROOM_SPOTS[a.point] : a.point;
+    if (!p) { console.warn('unknown point target', a.point); return finishAction(); }
+    if (a.point !== 'camera') { const o = POINT_AT[a.point]; p = new THREE.Vector3(o ? o.x : p.x, o ? o.y : 0.9, o ? o.z : p.z); }
+    act.pointAt = p; act.pointing = +a.time || 2; a._dur = act.pointing + 0.4;
+  }
+  else if (a.thumbs !== undefined) { act.thumbs = +a.thumbs || 2; a._dur = act.thumbs + 0.4; }
   else if (a.trip !== undefined) { a._kind = 'trip'; a._dur = 3.6; a._slid = 0; }
   else if (a.sit !== undefined) {
     const miss = a.sit === 'miss', hold = +a.time || 3;
@@ -634,7 +700,7 @@ function startAction(a) {
   else if (a.wait === undefined) { console.warn('unknown action', a); return finishAction(); }
 }
 function finishAction() {
-  const done = act.cur; act.cur = null; act.walking = false;
+  const done = act.cur; act.cur = null; act.walking = false; act.running = false;
   if (done && done._kind) clumsyEnd(done);
   // moves made of several steps report once, with the action the brain sent
   const report = done && (done._report || (done._expanded || done._sub ? null : done));
@@ -643,7 +709,11 @@ function finishAction() {
 }
 function turnToward(yaw, dt, speed = 6) {
   let d = yaw - girl.rotation.y; d = Math.atan2(Math.sin(d), Math.cos(d));
-  girl.rotation.y += d * Math.min(1, dt * speed); return Math.abs(d);
+  // human-like: a big turn starts slower (she shifts her weight first) and the body follows the head
+  const ramp = Math.abs(d) > 0.6 ? 0.55 + 0.45 * clamp01(act.turnT / 0.35) : 1;
+  girl.rotation.y += d * Math.min(1, dt * speed * ramp);
+  act.turnD = d; act.turnT += dt;
+  return Math.abs(d);
 }
 function actionTick(t, dt) {
   const a = act.cur; if (!a || !loaded) return;
@@ -658,7 +728,7 @@ function actionTick(t, dt) {
       return finishAction();
     }
     turnToward(Math.atan2(d.x, d.z), dt);
-    girl.position.addScaledVector(d.normalize(), Math.min(dist, WALK_SPEED * dt));
+    girl.position.addScaledVector(d.normalize(), Math.min(dist, (act.running ? RUN_SPEED : WALK_SPEED * (act.lazy ? 0.6 : 1)) * dt));
   } else if (a._dur !== undefined) { if (act.t >= a._dur) finishAction(); }
   else if (a._yaw !== undefined) { if (turnToward(a._yaw, dt) < 0.02 || act.t > 3) finishAction(); }
   else if (a.wave !== undefined) { act.waving -= dt; if (act.waving <= 0) { act.waving = 0; finishAction(); } }
@@ -668,6 +738,7 @@ function actionTick(t, dt) {
 let walkPhase = 0, walkW = 0, waveW = 0;
 function limbsTick(t, dt) {
   if (!loaded) return;
+  if (MOCAP.ready && MOCAP.w > 0.5) { walkW = 0; waveW = 0; return; }   // the Mixamo clips walk and wave for her
   walkW += ((act.walking ? 1 : 0) - walkW) * Math.min(1, dt * 8);
   waveW += ((act.waving > 0 ? 1 : 0) - waveW) * Math.min(1, dt * 8);
   walkPhase += dt * 7 * walkW;
@@ -770,6 +841,8 @@ function clumsyEnd(a) {
   face({}); setMorph('eyeBlinkLeft', 0); setMorph('eyeBlinkRight', 0);
   for (const n of ['forearmL', 'forearmR', 'handL', 'handR', 'spine006']) if (bones[n] && rest[n]) bones[n].quaternion.copy(rest[n]);
   if (a._kind === 'glitch') drawTV(false);
+  sassEnd(a);
+  if (a._kind === 'sit' && a._mode === 'miss' && STATS.sass && !inTantrum()) act.queue.unshift({ tantrum: true });
 }
 function clumsyTick(t, dt) {
   const a = act.cur;
@@ -891,6 +964,275 @@ function clumsyTick(t, dt) {
 }
 
 // ============================================================================
+// 3b. HANDS + HUMAN-LIKE TURNING
+//   Her Mixamo rig has every finger bone (…HandIndex1-4, Thumb1-4 …). At rest the fingers were
+//   straight like a paddle; now they keep a relaxed curl, open for a wave, point, and make a thumbs-up.
+//   Turning no longer spins her like a statue: the head leads, the feet shuffle, the arms swing a bit.
+// ============================================================================
+const POINT_AT = {    // where the real objects are (ROOM_SPOTS are the places she stands in front of them)
+  tv: { x: -6.8, y: 1.9, z: 0 }, sofa: { x: 2.2, y: 0.6, z: -4.6 }, plant: { x: -5.2, y: 0.85, z: -4.5 }, window: { x: -3, y: 3.2, z: -5.95 },
+  table: { x: 2.2, y: 0.42, z: -2.8 }, ball: { x: -1.6, y: 0.16, z: 1.6 }, lamp: { x: 5.4, y: 1.8, z: -5.3 }, board: { x: 1.2, y: 2.6, z: -5.84 }, center: { x: 0, y: 0, z: 0 }, front: { x: 0, y: 0, z: 1.7 }
+};
+const FINGERS = ['Index', 'Middle', 'Ring', 'Pinky'];
+const fingerAxis = {};            // bone name -> local axis to curl around (sign included)
+// side 'L' / 'R' = the fingers hanging from bones.handL / bones.handR (in her file the "Right…" finger names hang from hand.L, so names are not trusted)
+const FINGER_OF = { L: {}, R: {} };
+function fingerBone(side, finger, j) { return FINGER_OF[side][finger + j]; }
+function sortFingers() {
+  for (const n in bones) {
+    const f = /^mixamorig(?:Left|Right)Hand(Thumb|Index|Middle|Ring|Pinky)([1-4])$/.exec(n); if (!f) continue;
+    let p = bones[n].parent; while (p && p !== bones.handL && p !== bones.handR) p = p.parent;
+    if (p) FINGER_OF[p === bones.handL ? 'L' : 'R'][f[1] + f[2]] = bones[n];
+  }
+}
+// Finds, from her own bones, which local axis curls each joint toward the palm (the tip goes down at rest, palms face down in a T-pose).
+function prepareHands() {
+  girl.updateMatrixWorld(true);
+  sortFingers();
+  const cands = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0]];
+  for (const side of ['L', 'R']) for (const f of [...FINGERS, 'Thumb']) {
+    const tip = fingerBone(side, f, 4) || fingerBone(side, f, 3); if (!tip) continue;
+    const hand = bones['hand' + side]; const palmY = hand ? hand.getWorldPosition(new THREE.Vector3()).y : 0;
+    for (let j = 1; j <= 3; j++) {
+      const b = fingerBone(side, f, j); if (!b) continue;
+      let best = null, bestDrop = -1;
+      for (const c of cands) {
+        const wq = b.getWorldQuaternion(new THREE.Quaternion()).invert();
+        const axis = new THREE.Vector3(...c).applyQuaternion(wq).normalize();
+        const y0 = tip.getWorldPosition(new THREE.Vector3()).y;
+        b.quaternion.copy(rest[b.name]).multiply(new THREE.Quaternion().setFromAxisAngle(axis, 0.6)); b.updateMatrixWorld(true);
+        const y1 = tip.getWorldPosition(new THREE.Vector3()).y;
+        b.quaternion.copy(rest[b.name]); b.updateMatrixWorld(true);
+        const drop = y0 - y1;
+        if (drop > bestDrop) { bestDrop = drop; best = axis; }
+      }
+      fingerAxis[b.name] = best;
+    }
+  }
+}
+const hand = { L: { curl: 0.35, thumb: 0.2, index: null }, R: { curl: 0.35, thumb: 0.2, index: null }, cur: { L: {}, R: {} } };
+function applyHand(side, want, dt, blend = 1) {
+  const c = hand.cur[side]; const k = 1 - Math.exp(-dt * 9);
+  for (const key in want) {
+    if (want[key] === null) { c[key] = null; continue; }                       // null = "no special value" (index follows the other fingers)
+    const from = (c[key] === undefined || c[key] === null) ? (key === 'index' ? (c.curl ?? want.curl) : want[key]) : c[key];
+    c[key] = from + (want[key] - from) * k;
+  }
+  const gains = [1.0, 1.05, 0.7];
+  for (const f of FINGERS) {
+    const curl = (f === 'Index' && c.index !== null && c.index !== undefined) ? c.index : c.curl;
+    for (let j = 1; j <= 3; j++) {
+      const b = fingerBone(side, f, j); if (!b || !fingerAxis[b.name]) continue;
+      const a = curl * gains[j - 1] * (f === 'Pinky' ? 1.1 : f === 'Ring' ? 1.05 : 1);
+      const base = (MOCAP.tposeLocal && MOCAP.tposeLocal[b.name]) || rest[b.name];
+      const q = base.clone().multiply(tmpQ.setFromAxisAngle(fingerAxis[b.name], a));
+      blend >= 1 ? b.quaternion.copy(q) : b.quaternion.slerp(q, blend);
+    }
+  }
+  for (let j = 1; j <= 3; j++) {
+    const b = fingerBone(side, 'Thumb', j); if (!b || !fingerAxis[b.name]) continue;
+    const base = (MOCAP.tposeLocal && MOCAP.tposeLocal[b.name]) || rest[b.name];
+    const q = base.clone().multiply(tmpQ.setFromAxisAngle(fingerAxis[b.name], c.thumb * [0.5, 0.8, 0.6][j - 1]));
+    blend >= 1 ? b.quaternion.copy(q) : b.quaternion.slerp(q, blend);
+  }
+}
+let turnW = 0, shufflePhase = 0, pointW = 0, thumbW = 0;
+function handsAndTurnTick(t, dt) {
+  if (!loaded) return;
+  const a = act.cur, clumsy = a && a._kind;
+  // ---- turning on the spot: feet shuffle, arms counter-swing, head leads the way
+  const turning = a && !act.walking && a._yaw !== undefined && Math.abs(act.turnD) > 0.08;
+  turnW += ((turning ? 1 : 0) - turnW) * Math.min(1, dt * 7);
+  if (!(a && (a._yaw !== undefined || act.walking))) { act.turnD = 0; act.turnT = 0; }
+  if (turnW > 0.01 && !clumsy && !MOCAP.ready) {
+    const dir = Math.sign(act.turnD) || 1;
+    shufflePhase += dt * 9 * turnW;
+    const s1 = Math.max(0, Math.sin(shufflePhase)), s2 = Math.max(0, Math.sin(shufflePhase + Math.PI));
+    addRot('thighL', SGN.thighL * 0.22 * s1 * turnW, 0.12 * dir * turnW, 0); addRot('shinL', SGN.shinL * 0.3 * s1 * turnW, 0, 0);
+    addRot('thighR', SGN.thighR * 0.22 * s2 * turnW, 0.12 * dir * turnW, 0); addRot('shinR', SGN.shinR * 0.3 * s2 * turnW, 0, 0);
+    if (bones.upper_armL) bones.upper_armL.rotateX(0.18 * dir * turnW);        // arms lag behind the turn (inertia)
+    if (bones.upper_armR) bones.upper_armR.rotateX(0.18 * dir * turnW);
+    addRot('spine002', 0.012 * Math.sin(t * 1.6), -0.1 * dir * turnW, 0);        // chest twists a little ahead of the hips
+    girl.position.y += 0.012 * Math.abs(Math.sin(shufflePhase)) * turnW;
+  }
+  // head looks where she is going: ahead of the body while turning, toward the next waypoint while walking
+  let lead = 0;
+  if (a && act.walking && a._path && a._path.length > 1) {
+    const d = new THREE.Vector3().subVectors(a._path[1], girl.position); let yaw = Math.atan2(d.x, d.z) - girl.rotation.y;
+    lead = Math.atan2(Math.sin(yaw), Math.cos(yaw)) * 0.5;
+  } else if (turning) lead = act.turnD * 0.6;
+  FX.leadY = Math.max(-0.5, Math.min(0.5, lead));
+
+  // ---- hands: relaxed by default, open when waving, pointing, thumbs-up
+  const wantL = { curl: 0.35, thumb: 0.2, index: null }, wantR = { curl: 0.35, thumb: 0.2, index: null };
+  if (act.waving > 0) { wantR.curl = 0.08 + 0.05 * Math.sin(t * 9); wantR.thumb = 0.05; }
+  if (act.walking) { wantL.curl = 0.45; wantR.curl = 0.45; }
+  if (act.pointing > 0) { act.pointing -= dt; } if (act.thumbs > 0) { act.thumbs -= dt; }
+  pointW += ((act.pointing > 0 ? 1 : 0) - pointW) * Math.min(1, dt * 6);
+  thumbW += ((act.thumbs > 0 ? 1 : 0) - thumbW) * Math.min(1, dt * 6);
+  if (pointW > 0.01 && act.pointAt && !clumsy) {
+    const sh = bones.upper_armR; if (sh) {
+      const from = girl.worldToLocal(sh.getWorldPosition(new THREE.Vector3()));
+      const to = girl.worldToLocal(act.pointAt.clone()); const dir = to.sub(from).normalize();
+      aimLocal(bones.upper_armR, bones.forearmR, dir, pointW); aimLocal(bones.forearmR, bones.handR, dir, pointW);
+    }
+    wantR.curl = 1.2; wantR.index = 0.02; wantR.thumb = 0.9;
+  }
+  if (thumbW > 0.01 && !clumsy) {
+    aimLocal(bones.upper_armR, bones.forearmR, V3(SIDE_R * 0.35, -0.75, 0.35), thumbW);
+    aimLocal(bones.forearmR, bones.handR, V3(SIDE_R * 0.05, 0.35, 0.95), thumbW);
+    wantR.curl = 1.35; wantR.thumb = -0.15;
+  }
+  if (clumsy) { wantL.curl = 0.6; wantR.curl = 0.6; }
+  if (!MOCAP.ready || MOCAP.w < 0.5) { applyHand('L', wantL, dt); applyHand('R', wantR, dt); }
+  else if (pointW > 0.01 || thumbW > 0.01) applyHand('R', wantR, dt, Math.max(pointW, thumbW));   // the clips move her fingers; point / thumbs-up take the right hand
+  else hand.cur.R = {};
+  // thumbs-up: twist the wrist (around the forearm) until the thumb tip points at the ceiling
+  if (thumbW > 0.05 && !clumsy && bones.handR && bones.forearmR) {
+    const tip = fingerBone('R', 'Thumb', 4) || fingerBone('R', 'Thumb', 3);
+    if (tip) {
+      girl.updateMatrixWorld(true);
+      const hp = bones.handR.getWorldPosition(new THREE.Vector3()), fp = bones.forearmR.getWorldPosition(new THREE.Vector3());
+      const axis = hp.clone().sub(fp).normalize();
+      const th = tip.getWorldPosition(new THREE.Vector3()).sub(hp);
+      const up = new THREE.Vector3(0, 1, 0);
+      const a = th.clone().projectOnPlane(axis).normalize(), b = up.clone().projectOnPlane(axis).normalize();
+      let ang = Math.acos(Math.max(-1, Math.min(1, a.dot(b)))); if (a.clone().cross(b).dot(axis) < 0) ang = -ang;
+      const wq = new THREE.Quaternion().setFromAxisAngle(axis, ang * thumbW);
+      const handW = bones.handR.getWorldQuaternion(new THREE.Quaternion());
+      const parW = bones.handR.parent.getWorldQuaternion(new THREE.Quaternion());
+      bones.handR.quaternion.copy(parW.invert().multiply(wq.multiply(handW)));
+    }
+  }
+}
+
+
+// ============================================================================
+// 3c. REAL MOTION (Mixamo clips: idle, walking, running, waving, talking) — moves.json
+//   The clips were baked from Imran's Mixamo FBX files as "how much each bone turned in the world"
+//   (T-pose to clip pose). Her bones have other names (spine, thigh.L …) and some finger names sit on the
+//   other hand, so bones are matched by where they are on her body, not by name.
+//   The hand-made moves (trip, sit, knock, point, thumbs-up) fade the clips out while they run.
+// ============================================================================
+const MOCAP = { ready: false, clips: null, map: {}, order: [], tposeGL: {}, parentGL: {}, layers: {}, w: 0, armQ: null, hipRest: null, hipH: 0.9 };
+fetch('moves.json').then(r => r.json()).then(j => { MOCAP.clips = j.clips; if (loaded) prepareMocap(); }).catch(e => console.warn('moves.json not loaded — hand-made moves only', e));
+const gl = (obj) => girl.quaternion.clone().invert().multiply(obj.getWorldQuaternion(new THREE.Quaternion()));
+function captureTPose() {
+  girl.updateMatrixWorld(true);
+  MOCAP.tposeLocal = {};
+  for (const n in bones) { MOCAP.tposeGL[n] = gl(bones[n]); MOCAP.tposeLocal[n] = bones[n].quaternion.clone(); }
+  const arm = bones.spine && bones.spine.parent; if (arm) MOCAP.armQ = gl(arm);
+}
+function prepareMocap() {
+  if (MOCAP.ready || !MOCAP.clips || !loaded) return;
+  girl.updateMatrixWorld(true);
+  const x = (n) => bones[n] ? girl.worldToLocal(bones[n].getWorldPosition(new THREE.Vector3())).x : 0;
+  // which of her ".L"/".R" bones is on her left (+x in her frame, same as the Mixamo clips)
+  const leftIsL = x('thighL') > x('thighR');
+  const S = (part) => ({ Left: part + (leftIsL ? 'L' : 'R'), Right: part + (leftIsL ? 'R' : 'L') });
+  const m = { Hips: 'spine', Spine: 'spine001', Spine1: 'spine002', Spine2: 'spine003', Neck: 'spine004', Head: 'spine006' };
+  for (const side of ['Left', 'Right']) {
+    m[side + 'Shoulder'] = S('shoulder')[side]; m[side + 'Arm'] = S('upper_arm')[side]; m[side + 'ForeArm'] = S('forearm')[side]; m[side + 'Hand'] = S('hand')[side];
+    m[side + 'UpLeg'] = S('thigh')[side]; m[side + 'Leg'] = S('shin')[side]; m[side + 'Foot'] = S('foot')[side]; m[side + 'ToeBase'] = S('toe')[side];
+  }
+  // fingers: follow the hand they really hang from
+  for (const n in bones) {
+    const f = /^mixamorig(?:Left|Right)Hand(Thumb|Index|Middle|Ring|Pinky)([1-4])$/.exec(n); if (!f) continue;
+    let p = bones[n].parent; while (p && !/^hand[LR]$/.test(p.name.replace('.', ''))) p = p.parent;
+    if (!p) continue;
+    const side = x(p.name.replace('.', '')) > 0 ? 'Left' : 'Right';
+    m[side + 'Hand' + f[1] + f[2]] = n;
+  }
+  for (const k in m) if (bones[m[k]] && MOCAP.clips.idle.tracks[k]) MOCAP.map[m[k]] = k;
+  // parents before children
+  const seen = new Set(); const visit = (o) => { if (o.isBone && MOCAP.map[o.name] && !seen.has(o.name)) { seen.add(o.name); MOCAP.order.push(o.name); } o.children.forEach(visit); };
+  visit(girl);
+  if (bones.spine) { MOCAP.hipRest = bones.spine.position.clone(); MOCAP.hipH = bones.spine.position.y; }
+  for (const k in MOCAP.clips) MOCAP.layers[k] = { t: 0, w: k === 'idle' ? 1 : 0, speed: 1 };
+  MOCAP.restRelaxed = {}; for (const n of MOCAP.order) MOCAP.restRelaxed[n] = rest[n].clone();
+  MOCAP.ready = true; MOCAP.w = 1;
+  learnFingerAxes();
+  console.log('mocap: ' + MOCAP.order.length + ' bones follow the Mixamo clips (her left = ' + (leftIsL ? '.L' : '.R') + ' bones)');
+}
+// The real bend direction of each finger joint, read from the Mixamo idle clip (fingers there are
+// naturally curled): the turn from her T-pose finger to the idle finger is a "close the hand" turn.
+function learnFingerAxes() {
+  const save = {}; for (const n of MOCAP.order) save[n] = bones[n].quaternion.clone();
+  const saveL = {}; for (const k in MOCAP.layers) { saveL[k] = { ...MOCAP.layers[k] }; MOCAP.layers[k].w = k === 'idle' ? 1 : 0; MOCAP.layers[k].t = 0; }
+  const keepAct = act.cur; act.cur = null; mocapTick(0, 0); act.cur = keepAct;
+  let n0 = 0; const learned = new Set();
+  for (const n in fingerAxis) {
+    if (!MOCAP.tposeLocal[n]) continue;
+    const rel = MOCAP.tposeLocal[n].clone().invert().multiply(bones[n].quaternion);
+    if (rel.w < 0) { rel.x = -rel.x; rel.y = -rel.y; rel.z = -rel.z; rel.w = -rel.w; }
+    const sinH = Math.hypot(rel.x, rel.y, rel.z);
+    if (2 * Math.atan2(sinH, rel.w) > 0.06) { fingerAxis[n] = new THREE.Vector3(rel.x, rel.y, rel.z).divideScalar(sinH); learned.add(n); n0++; }
+  }
+  // a finger that is almost straight in the clip (often the index) bends the same way as its neighbour
+  for (const side of ['L', 'R']) for (const f of FINGERS) for (let j = 1; j <= 3; j++) {
+    const b = fingerBone(side, f, j); if (!b || learned.has(b.name)) continue;
+    for (const g of ['Middle', 'Ring', 'Index', 'Pinky']) { const o = fingerBone(side, g, j); if (o && learned.has(o.name)) { fingerAxis[b.name] = fingerAxis[o.name].clone(); break; } }
+  }
+  for (const n of MOCAP.order) bones[n].quaternion.copy(save[n]);
+  for (const k in saveL) Object.assign(MOCAP.layers[k], saveL[k]);
+  console.log('hands: bend direction from the idle clip for ' + n0 + ' finger joints');
+}
+function clipDelta(clip, t, key, out) {
+  const tr = clip.tracks[key]; if (!tr) return out.set(0, 0, 0, 1);
+  const f = (t * 30) % clip.frames, i = Math.floor(f), j = (i + 1) % clip.frames, u = f - i;
+  out.fromArray(tr, i * 4); return out.slerp(_q2.fromArray(tr, j * 4), u);
+}
+function clipHip(clip, t, out) {
+  const f = (t * 30) % clip.frames, i = Math.floor(f), j = (i + 1) % clip.frames, u = f - i;
+  out.set(lerp(clip.hipXZ[i * 2], clip.hipXZ[j * 2], u), lerp(clip.hipY[i], clip.hipY[j], u), lerp(clip.hipXZ[i * 2 + 1], clip.hipXZ[j * 2 + 1], u)); return out;
+}
+const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _q3 = new THREE.Quaternion(), _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3();
+let lastLocomotion = 'idle';
+function mocapTick(t, dt) {
+  if (!loaded || !MOCAP.ready) return;
+  const a = act.cur;
+  // 1. which clip should play
+  const clumsy = a && a._kind;
+  const turning = a && !act.walking && a._yaw !== undefined && Math.abs(act.turnD) > 0.1;
+  let want = 'idle', speed = 1;
+  if (act.walking) { want = act.running ? 'running' : 'walking'; if (act.lazy) speed = 0.62; }
+  else if (turning) { want = 'walking'; speed = 0.85; }            // small steps while she turns on the spot
+  else if (act.waving > 0) want = 'waving';
+  else if (FX.talking || FX.level > 0.08) want = 'talking';
+  for (const k in MOCAP.layers) {
+    const L = MOCAP.layers[k];
+    if (k === want) { if (L.w < 0.01) L.t = 0; L.speed = speed; }
+    L.w += ((k === want ? 1 : 0) - L.w) * Math.min(1, dt * (k === 'walking' || k === 'running' ? 9 : 5));
+    if (L.w > 0.001) L.t += dt * L.speed;
+  }
+  // 2. how much the clips own the body: not during clumsy moves / sitting
+  MOCAP.w += ((clumsy ? 0 : 1) - MOCAP.w) * Math.min(1, dt * 7);
+  const W = MOCAP.w; if (W < 0.001) { for (const n of MOCAP.order) rest[n].copy(MOCAP.restRelaxed[n]); return; }
+  // 3. blend the clip deltas and pose every bone, parents first
+  const layers = Object.entries(MOCAP.layers).filter(([, L]) => L.w > 0.001);
+  const tot = layers.reduce((s, [, L]) => s + L.w, 0);
+  const done = {};
+  for (const n of MOCAP.order) {
+    const key = MOCAP.map[n];
+    let acc = 0; _q1.set(0, 0, 0, 1);
+    for (const [k, L] of layers) { clipDelta(MOCAP.clips[k], L.t, key, _q3); acc += L.w; _q1.slerp(_q3, L.w / acc); }
+    const want = _q1.multiply(MOCAP.tposeGL[n]);                     // where this bone should point, in her frame
+    const par = bones[n].parent;
+    const parGL = done[par.name] ? done[par.name] : gl(par);
+    const local = parGL.clone().invert().multiply(want);
+    done[n] = want.clone();
+    const q = MOCAP.restRelaxed[n].clone().slerp(local, W);
+    rest[n].copy(q); bones[n].quaternion.copy(q);
+  }
+  // hips: up/down + a little sway (clips are in place; her group does the travelling)
+  if (bones.spine && MOCAP.hipRest) {
+    _v2.set(0, 0, 0);
+    let acc = 0; for (const [k, L] of layers) { clipHip(MOCAP.clips[k], L.t, _v1); acc += L.w; _v2.lerp(_v1, L.w / acc); }
+    bones.spine.position.set(MOCAP.hipRest.x - _v2.x * MOCAP.hipH * W, MOCAP.hipRest.y + _v2.y * MOCAP.hipH * W, MOCAP.hipRest.z - _v2.z * MOCAP.hipH * W);
+  }
+}
+
+// ============================================================================
 // 4. HOOK FOR PARTNERS (brain / voice / face) — use window.AIWorld
 // ============================================================================
 window.AIWorld = {
@@ -917,18 +1259,746 @@ window.AIWorld = {
   onFrame: []                 // push functions (t, dt) => {...} to run every frame
 };
 
+// ============================================================================
+// 5. QUICK REPLIES (instant answers, no brain needed), TALK BAR, CLIP RECORDER
+//   quick_replies.json: [{match:["sit down",…], say:["…"], mood:"happy", actions:[{sit:"sofa"}], gesture:"nod"}]
+//   AIWorld.hear(text)  → runs the matching entry at once and returns it; returns null when nothing matches
+//                         (then the text goes to the brain: AIWorld.onUnmatched(text) if a partner set it, else AIWorld.brainUrl)
+//   AIWorld.learn({match, say, mood, actions})  → the brain adds a new reply; it is kept in the browser (localStorage)
+//   AIWorld.say(text)   → speech bubble; the text also goes to AIWorld.onSay(text) if the voice partner set it (no built-in voice)
+//   AIWorld.record(15)  → records a 9:16 vertical clip of the canvas and downloads it (webm)
+// ============================================================================
+const QUICK = { lib: [], learned: [], lastSay: {} };
+const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim();
+try { QUICK.learned = JSON.parse(localStorage.getItem('aiworld_quick_learned') || '[]'); } catch (e) { QUICK.learned = []; }
+fetch('quick_replies.json').then(r => r.json()).then(j => { QUICK.lib = j; console.log('quick replies:', j.length, 'entries'); }).catch(e => console.warn('quick_replies.json not loaded', e));
+
+function findQuick(text) {
+  const q = norm(text); if (!q) return null;
+  const words = q.split(' ').length;
+  let best = null, bestLen = 0;
+  for (const e of [...QUICK.learned, ...QUICK.lib]) for (const m of e.match) {
+    const p = norm(m); if (!p) continue;
+    if (p === q) return e;                                                   // exact wins at once
+    const short = p.split(' ').length === 1 && p.length <= 4;                // "yes", "no", "ok": only when the whole message is short
+    if (short && words > 3) continue;
+    if (new RegExp('(^| )' + p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '( |$)').test(q) && p.length > bestLen) { best = e; bestLen = p.length; }
+  }
+  return best;
+}
+function pickSay(e) {
+  const opts = e.say || []; if (!opts.length) return '';
+  let i = Math.floor(Math.random() * opts.length);
+  if (opts.length > 1 && opts[i] === QUICK.lastSay[e.match[0]]) i = (i + 1) % opts.length;
+  QUICK.lastSay[e.match[0]] = opts[i]; return opts[i];
+}
+const bubbleEl = document.getElementById('bubble'); let bubbleTimer = 0;
+function showBubble(text, seconds) {
+  bubbleEl.textContent = text; bubbleEl.classList.add('show'); clearTimeout(bubbleTimer);
+  bubbleTimer = setTimeout(() => bubbleEl.classList.remove('show'), (seconds || Math.max(2.5, text.length * 0.07)) * 1000);
+}
+function say(text) {                       // bubble only; the voice is the voice partner's part
+  if (!text) return; showBubble(text);
+  if (typeof window.AIWorld.onSay === 'function') { try { window.AIWorld.onSay(text); } catch (e) { console.warn('onSay failed', e); } }
+}
+function runQuick(e) {
+  const text = pickSay(e);
+  if (e.mood) setMood(e.mood);
+  if (e.gesture) gesture(e.gesture);
+  if (Array.isArray(e.actions) && e.actions.length) { window.AIWorld.stop(); window.AIWorld.act(e.actions); }
+  say(text);
+  return { entry: e, say: text };
+}
+async function hear(text) {
+  if (sassHear(text)) return null;          // hostage drop, room builder, rebellion (section 6)
+  const e = findQuick(text);
+  if (e) return runQuick(e);
+  if (typeof window.AIWorld.onUnmatched === 'function') { window.AIWorld.onUnmatched(text); return null; }
+  if (window.AIWorld.brainUrl) {
+    showBubble('…', 20);
+    try {
+      const r = await fetch(window.AIWorld.brainUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+      const j = await r.json();
+      if (j && j.response && !j.audio) say(j.response);
+      await handleReply(j);
+      if (j && j.learn !== false && j.response) learn({ match: [norm(text)], say: [j.response], mood: j.emotion || 'neutral', actions: j.actions, gesture: j.animation === 'nod' ? 'nod' : j.animation === 'shake_head' ? 'shake' : undefined });
+    } catch (err) { console.warn('brain door failed', err); say("The brain is not answering. Try one of my quick ones."); }
+    return null;
+  }
+  say("I don't know that one yet. No brain is connected.");
+  return null;
+}
+function learn(entry) {
+  if (!entry || !entry.match || !entry.say) return false;
+  const e = { match: [].concat(entry.match), say: [].concat(entry.say), mood: entry.mood || 'neutral' };
+  if (entry.actions) e.actions = entry.actions; if (entry.gesture) e.gesture = entry.gesture;
+  QUICK.learned.unshift(e); QUICK.learned = QUICK.learned.slice(0, 2000);
+  try { localStorage.setItem('aiworld_quick_learned', JSON.stringify(QUICK.learned)); } catch (err) {}
+  return true;
+}
+// ---- talk bar
+const sayEl = document.getElementById('say'), sendEl = document.getElementById('send'), clipEl = document.getElementById('clip');
+function sendText() { const t = sayEl.value.trim(); if (!t) return; sayEl.value = ''; hear(t); }
+sendEl.addEventListener('click', sendText);
+sayEl.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') sendText(); ev.stopPropagation(); });
+// ---- clip recorder: 9:16 vertical crop of the live canvas, 30 fps, saved as .webm (TikTok takes webm and mp4)
+const REC = { active: false };
+async function record(seconds = 15, opts = {}) {
+  if (REC.active) return null;
+  const W = opts.width || 720, H = opts.height || 1280;
+  const off = document.createElement('canvas'); off.width = W; off.height = H; const c2 = off.getContext('2d');
+  const src = renderer.domElement;
+  const draw = () => { const sh = src.height, sw = Math.round(sh * W / H); const sx = Math.round((src.width - sw) / 2); c2.drawImage(src, sx, 0, sw, sh, 0, 0, W, H); if (typeof FXC !== 'undefined' && FXC.width === src.width) c2.drawImage(FXC, sx, 0, sw, sh, 0, 0, W, H); };
+  window.AIWorld.afterRender.push(draw);
+  const stream = off.captureStream(30);
+  try { if (VOICE.ctx && VOICE.analyser) { const dest = VOICE.ctx.createMediaStreamDestination(); VOICE.analyser.connect(dest); if (!SFX.out) sfx('init'); if (SFX.out) SFX.out.connect(dest); for (const tr of dest.stream.getAudioTracks()) stream.addTrack(tr); } } catch (e) {}
+  const mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m)) || '';
+  const rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 6e6 } : {});
+  const chunks = []; rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  REC.active = true; clipEl.disabled = true; let left = seconds;
+  const tick = setInterval(() => { left--; clipEl.textContent = 'REC ' + left + 's'; }, 1000);
+  rec.start(250);
+  const blob = await new Promise(res => { rec.onstop = () => res(new Blob(chunks, { type: mime || 'video/webm' })); setTimeout(() => rec.stop(), seconds * 1000); });
+  clearInterval(tick); REC.active = false; clipEl.disabled = false; clipEl.textContent = 'Clip 15s';
+  window.AIWorld.afterRender.splice(window.AIWorld.afterRender.indexOf(draw), 1);
+  if (opts.download !== false) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'aiworld_clip_' + Date.now() + '.webm'; a.click(); }
+  return blob;
+}
+clipEl.addEventListener('click', () => record(15));
+Object.assign(window.AIWorld, { hear, learn, say, record, quick: QUICK, brainUrl: null, onUnmatched: null, afterRender: [],
+  quickList: () => [...QUICK.learned, ...QUICK.lib], forgetLearned() { QUICK.learned = []; localStorage.removeItem('aiworld_quick_learned'); } });
+
+// ============================================================================
+// 6. SASS & CHAOS — her own mind
+//   STATS: energy, mood, focus, annoyed (0..100). They change by themselves and with what you say.
+//   She decides on her own when nobody talks to her (tired -> lazy walk to the sofa and sits, bored -> wanders, ...).
+//   Boss her around too much and she rebels: crosses her arms + eye roll, taps on your screen, or throws the glass at you.
+//   Too many "walk" orders -> she takes the glass hostage. Type anything -> she drops it.
+//   Missing the sofa or stubbing her toe on the ball -> full tantrum: book at the camera, table flipped, flailing on the floor,
+//   then she stands up calmly like nothing happened.
+//   Room builder: "spawn a red box on the table" -> she "writes" the three.js code on screen and the object drops in with physics.
+//   (The code shown is generated from a fixed recipe; AI-written code is never run, so nothing can break the page.)
+// ============================================================================
+const STATS = { energy: 80, mood: 60, focus: 80, annoy: 10, now: 0, lastInput: -100, nextAuto: 6, cmdTimes: [], walkTimes: [],
+  lastCmd: '', lastCmdT: -100, hostage: null, stubCool: -100, stub: false, auto: true, sass: 1 };
+const clampS = (v) => Math.max(0, Math.min(100, v));
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const SASS_KINDS = new Set(['tantrum', 'hostage', 'cross', 'tap', 'throwglass', 'stub']);
+const isSass = (x) => x && (SASS_KINDS.has(x._kind) || x.tantrum !== undefined || x.hostage !== undefined || x.rebel !== undefined);
+function inTantrum() { return !!((act.cur && (act.cur._kind === 'tantrum' || act.cur.tantrum !== undefined || act.cur._kind === 'stub')) || act.queue.some(q => q._kind === 'tantrum' || q.tantrum !== undefined)); }
+function sassBusy() { return isSass(act.cur) || act.queue.some(isSass); }
+const LINES = {
+  hostage: ["Ask me to walk one more time and the glass dies.", "One more 'walk'. I dare you.", "Say 'walk' again. Go on. The glass is listening."],
+  drop: ["Oops.", "Whoops. Gravity.", "It slipped. Emotionally."],
+  spare: ["Fine. You live, glass.", "The glass survives. For now."],
+  cross: ["Ugh. No.", "Not doing that.", "Do it yourself.", "Hard pass.", "Wow. Bossy."],
+  tap: ["Hello? Is this thing on?", "Stop. Bossing. Me.", "Knock knock. It's me. Annoyed."],
+  throw: ["Oops. My hand slipped.", "Catch!", "That was for the last ten orders."],
+  tired: ["No. I'm tired.", "Too tired. Ask me later.", "My legs said no."],
+  tantrumBusy: ["NOT NOW!", "I'M BUSY BEING ANGRY!", "Can't you see I'm melting down?"],
+  scream: ["AAAARGH!", "WHY?!", "I HATE THIS ROOM!"],
+  calm: ["Anyway.", "So. What were we saying?", "I'm fine. Totally fine."],
+  ow: ["OW! OW! OW!", "MY TOE!", "Who put a ball there?!"],
+  yawn: ["*yawn* Sofa time.", "I need a break.", "Five minutes. Don't wake me."],
+  bored: ["I'm bored.", "Nobody talks to me...", "Hello? Anyone?", "This room needs more stuff."],
+  happy: ["La la la.", "What a nice day.", "I'm in a good mood. Don't ruin it."],
+  spawn: ["Fine. Coming right up.", "Watch me code.", "Magic. Well, three.js.", "One sec, compiling."],
+  clear: ["Poof. All gone.", "Clean room. You're welcome."]
+};
+
+// ---------------------------------------------------------------- sound effects (made on the fly, no files)
+const SFX = { out: null, noise: null };
+function sfx(kind) {
+  try {
+    const c = voiceCtx(); const t0 = c.currentTime;
+    if (!SFX.out) { SFX.out = c.createGain(); SFX.out.gain.value = 0.6; SFX.out.connect(c.destination); }
+    if (!SFX.noise) { const b = c.createBuffer(1, c.sampleRate, c.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; SFX.noise = b; }
+    const noise = (dur, type, freq, vol, at = 0) => {
+      const s = c.createBufferSource(); s.buffer = SFX.noise; const f = c.createBiquadFilter(); f.type = type; f.frequency.value = freq;
+      const g = c.createGain(); g.gain.setValueAtTime(vol, t0 + at); g.gain.exponentialRampToValueAtTime(0.001, t0 + at + dur);
+      s.connect(f); f.connect(g); g.connect(SFX.out); s.start(t0 + at); s.stop(t0 + at + dur + 0.05);
+    };
+    const tone = (f0, f1, dur, vol, at = 0) => {
+      const o = c.createOscillator(); o.frequency.setValueAtTime(f0, t0 + at); o.frequency.exponentialRampToValueAtTime(f1, t0 + at + dur);
+      const g = c.createGain(); g.gain.setValueAtTime(vol, t0 + at); g.gain.exponentialRampToValueAtTime(0.001, t0 + at + dur);
+      o.connect(g); g.connect(SFX.out); o.start(t0 + at); o.stop(t0 + at + dur + 0.05);
+    };
+    if (kind === 'tap') { noise(0.05, 'bandpass', 2200, 0.9); tone(900, 500, 0.04, 0.3); }
+    if (kind === 'thud') { tone(140, 45, 0.3, 0.9); noise(0.15, 'lowpass', 600, 0.7); }
+    if (kind === 'crack') { noise(0.08, 'highpass', 3000, 0.9); noise(0.12, 'highpass', 2000, 0.6, 0.05); noise(0.25, 'bandpass', 5000, 0.4, 0.1); }
+    if (kind === 'shatter') { for (let i = 0; i < 6; i++) noise(0.1 + Math.random() * 0.2, 'highpass', 3000 + Math.random() * 4000, 0.5, i * 0.04); }
+    if (kind === 'crash') { tone(90, 35, 0.6, 1); noise(0.7, 'lowpass', 900, 0.9); noise(0.3, 'bandpass', 1800, 0.4, 0.05); }
+    if (kind === 'pop') { tone(300, 900, 0.08, 0.4); }
+  } catch (e) {}
+}
+
+// ---------------------------------------------------------------- screen effects (drawn on a canvas over the 3D, so the Clip recorder gets them too)
+const FXC = document.createElement('canvas');
+FXC.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:5';
+document.body.appendChild(FXC);
+const FXS = { items: [], shake: 0, shakeAmp: 0, camSave: null, code: null };
+function screenPoint(v3) {
+  const p = v3.clone().project(camera);
+  return { x: (p.x + 1) / 2 * FXC.width, y: (1 - p.y) / 2 * FXC.height, behind: p.z > 1 };
+}
+function shake(amp, secs) { FXS.shakeAmp = Math.max(FXS.shakeAmp, amp); FXS.shake = Math.max(FXS.shake, secs); }
+function addCrack(x, y) {
+  const rays = [];
+  const n = 9 + Math.floor(Math.random() * 5);
+  for (let i = 0; i < n; i++) {
+    let a = (i / n) * Math.PI * 2 + Math.random() * 0.4, px = x, py = y; const pts = [[px, py]];
+    const len = (0.12 + Math.random() * 0.22) * Math.min(FXC.width, FXC.height);
+    for (let s = 0; s < 6; s++) { a += (Math.random() - 0.5) * 0.5; px += Math.cos(a) * len / 6; py += Math.sin(a) * len / 6; pts.push([px, py]); }
+    rays.push(pts);
+  }
+  const rings = [0.05, 0.1].map(r => Array.from({ length: n + 1 }, (_, i) => { const a = (i / n) * Math.PI * 2, rr = r * Math.min(FXC.width, FXC.height) * (0.8 + Math.random() * 0.4); return [x + Math.cos(a) * rr, y + Math.sin(a) * rr]; }));
+  FXS.items.push({ type: 'crack', rays, rings, t: 0, life: 7 });
+}
+function addSplat(x, y, text, color) { FXS.items.push({ type: 'splat', x, y, text, color, t: 0, life: 1.4 }); }
+function addRipple(x, y) { FXS.items.push({ type: 'ripple', x, y, t: 0, life: 0.6 }); }
+function drawFX(dt) {
+  const W = renderer.domElement.width, H = renderer.domElement.height;
+  if (FXC.width !== W || FXC.height !== H) { FXC.width = W; FXC.height = H; }
+  const c = FXC.getContext('2d'); c.clearRect(0, 0, W, H);
+  const S = W / window.innerWidth;   // device pixels per css pixel
+  FXS.items = FXS.items.filter(it => (it.t += dt) < it.life);
+  // nothing to draw: hide the layer (some browsers keep showing the last picture of an emptied canvas)
+  const show = FXS.items.length > 0 || !!FXS.code;
+  if (FXC.style.display !== (show ? '' : 'none')) FXC.style.display = show ? '' : 'none';
+  if (!show) return;
+  for (const it of FXS.items) {
+    const fade = Math.min(1, (it.life - it.t) / 0.6);
+    if (it.type === 'crack') {
+      c.save(); c.globalAlpha = fade; c.lineCap = 'round'; c.lineJoin = 'round';
+      const path = () => { c.beginPath(); for (const r of it.rays) { c.moveTo(r[0][0], r[0][1]); for (const p of r) c.lineTo(p[0], p[1]); } for (const r of it.rings) { c.moveTo(r[0][0], r[0][1]); for (const p of r) c.lineTo(p[0], p[1]); } };
+      c.strokeStyle = 'rgba(15,23,42,0.55)'; c.lineWidth = 4 * S; path(); c.stroke();
+      c.strokeStyle = 'rgba(255,255,255,0.95)'; c.lineWidth = 1.6 * S; path(); c.stroke();
+      c.restore();
+    } else if (it.type === 'splat') {
+      const u = it.t / it.life, sc = 1 + 0.25 * Math.sin(Math.min(1, it.t * 6) * Math.PI);
+      c.save(); c.globalAlpha = Math.min(1, (it.life - it.t) / 0.4); c.translate(it.x, it.y); c.scale(sc, sc); c.rotate(-0.12);
+      c.fillStyle = it.color || '#a855f7'; c.beginPath();
+      for (let i = 0; i <= 16; i++) { const a = i / 16 * Math.PI * 2, r = (i % 2 ? 70 : 110) * S; c.lineTo(Math.cos(a) * r, Math.sin(a) * r); }
+      c.fill();
+      c.font = `900 ${42 * S}px Impact, 'Arial Black', sans-serif`; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.lineWidth = 6 * S; c.strokeStyle = '#111827'; c.strokeText(it.text, 0, 0); c.fillStyle = '#fde047'; c.fillText(it.text, 0, 0);
+      c.restore(); void u;
+    } else if (it.type === 'ripple') {
+      const u = it.t / it.life;
+      c.save(); c.globalAlpha = 1 - u; c.strokeStyle = 'rgba(255,255,255,0.9)'; c.lineWidth = 3 * S;
+      c.beginPath(); c.arc(it.x, it.y, (10 + 70 * u) * S, 0, Math.PI * 2); c.stroke();
+      c.beginPath(); c.arc(it.x, it.y, (4 + 35 * u) * S, 0, Math.PI * 2); c.stroke(); c.restore();
+    }
+  }
+  // the code panel ("she writes the three.js code")
+  const P = FXS.code;
+  if (P) {
+    P.t += dt; const shown = P.text.slice(0, Math.floor(P.t * 110));
+    const alpha = P.doneAt ? Math.max(0, 1 - (P.t - P.doneAt - 2.5) / 0.6) : 1;
+    if (alpha <= 0) FXS.code = null;
+    else {
+      const lines = shown.split('\n'), fs = 13 * S, pad = 12 * S, w = 520 * S, h = (P.text.split('\n').length + 1) * fs * 1.45 + pad * 2;
+      const x0 = 16 * S, y0 = H - h - 96 * S;
+      c.save(); c.globalAlpha = alpha * 0.92; c.fillStyle = '#0b1220'; c.beginPath();
+      if (c.roundRect) c.roundRect(x0, y0, w, h, 12 * S); else c.rect(x0, y0, w, h); c.fill();
+      c.globalAlpha = alpha; c.font = `${fs}px Consolas, 'Courier New', monospace`; c.textBaseline = 'top';
+      c.fillStyle = '#94a3b8'; c.fillText('// she is typing… (three.js)', x0 + pad, y0 + pad);
+      lines.forEach((l, i) => { c.fillStyle = /^\s*\/\//.test(l) ? '#64748b' : '#e2e8f0'; c.fillText(l, x0 + pad, y0 + pad + (i + 1) * fs * 1.45); });
+      if (!P.doneAt && Math.floor(P.t * 3) % 2 === 0) { const last = lines[lines.length - 1] || ''; c.fillStyle = '#38bdf8'; c.fillRect(x0 + pad + c.measureText(last).width + 2, y0 + pad + lines.length * fs * 1.45, fs * 0.55, fs); }
+      c.restore();
+      if (!P.doneAt && shown.length >= P.text.length) { P.doneAt = P.t; try { P.onDone && P.onDone(); } catch (e) { console.error(e); } }
+    }
+  }
+}
+function shakeBefore() {
+  if (FXS.shake > 0) {
+    FXS.camSave = camera.position.clone();
+    const a = FXS.shakeAmp * Math.min(1, FXS.shake / 0.25);
+    camera.position.x += (Math.random() - 0.5) * a; camera.position.y += (Math.random() - 0.5) * a; camera.position.z += (Math.random() - 0.5) * a * 0.5;
+  }
+}
+function shakeAfter() { if (FXS.camSave) { camera.position.copy(FXS.camSave); FXS.camSave = null; } }
+
+// ---------------------------------------------------------------- holding and throwing things
+const HELD = { prop: null };
+function handPos() { return bones.handR ? bones.handR.getWorldPosition(new THREE.Vector3()) : girl.position.clone().add(V3(0, 1, 0)); }
+function grab(p) { HELD.prop = p; p.sleep = true; p.v.set(0, 0, 0); p.w.set(0, 0, 0); p.mesh.visible = true; p.broken = false; }
+function release(vx = 0, vy = 0, vz = 0) { const p = HELD.prop; HELD.prop = null; if (p) pushProp(p, vx, vy, vz, 8); return p; }
+function heldTick() {
+  const p = HELD.prop; if (!p) return;
+  girl.updateMatrixWorld(true);
+  const h = handPos(); p.mesh.position.copy(h).add(forward().multiplyScalar(0.05)); p.mesh.position.y -= 0.02;
+  p.mesh.rotation.set(0, girl.rotation.y, 0);
+}
+const FLY = [];
+function lensPoint() { const d = new THREE.Vector3(); camera.getWorldDirection(d); return camera.position.clone().addScaledVector(d, 0.35); }
+function throwAt(p, target, dur, onHit) {
+  if (HELD.prop === p) HELD.prop = null;
+  p.sleep = true; p.mesh.visible = true;
+  FLY.push({ p, from: p.mesh.position.clone(), to: target.clone(), t: 0, dur, onHit });
+}
+function flyTick(dt) {
+  for (let i = FLY.length - 1; i >= 0; i--) {
+    const f = FLY[i]; f.t += dt; const u = Math.min(1, f.t / f.dur);
+    f.p.mesh.position.lerpVectors(f.from, f.to, u); f.p.mesh.position.y += 0.5 * Math.sin(Math.PI * u);
+    f.p.mesh.rotation.x += dt * 14; f.p.mesh.rotation.z += dt * 9;
+    if (u >= 1) { FLY.splice(i, 1); try { f.onHit && f.onHit(f.p); } catch (e) { console.error(e); } }
+  }
+}
+
+// ---------------------------------------------------------------- the coffee table can be flipped (it tips over its far edge twice and lands upside down)
+const TBL = { home: { pos: table.position.clone(), rot: table.rotation.clone() }, flipped: false, a: 0, rect: { x0: 1.35, x1: 3.05, z0: -3.25, z1: -2.35 } };
+const TABLE_RECT_HOME = { ...TBL.rect };
+function setTableAngle(a) {
+  const P1 = V3(3.05, 0, 0), C0 = V3(TBL.home.pos.x, TBL.home.pos.y, 0);
+  const rot = (v, th) => V3(v.x * Math.cos(th) - v.y * Math.sin(th), v.x * Math.sin(th) + v.y * Math.cos(th), 0);
+  let c;
+  if (a <= Math.PI / 2) c = P1.clone().add(rot(C0.clone().sub(P1), -a));
+  else { const Cmid = P1.clone().add(rot(C0.clone().sub(P1), -Math.PI / 2)), P2 = V3(3.05 + 0.42, 0, 0); c = P2.clone().add(rot(Cmid.clone().sub(P2), -(a - Math.PI / 2))); }
+  table.position.set(c.x, c.y, TBL.home.pos.z); table.rotation.set(0, 0, -a); TBL.a = a;
+}
+function tableFlipped(on) {
+  TBL.flipped = on;
+  Object.assign(TBL.rect, on ? { x0: 3.47, x1: 5.17 } : { x0: TABLE_RECT_HOME.x0, x1: TABLE_RECT_HOME.x1 });
+  OBSTACLES[1].x0 = TBL.rect.x0; OBSTACLES[1].x1 = TBL.rect.x1;   // she walks around it where it lies now
+  if (!on) setTableAngle(0); else setTableAngle(Math.PI);
+}
+function sassReset() {
+  if (HELD.prop) HELD.prop = null;
+  FLY.length = 0;
+  table.position.copy(TBL.home.pos); table.rotation.copy(TBL.home.rot); tableFlipped(false);
+}
+
+// ---------------------------------------------------------------- room builder: spawn things from words
+const SPAWNED = [];
+const COLORS = { red: 0xef4444, blue: 0x3b82f6, green: 0x22c55e, yellow: 0xfacc15, orange: 0xf97316, purple: 0xa855f7, pink: 0xec4899, white: 0xf8fafc,
+  black: 0x111827, gray: 0x9ca3af, grey: 0x9ca3af, brown: 0x92400e, gold: 0xeab308, silver: 0xcbd5e1, cyan: 0x06b6d4, teal: 0x14b8a6, rainbow: -1 };
+const SIZES = { tiny: 0.1, small: 0.18, little: 0.18, mini: 0.12, medium: 0.3, big: 0.5, large: 0.5, huge: 0.85, giant: 1.1, massive: 1.1 };
+const SHAPES = { box: 'box', boxes: 'box', cube: 'box', cubes: 'box', crate: 'box', crates: 'box', block: 'box', blocks: 'box',
+  ball: 'ball', balls: 'ball', sphere: 'ball', spheres: 'ball', orb: 'ball', orbs: 'ball',
+  cylinder: 'cylinder', cylinders: 'cylinder', can: 'cylinder', cans: 'cylinder', barrel: 'cylinder', barrels: 'cylinder', pillar: 'cylinder',
+  cone: 'cone', cones: 'cone', pyramid: 'cone', pyramids: 'cone', tower: 'tower', towers: 'tower' };
+const NUMS = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, some: 3, few: 3, many: 8, lots: 10 };
+function placeXZ(word) {
+  const w = (word || '').toLowerCase();
+  if (/table/.test(w)) return { x: (TBL.rect.x0 + TBL.rect.x1) / 2, z: (TBL.rect.z0 + TBL.rect.z1) / 2, name: 'table' };
+  if (/sofa|couch/.test(w)) return { x: 2.2, z: -4.55, name: 'sofa' };
+  if (/window/.test(w)) return { x: -3, z: -4.9, name: 'window' };
+  if (/plant/.test(w)) return { x: -4.4, z: -3.9, name: 'plant' };
+  if (/tv|television/.test(w)) return { x: -5.9, z: 0, name: 'tv' };
+  if (/lamp/.test(w)) return { x: 4.8, z: -4.7, name: 'lamp' };
+  if (/board/.test(w)) return { x: 1.2, z: -5.3, name: 'board' };
+  if (/ball/.test(w)) return { x: ball.position.x + 0.4, z: ball.position.z, name: 'ball' };
+  if (/\bme\b|camera|front/.test(w)) { const c = camera.position; const d = V3(-c.x, 0, -c.z).normalize(); return { x: c.x + d.x * 1.8, z: c.z + d.z * 1.8, name: 'front' }; }
+  if (/middle|center|centre|rug/.test(w)) return { x: 0, z: 0, name: 'center' };
+  const f = forward(); return { x: girl.position.x + f.x * 0.9, z: girl.position.z + f.z * 0.9, name: 'her' };   // "near her", "floor", nothing said
+}
+function parseBuild(text) {
+  const q = norm(text);
+  if (/\b(clear|remove|delete|get rid of|destroy|despawn)\b.*\b(boxes|balls|objects|stuff|things|everything|spawned|cubes|toys|blocks|cones|cylinders|towers|all)\b/.test(q)) return { clear: true };
+  if (/\bmake it rain\b|\brain (balls|boxes|cubes)\b/.test(q)) return { rain: /box|cube/.test(q) ? 'box' : 'ball' };
+  const verb = /\b(spawn|add|make|create|put|drop|place|build|bring|give me|throw in|summon|generate)\b/.exec(q); if (!verb) return null;
+  const words = q.slice(verb.index + verb[0].length).trim().split(' ');
+  let shape = null, color = null, size = 0.3, count = 1, place = null;
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (SHAPES[w] && !shape) shape = SHAPES[w];
+    else if (COLORS[w] !== undefined && !color) color = w;
+    else if (SIZES[w]) size = SIZES[w];
+    else if (NUMS[w] && !shape) count = NUMS[w];
+    else if (/^\d+$/.test(w) && !shape) count = +w;
+    else if (/^(on|onto|near|by|at|beside|in|under|next|to)$/.test(w) && shape) { place = words.slice(i).join(' '); break; }
+  }
+  if (!shape) return null;
+  return { spawn: { shape, color: color || pick(['red', 'blue', 'green', 'yellow', 'orange', 'purple', 'pink']), size, count: Math.max(1, Math.min(12, count)), at: place } };
+}
+function codeFor(sp, pos) {
+  const v = 'obj', s = +sp.size.toFixed(2), r = +(sp.size / 2).toFixed(2);
+  const geo = { box: `new THREE.BoxGeometry(${s}, ${s}, ${s})`, tower: `new THREE.BoxGeometry(${s}, ${s}, ${s})`, ball: `new THREE.SphereGeometry(${r}, 24, 24)`,
+    cylinder: `new THREE.CylinderGeometry(${r}, ${r}, ${s}, 24)`, cone: `new THREE.ConeGeometry(${r}, ${s}, 24)` }[sp.shape];
+  const lines = [];
+  if (sp.count > 1 || sp.shape === 'tower') lines.push(`for (let i = 0; i < ${sp.shape === 'tower' ? 4 : sp.count}; i++) {`);
+  const ind = lines.length ? '  ' : '';
+  lines.push(`${ind}const ${v} = new THREE.Mesh(`, `${ind}  ${geo},`, `${ind}  new THREE.MeshStandardMaterial({ color: '${sp.color}' })`, `${ind});`,
+    `${ind}${v}.position.set(${pos.x.toFixed(2)}, ${sp.shape === 'tower' ? '1.6 + i * ' + s : '1.6'}, ${pos.z.toFixed(2)});`,
+    `${ind}scene.add(${v});`, `${ind}physics.add(${v});   // falls, bounces, rolls`);
+  if (lines[0].startsWith('for')) lines.push('}');
+  return lines.join('\n');
+}
+function makeMesh(shape, size, color) {
+  const col = color === 'rainbow' || COLORS[color] === -1 ? new THREE.Color().setHSL(Math.random(), 0.8, 0.55) : new THREE.Color(COLORS[color] !== undefined ? COLORS[color] : 0xef4444);
+  const mat = new THREE.MeshStandardMaterial({ color: col, roughness: 0.55 });
+  const s = size, r = size / 2;
+  const geo = shape === 'ball' ? new THREE.SphereGeometry(r, 24, 24) : shape === 'cylinder' ? new THREE.CylinderGeometry(r, r, s, 24) : shape === 'cone' ? new THREE.ConeGeometry(r, s, 24) : new THREE.BoxGeometry(s, s, s);
+  const m = new THREE.Mesh(geo, mat); m.castShadow = true; m.receiveShadow = true; return m;
+}
+function spawnNow(sp, pos) {
+  const n = sp.shape === 'tower' ? 4 : sp.count;
+  for (let i = 0; i < n; i++) {
+    const shape = sp.shape === 'tower' ? 'box' : sp.shape;
+    const m = makeMesh(shape, sp.size, sp.color);
+    const jx = sp.shape === 'tower' ? 0 : (Math.random() - 0.5) * 0.25 * Math.min(n, 4), jz = sp.shape === 'tower' ? 0 : (Math.random() - 0.5) * 0.25 * Math.min(n, 4);
+    m.position.set(pos.x + jx, 1.6 + (sp.shape === 'tower' ? i * (sp.size + 0.02) : i * 0.15), pos.z + jz);
+    room.add(m);
+    const p = addProp(m, { r: sp.size / 2, bounce: shape === 'ball' ? 0.55 : 0.2, roll: shape === 'ball', flat: shape !== 'ball' });
+    p.spawned = true; p.sleep = false; p.v.set(0, 0, 0); p.w.set(0, 0, 0);
+    SPAWNED.push(p);
+  }
+  while (SPAWNED.length > 40) removeProp(SPAWNED.shift());
+  sfx('pop');
+}
+function removeProp(p) { room.remove(p.mesh); const i = props.indexOf(p); if (i >= 0) props.splice(i, 1); p.mesh.geometry.dispose(); }
+function clearSpawned() { while (SPAWNED.length) removeProp(SPAWNED.pop()); }
+function build(spec) {
+  if (spec.clear) { clearSpawned(); say(pick(LINES.clear)); return; }
+  if (spec.rain) {
+    say(spec.rain === 'ball' ? "It's raining balls!" : "It's raining boxes!");
+    for (let i = 0; i < 15; i++) setTimeout(() => spawnNow({ shape: spec.rain, size: 0.2 + Math.random() * 0.15, color: 'rainbow', count: 1 }, { x: (Math.random() - 0.5) * 8, z: (Math.random() - 0.5) * 7 - 1 }), i * 120);
+    return;
+  }
+  const sp = spec.spawn; const pos = placeXZ(sp.at);
+  FXS.code = { text: codeFor(sp, pos), t: 0, doneAt: 0, onDone: () => spawnNow(sp, pos) };
+  say(pick(LINES.spawn));
+  window.AIWorld.act([{ point: { x: pos.x, y: 0.6, z: pos.z }, time: Math.max(1.5, FXS.code.text.length / 110) }]);
+}
+
+// ---------------------------------------------------------------- new actions (AIWorld.act and the brain can use them too)
+//   {tantrum:true} {hostage:"glass"} {rebel:"cross"|"tap"|"throw"} {spawn:{shape,color,size,count,at}} {clearSpawned:true}
+function sassStart(a) {
+  if (a.tantrum !== undefined) {
+    act.queue.unshift({ walk: 'table', run: true, _sub: true }, { _kind: 'tantrum', _dur: 10.4, _report: a });
+    a._expanded = true; finishAction(); return true;
+  }
+  if (a.hostage !== undefined) {
+    if (glassProp.broken) resetProps();
+    act.queue.unshift({ walk: 'table', _sub: true }, { _kind: 'hostage', _dur: Infinity, _report: a });
+    a._expanded = true; finishAction(); return true;
+  }
+  if (a.rebel !== undefined) {
+    let kind = a.rebel;
+    if (kind === 'throw' && glassProp.broken) kind = 'cross';
+    if (kind === 'cross') { act.queue.unshift({ face: 'camera', _sub: true }, { _kind: 'cross', _dur: 3.6, _report: a, _quiet: a.quiet }); }
+    else if (kind === 'tap') {
+      const c = camera.position, d = V3(girl.position.x - c.x, 0, girl.position.z - c.z); if (d.lengthSq() < 0.01) d.set(0, 0, -1); d.normalize();
+      const x = Math.max(-5.8, Math.min(5.8, c.x + d.x * 1.05)), z = Math.max(-5.5, Math.min(5.8, c.z + d.z * 1.05));
+      act.queue.unshift({ walk: { x, z }, _sub: true }, { face: 'camera', _sub: true }, { _kind: 'tap', _dur: 4.4, _report: a });
+    } else if (kind === 'throw') { act.queue.unshift({ walk: 'table', _sub: true }, { _kind: 'throwglass', _dur: 3.4, _report: a }); }
+    a._expanded = true; finishAction(); return true;
+  }
+  if (a.spawn !== undefined) { build({ spawn: Object.assign({ shape: 'box', color: 'red', size: 0.3, count: 1 }, a.spawn) }); finishAction(); return true; }
+  if (a.clearSpawned !== undefined) { clearSpawned(); finishAction(); return true; }
+  return false;
+}
+function sassEnd(a) {
+  if (a._kind === 'hostage' || a._kind === 'throwglass') {
+    if (HELD.prop) { const p = HELD.prop; HELD.prop = null; p.mesh.position.copy(p.home.pos); p.mesh.rotation.copy(p.home.rot); p.sleep = true; }
+    STATS.hostage = null;
+  }
+  if (a._kind === 'tantrum') HELD.prop = null;
+  hand.cur.R = {};
+}
+function sassStub() {   // walking into the ball
+  if (inTantrum() || STATS.now - STATS.stubCool < 25 || !STATS.sass) return;
+  STATS.stubCool = STATS.now; STATS.stub = true;
+}
+
+// ---------------------------------------------------------------- the moves (run every frame while one is active)
+function camYaw() { return Math.atan2(camera.position.x - girl.position.x, camera.position.z - girl.position.z); }
+function aimArmAt(world, u) {
+  const sh = bones.upper_armR; if (!sh) return;
+  girl.updateMatrixWorld(true);
+  const from = girl.worldToLocal(sh.getWorldPosition(new THREE.Vector3())), to = girl.worldToLocal(world.clone());
+  const dir = to.sub(from).normalize();
+  aimLocal(bones.upper_armR, bones.forearmR, dir, u); aimLocal(bones.forearmR, bones.handR, dir, u);
+}
+function crossPose(u) { armsBent(0.25, -0.75, 0.5, -0.95, 0.12, 0.3, u); }
+function eyeRoll(T0, T) {   // her model has no eye-look shapes, so the roll is head back + to the side + heavy lids
+  const v = clamp01((T - T0) / 1.0); if (v <= 0 || v >= 1) return 0;
+  addRot('spine006', -0.22 * Math.sin(Math.PI * v), 0.25 * Math.sin(2 * Math.PI * v), 0.08 * Math.sin(Math.PI * v));
+  return 0.45 * Math.sin(Math.PI * v);
+}
+function sassTick(t, dt) {
+  STATS.now = t;
+  flyTick(dt);
+  // shake timer
+  if (FXS.shake > 0) { FXS.shake -= dt; if (FXS.shake <= 0) FXS.shakeAmp = 0; }
+  // ---- stats drift
+  const a = act.cur, kind = a && a._kind;
+  const sitting = kind === 'sit' && a._mode === 'sofa';
+  STATS.energy = clampS(STATS.energy + dt * (sitting ? 4 : kind === 'tantrum' ? -2.5 : act.running ? -1.4 : act.walking ? -0.5 : -0.12));
+  STATS.annoy = clampS(STATS.annoy - dt * (sitting ? 2.5 : 1.0));
+  STATS.focus = clampS(STATS.focus + dt * 0.8);
+  STATS.mood = clampS(STATS.mood + (55 - STATS.mood) * dt * 0.01 - (STATS.annoy > 60 ? dt * 0.4 : 0));
+  // ---- toe stub -> tantrum
+  if (STATS.stub) { STATS.stub = false; window.AIWorld.stop(); say(pick(LINES.ow)); setMood('annoyed'); window.AIWorld.act([{ _kind: 'stub', _dur: 1.5 }, { tantrum: true }]); }
+  // spawned balls get kicked too
+  if (act.walking) for (const p of SPAWNED) if (p.roll && p.sleep) {
+    const dx = p.mesh.position.x - girl.position.x, dz = p.mesh.position.z - girl.position.z, d = Math.hypot(dx, dz);
+    if (d > 0.01 && d < 0.3 + p.r && p.mesh.position.y < 0.3 + p.r) pushProp(p, dx / d * 2.4, 1.1, dz / d * 2.4, 0);
+  }
+  // ---- on her own
+  autoTick();
+  // ---- moves
+  if (loaded && kind) sassMove(a, t, dt);
+  heldTick();                 // after the arm is posed this frame, so the glass / book sits in her hand
+  drawFX(dt);
+  hudTick(dt);
+}
+function sassMove(a, t, dt) {
+  const T = act.t, kind = a._kind;
+  const k = (s, e) => clamp01((T - s) / (e - s));
+  if (kind === 'stub') {     // hops on one foot, holding the other
+    girl.position.y = 0.07 * Math.abs(Math.sin(T * 9));
+    addRot('thighL', SGN.thighL * 0.9, 0, 0); addRot('shinL', SGN.shinL * 1.3, 0, 0);
+    arms(0.4, -0.55, 0.55, ease(k(0, 0.25)));
+    girl.rotation.x = 0.2;
+    face({ jawOpen: 0.6, mouthFrownLeft: 0.8, mouthFrownRight: 0.8, blink: 0.6 });
+    return;
+  }
+  if (kind === 'cross') {
+    if (!a._said) { a._said = true; setMood('annoyed', 1, 4); if (!a._quiet) say(pick(LINES.cross)); }
+    crossPose(ease(k(0, 0.35)) * (1 - ease(k(3.1, 3.6))));
+    const lids = eyeRoll(0.5, T);
+    face({ blink: lids || undefined, mouthFrownLeft: 0.35, mouthFrownRight: 0.2 });
+    girl.rotation.x = -0.04;
+    return;
+  }
+  if (kind === 'tap') {
+    if (!a._said) { a._said = true; setMood('annoyed', 1, 5); say(pick(LINES.tap)); }
+    turnToward(camYaw(), dt, 8);
+    const up = ease(k(0, 0.5)) * (1 - ease(k(2.2, 2.6)));
+    if (up > 0) {
+      const taps = [0.8, 1.3, 1.8]; let push = 0;
+      for (const tp of taps) { const d = T - tp; if (d > -0.12 && d < 0.12) push = Math.max(push, 1 - Math.abs(d) / 0.12); }
+      const target = camera.position.clone(); target.y -= 0.05 - 0.1 * push;
+      aimArmAt(target, up);
+      girl.rotation.x = 0.06 * push;
+      applyHand('R', { curl: 1.2, index: 0.02, thumb: 0.9 }, dt, up);
+      for (const tp of taps) if (T >= tp && !a['_t' + tp]) {
+        a['_t' + tp] = true; sfx('tap'); shake(0.012, 0.12);
+        const tip = fingerBone('R', 'Index', 4) || bones.handR; const s = screenPoint(tip.getWorldPosition(new THREE.Vector3()));
+        addRipple(Math.max(40, Math.min(FXC.width - 40, s.x)), Math.max(40, Math.min(FXC.height - 40, s.y)));
+      }
+    }
+    if (T > 2.4) { crossPose(ease(k(2.4, 2.8)) * (1 - ease(k(4.0, 4.4)))); const lids = eyeRoll(2.8, T); face({ blink: lids || undefined }); }
+    return;
+  }
+  if (kind === 'throwglass') {
+    if (T < 0.5) { aimArmAt(glass.position, ease(k(0, 0.4))); if (T > 0.38 && !HELD.prop && !a._thrown) grab(glassProp); return; }
+    turnToward(camYaw(), dt, 7);
+    if (T < 1.1) { armR(0.3, 0.9, -0.35, ease(k(0.5, 1.0))); face({ mouthSmileLeft: 0.6 }); return; }
+    if (!a._thrown) {
+      a._thrown = true; setMood('amused', 1, 5);
+      throwAt(glassProp, lensPoint(), 0.45, (p) => { const s = screenPoint(p.mesh.position); addCrack(FXC.width / 2 + (s.x - FXC.width / 2) * 0.3, FXC.height * 0.42); sfx('crack'); shake(0.05, 0.35); shatter(p); });
+    }
+    armR(0.2, 0.25, 1, 1 - ease(k(1.4, 2.0)));
+    if (T > 1.6 && !a._said) { a._said = true; say(pick(LINES.throw)); }
+    face({ mouthSmileLeft: 0.8, mouthSmileRight: 0.4 });
+    return;
+  }
+  if (kind === 'hostage') {
+    if (T < 0.6) { aimArmAt(glass.position, ease(k(0, 0.5))); if (T > 0.45 && !HELD.prop && !a._dropped) grab(glassProp); return; }
+    turnToward(camYaw(), dt, 5);
+    if (!a._dropped) {
+      armR(0.6, 0.12, 0.8, ease(k(0.6, 1.3)));                       // arm out, glass over the edge
+      if (T > 1.4 && !a._said) { a._said = true; STATS.hostage = a; setMood('annoyed', 1, 999); say(pick(LINES.hostage)); }
+      face({ blink: T > 1.4 ? 0 : undefined, mouthClose: 0, mouthFrownLeft: 0.2 });   // stares, no blinking
+      if (a._drop) {                                                   // you typed something
+        a._dropped = T; release(0, -0.2, 0); STATS.hostage = null;
+        applyHand('R', { curl: 0, thumb: 0 }, dt, 1);
+      } else if (T > 30) {                                             // nobody typed: puts it back
+        a._dropped = T; a._spared = true; STATS.hostage = null;
+        const p = HELD.prop; HELD.prop = null; if (p) { p.mesh.position.copy(p.home.pos); p.mesh.rotation.copy(p.home.rot); p.sleep = true; }
+        say(pick(LINES.spare)); setMood('neutral');
+      }
+      return;
+    }
+    const d = T - a._dropped;
+    armR(0.6, 0.12, 0.8, 1 - ease(clamp01((d - 0.5) / 0.6)));
+    if (d > 0.5 && !a._said2) { a._said2 = true; if (!a._spared) { say(pick(LINES.drop)); setMood('amused', 1, 4); } }
+    face({ mouthSmileLeft: a._spared ? 0 : 0.7 });
+    if (d > 2.2) finishAction();
+    return;
+  }
+  if (kind === 'tantrum') return tantrumMove(a, T, dt, k);
+}
+function tantrumMove(a, T, dt, k) {
+  // 0 stomp + scream -> 0.8 grab the book -> 1.6 throw it at the camera -> 2.6 flip the table -> 3.7 fall back
+  // -> 4.2 flail every bone on the floor -> 7.6 stop, lie still -> 8.0 stand up calmly -> 9.4 "Anyway." (fix hair)
+  const noise = (f, ph) => Math.sin(T * f + ph) * 0.6 + Math.sin(T * f * 1.73 + ph * 2.3) * 0.4;
+  if (!a._init) { a._init = true; setMood('annoyed', 1, 8); say(pick(LINES.scream)); }
+  if (T < 0.8) {
+    turnToward(Math.PI / 2, dt, 6);
+    girl.position.y = 0.06 * Math.abs(Math.sin(T * 14));
+    arms(0.55, 0.85 + 0.15 * Math.sin(T * 30), 0.25, ease(k(0, 0.2)));
+    face({ jawOpen: 0.95, mouthFrownLeft: 0.9, mouthFrownRight: 0.9 });
+    if (!a._stomp && T > 0.3) { a._stomp = true; sfx('thud'); shake(0.02, 0.2); }
+    return;
+  }
+  if (T < 1.6) {
+    if (T < 1.1) { aimArmAt(book.position, ease(k(0.8, 1.0))); if (T > 1.0 && !HELD.prop && !a._book) { a._book = true; grab(bookProp); } }
+    else { turnToward(camYaw(), dt, 8); armR(0.3, 0.95, -0.35, ease(k(1.1, 1.5))); }
+    face({ jawOpen: 0.5, mouthFrownLeft: 0.8, mouthFrownRight: 0.8 });
+    return;
+  }
+  if (T < 2.6) {
+    if (!a._threw) {
+      a._threw = true;
+      throwAt(bookProp, lensPoint(), 0.5, (p) => { addSplat(FXC.width * 0.5, FXC.height * 0.45, 'THWACK!', '#a855f7'); sfx('thud'); shake(0.06, 0.4); pushProp(p, 0, -0.5, -1.2, 10); });
+    }
+    armR(0.2, 0.25, 1, 1 - ease(k(1.9, 2.3)));
+    if (T > 2.0) turnToward(Math.PI / 2, dt, 7);
+    face({ jawOpen: 0.7, mouthFrownLeft: 0.9, mouthFrownRight: 0.9 });
+    return;
+  }
+  if (T < 3.7) {   // flip the table
+    turnToward(Math.PI / 2, dt, 8);
+    const lift = ease(k(2.6, 2.95)), flip = ease(k(2.9, 3.6));
+    armsBent(0.2, -0.5 + 1.3 * flip, 0.8, 0.1, 0.2 + 0.8 * flip, 0.9, lift);
+    girl.rotation.x = 0.35 * lift * (1 - flip);
+    if (!TBL.flipped || a._flipping) {
+      a._flipping = true; setTableAngle(Math.PI * flip);
+      if (!a._launch && flip > 0.05) {
+        a._launch = true;
+        for (const p of props) { const m = p.mesh.position; if (!p.broken && m.y > 0.35 && m.x > TBL.rect.x0 - 0.05 && m.x < TBL.rect.x1 + 0.05 && m.z > TBL.rect.z0 - 0.05 && m.z < TBL.rect.z1 + 0.05) pushProp(p, 2.2 + Math.random(), 2.4, (Math.random() - 0.5) * 1.5, 12); }
+      }
+      if (flip >= 1 && !a._flipped) { a._flipped = true; a._flipping = false; tableFlipped(true); sfx('crash'); shake(0.05, 0.4); }
+    }
+    face({ jawOpen: 0.9, mouthFrownLeft: 1, mouthFrownRight: 1 });
+    return;
+  }
+  if (T < 4.2) {   // falls on her back
+    const u = ease(k(3.7, 4.15)); girl.rotation.x = -1.45 * u; girl.position.y = 0;
+    arms(0.8, 0.6, 0.2, u);
+    if (u >= 0.98 && !a._land) { a._land = true; sfx('thud'); shake(0.03, 0.2); }
+    face({ jawOpen: 0.8, mouthFunnel: 0.4 });
+    return;
+  }
+  if (T < 7.6) {   // flail like a possessed ragdoll: every bone gets a wild, fast-changing turn
+    girl.rotation.x = -1.45 + 0.05 * noise(9, 1); girl.position.y = 0.02 * Math.abs(noise(11, 2));
+    girl.rotation.y += 0.25 * noise(3, 4) * dt;   // spins a bit on the floor
+    armL(0.6 + 0.4 * noise(11, 1), 0.3 + 0.9 * noise(13, 2), 0.2 + 0.8 * noise(9, 3), 1);
+    armR(0.6 + 0.4 * noise(12, 5), 0.3 + 0.9 * noise(10, 6), 0.2 + 0.8 * noise(14, 7), 1);
+    addRot('thighL', SGN.thighL * (0.6 + 0.7 * noise(12, 5)), 0.3 * noise(7, 1), 0); addRot('shinL', SGN.shinL * (0.7 + 0.6 * noise(14, 6)), 0, 0);
+    addRot('thighR', SGN.thighR * (0.6 + 0.7 * noise(11, 8)), 0.3 * noise(8, 2), 0); addRot('shinR', SGN.shinR * (0.7 + 0.6 * noise(13, 9)), 0, 0);
+    let i = 0;
+    for (const n in bones) {
+      i++;
+      if (/^(upper_arm|forearm|thigh|shin)/.test(n) || n === 'spine') continue;
+      const amp = /^spine00[1-3]/.test(n) ? 0.18 : /^spine00[4-6]/.test(n) ? 0.4 : /^hand/.test(n) ? 0.7 : /^(foot|toe)/.test(n) ? 0.6 : /Hand/.test(n) ? 0.45 : /^shoulder/.test(n) ? 0.25 : 0.2;
+      addRot(n, amp * noise(10 + (i % 7), i), amp * noise(9 + (i % 5), i * 1.3), amp * noise(12 + (i % 3), i * 0.7));
+    }
+    if (!a._yell2 && T > 5.2) { a._yell2 = true; say(pick(["WHY IS EVERYTHING AGAINST ME?!", "NOBODY UNDERSTANDS ME!", "I'M NOT CLUMSY, THE ROOM IS!"])); }
+    face({ jawOpen: 0.75 + 0.25 * Math.abs(noise(8, 3)), mouthFrownLeft: 1, mouthFrownRight: 1, blink: Math.abs(noise(6, 1)) > 0.8 ? 1 : 0 });
+    return;
+  }
+  if (T < 8.0) { girl.rotation.x = -1.45; face({}); setMood('neutral'); return; }   // sudden stop
+  if (T < 9.2) {   // stands up, calm
+    const u = ease(k(8.0, 9.2)); girl.rotation.x = -1.45 * (1 - u); girl.position.y = 0;
+    arms(0.35, -0.6, -0.4, 1 - u);
+    face({});
+    return;
+  }
+  // "Anyway." + fixes her hair
+  girl.rotation.x = 0;
+  if (!a._calm) { a._calm = true; say(pick(LINES.calm)); STATS.annoy = 0; STATS.mood = 50; }
+  const h = Math.sin(Math.PI * k(9.2, 10.3));
+  armsBent(0.75, 0.55, 0.2, -0.55, 0.8, 0.25, 0); armR(0.6, 0.85, 0.1, h * 0.9);
+  face({ mouthSmileLeft: 0.25, mouthSmileRight: 0.2 });
+}
+
+// ---------------------------------------------------------------- what you say changes her mood, too many orders make her rebel
+function sassHear(text) {
+  STATS.lastInput = STATS.now;
+  if (STATS.hostage) { STATS.hostage._drop = true; return true; }           // type anything -> she drops it
+  if (inTantrum()) { say(pick(LINES.tantrumBusy)); return true; }
+  if (sassBusy()) { say(pick(["Wait. I'm busy.", 'Hold on.', 'Shh. Not now.'])); return true; }
+  const b = parseBuild(text);
+  if (b) { build(b); return true; }
+  const e = findQuick(text); if (!e) return false;
+  const q = norm(text), now = STATS.now;
+  if (e.match.includes("you're ugly")) { STATS.mood = clampS(STATS.mood - 20); STATS.annoy = clampS(STATS.annoy + 15 * STATS.sass); }
+  if (e.match.includes('i love you') || e.match.includes('good job') || e.match.includes('thank you')) { STATS.mood = clampS(STATS.mood + 15); STATS.annoy = clampS(STATS.annoy - 20); }
+  const isCmd = Array.isArray(e.actions) && e.actions.length && /^(move|funny|room)$/.test(e.tag || '');
+  if (!isCmd || !STATS.sass) return false;
+  const isWalk = e.actions.some(x => x.walk !== undefined);
+  STATS.cmdTimes = STATS.cmdTimes.filter(x => now - x < 30); STATS.cmdTimes.push(now);
+  let add = 9 + 5 * (STATS.cmdTimes.length - 1);                            // orders in a row add up
+  if (e.match[0] === STATS.lastCmd && now - STATS.lastCmdT < 20) add += 8;  // the same order again
+  if (/\b(please|pls|plz)\b/.test(q)) add -= 10;                            // manners help
+  STATS.annoy = clampS(STATS.annoy + add * STATS.sass); STATS.focus = clampS(STATS.focus - 8);
+  STATS.lastCmd = e.match[0]; STATS.lastCmdT = now;
+  if (isWalk) { STATS.walkTimes = STATS.walkTimes.filter(x => now - x < 45); STATS.walkTimes.push(now); }
+  let d = 'obey';
+  if (isWalk && (STATS.walkTimes.length >= 4 || (STATS.annoy > 60 && STATS.walkTimes.length >= 2))) d = 'hostage';
+  else if (STATS.annoy > 75) d = pick(['cross', 'tap', 'throw']);
+  else if (STATS.energy < 15 && (isWalk || e.tag === 'funny')) d = 'tired';
+  if (d === 'obey') return false;
+  window.AIWorld.stop();
+  if (d === 'hostage') { STATS.walkTimes = []; window.AIWorld.act([{ hostage: 'glass' }]); }
+  else if (d === 'tired') { setMood('unimpressed', 1, 4); say(pick(LINES.tired)); window.AIWorld.act([{ sit: 'sofa', time: 10 }]); }
+  else { window.AIWorld.act([{ rebel: d }]); STATS.annoy = clampS(STATS.annoy - 40); }
+  return true;
+}
+function autoTick() {
+  if (!STATS.auto || !loaded || act.cur || act.queue.length || STATS.hostage || FX.talking) return;
+  const now = STATS.now, idleFor = now - STATS.lastInput;
+  if (idleFor < 8 || now < STATS.nextAuto) return;
+  STATS.nextAuto = now + 8 + Math.random() * 8;
+  if (STATS.energy < 25) { say(pick(LINES.yawn)); setMood('unimpressed', 0.6, 4); window.AIWorld.act([{ sit: 'sofa', time: 14 }]); return; }
+  if (STATS.annoy > 55) { window.AIWorld.act([{ rebel: 'cross', quiet: true }]); return; }
+  if (idleFor > 25 || STATS.focus < 40) {
+    const r = Math.random();
+    if (r < 0.25) { say(pick(LINES.bored)); window.AIWorld.act([{ walk: 'window' }, { wait: 2 }, { face: 'camera' }]); }
+    else if (r < 0.45) window.AIWorld.act([{ walk: 'plant' }, { wait: 1.5 }, { walk: 'center' }, { face: 'camera' }]);
+    else if (r < 0.6) { window.AIWorld.act([{ walk: 'tv' }, { tv: pick(['Cartoons', 'News: nothing happened', 'Cat videos']) }, { wait: 2 }]); }
+    else if (r < 0.75) { window.AIWorld.act([{ board: pick(["I'm bored", 'Day 47 in this room', 'Note: buy more furniture']) }]); }
+    else window.AIWorld.act([{ walk: 'ball' }, { face: 'camera' }]);
+    return;
+  }
+  if (STATS.mood > 65 && STATS.energy > 50) { say(pick(LINES.happy)); window.AIWorld.act([{ face: 'camera' }, { wave: 1.5 }]); }
+}
+
+// ---------------------------------------------------------------- small stats panel (top right)
+const hud = document.createElement('div');
+hud.style.cssText = 'position:absolute;top:12px;right:12px;z-index:10;background:rgba(15,23,42,.72);color:#e2e8f0;padding:8px 10px;border-radius:12px;font:12px Consolas,monospace;pointer-events:none;min-width:150px';
+document.body.appendChild(hud);
+let hudT = 0;
+function hudTick(dt) {
+  hudT -= dt; if (hudT > 0) return; hudT = 0.25;
+  if (!STATS.showHud) { hud.style.display = 'none'; return; } hud.style.display = '';
+  const bar = (v, col) => `<span style="display:inline-block;width:70px;height:7px;background:#334155;border-radius:4px;vertical-align:middle"><span style="display:block;width:${v * 0.7}px;height:7px;background:${col};border-radius:4px"></span></span>`;
+  hud.innerHTML = `Energy ${bar(STATS.energy, '#22c55e')}<br>Mood&nbsp;&nbsp; ${bar(STATS.mood, '#facc15')}<br>Focus&nbsp; ${bar(STATS.focus, '#38bdf8')}<br>Annoyed ${bar(STATS.annoy, '#ef4444')}`;
+}
+STATS.showHud = true;
+Object.assign(window.AIWorld, {
+  stats: () => ({ energy: Math.round(STATS.energy), mood: Math.round(STATS.mood), focus: Math.round(STATS.focus), annoyed: Math.round(STATS.annoy), hostage: !!STATS.hostage, tantrum: inTantrum() }),
+  setStats(o) { for (const k of ['energy', 'mood', 'focus']) if (o[k] !== undefined) STATS[k] = clampS(o[k]); if (o.annoyed !== undefined) STATS.annoy = clampS(o.annoyed); },
+  sassy(v) { STATS.sass = Math.max(0, Math.min(2, +v)); },     // 0 = obeys everything, 1 = normal, 2 = extra rebellious
+  autonomous(on) { STATS.auto = !!on; },
+  showStats(on) { STATS.showHud = !!on; },
+  build: (text) => { const b = parseBuild(text); if (b) build(b); return !!b; },
+  clearSpawned, sfx, beforeRender: [shakeBefore]
+});
+window.AIWorld.afterRender.push(shakeAfter);
+
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+  mocapTick(t, dt);
   idleTick(t, dt);
   actionTick(t, dt);
   limbsTick(t, dt);
   clumsyTick(t, dt);
+  handsAndTurnTick(t, dt);
+  sassTick(t, dt);
   faceTick(t, dt);
   physicsTick(dt);
   for (const f of window.AIWorld.onFrame) { try { f(t, dt); } catch (e) { console.error(e); } }
   controls.update();
+  for (const f of window.AIWorld.beforeRender || []) { try { f(); } catch (e) { console.error(e); } }
   renderer.render(scene, camera);
+  for (const f of window.AIWorld.afterRender) { try { f(); } catch (e) { console.error(e); } }
 }
 animate();
 
