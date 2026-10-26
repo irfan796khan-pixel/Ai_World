@@ -1180,8 +1180,10 @@ function learnFingerAxes() {
 }
 function clipDelta(clip, t, key, out) {
   const tr = clip.tracks[key]; if (!tr) return out.set(0, 0, 0, 1);
+  // some bakes store each frame several times in a row; step over the copies so the WHOLE cycle plays (both feet)
+  const st = Math.max(1, Math.round(tr.length / 4 / clip.frames));
   const f = (t * 30) % clip.frames, i = Math.floor(f), j = (i + 1) % clip.frames, u = f - i;
-  out.fromArray(tr, i * 4); return out.slerp(_q2.fromArray(tr, j * 4), u);
+  out.fromArray(tr, i * st * 4); return out.slerp(_q2.fromArray(tr, j * st * 4), u);
 }
 function clipHip(clip, t, out) {
   const f = (t * 30) % clip.frames, i = Math.floor(f), j = (i + 1) % clip.frames, u = f - i;
