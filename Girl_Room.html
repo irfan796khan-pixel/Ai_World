@@ -270,7 +270,8 @@ function skinnedBox(root) {
     if (!m.isSkinnedMesh) { box.expandByObject(m); return; }
     const g = m.geometry, P = g.attributes.position, I = g.attributes.skinIndex, Wt = g.attributes.skinWeight;
     const den = (a) => !a.normalized ? 1 : a.array instanceof Int8Array ? 127 : a.array instanceof Uint8Array ? 255 : a.array instanceof Int16Array ? 32767 : a.array instanceof Uint16Array ? 65535 : 1;
-    const pn = den(P), wn = den(Wt);
+    // three.js r147 getX() already turns packed 0..255 numbers into 0..1, so do NOT divide again (that made her 255x too big)
+    const pn = 1, wn = 1;
     const mats = m.skeleton.bones.map((b, k) => new THREE.Matrix4().multiplyMatrices(b.matrixWorld, m.skeleton.boneInverses[k]).multiply(m.bindMatrix));
     const v = new THREE.Vector3(), o = new THREE.Vector3(), t = new THREE.Vector3();
     const step = Math.max(1, Math.floor(P.count / 40000));
