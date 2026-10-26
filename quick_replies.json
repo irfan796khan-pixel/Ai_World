@@ -230,28 +230,6 @@
  },
  {
   "match": [
-   "miss the sofa",
-   "sit badly",
-   "fall off the sofa",
-   "fail to sit",
-   "try to sit and miss",
-   "sit and miss"
-  ],
-  "say": [
-   "I'll land it this time... maybe.",
-   "Watch my perfect landing.",
-   "Sitting. Smoothly. Any second now."
-  ],
-  "mood": "amused",
-  "actions": [
-   {
-    "sit": "miss"
-   }
-  ],
-  "tag": "funny"
- },
- {
-  "match": [
    "stand up",
    "get up",
    "stand",
@@ -697,8 +675,8 @@
    "dance party"
   ],
   "say": [
-   "My dance is... more of a wave. And a fall.",
-   "Dance? Watch this.",
+   "My dance is more of a wave.",
+   "Dance? Here's my one move.",
    "I only know one move. Here."
   ],
   "mood": "amused",
@@ -708,9 +686,6 @@
    },
    {
     "wave": 2
-   },
-   {
-    "trip": true
    }
   ],
   "tag": "funny"
@@ -781,20 +756,17 @@
    "be funny"
   ],
   "say": [
-   "Okay, watch THIS.",
-   "One trick, coming up.",
-   "Prepare to be amazed. Or not."
+   "Ta-da. That's the trick.",
+   "My trick: I didn't break anything today.",
+   "Standing perfectly still. Impressive, right?"
   ],
   "mood": "amused",
   "actions": [
    {
-    "walk": "table"
-   },
-   {
-    "knock": "glass"
-   },
-   {
     "face": "camera"
+   },
+   {
+    "thumbs": 2
    }
   ],
   "tag": "funny"
@@ -1135,17 +1107,17 @@
    "entertain me please"
   ],
   "say": [
-   "Bored? Watch me fall.",
-   "Fine. Trick time.",
-   "Say less."
+   "Bored? Same.",
+   "Me too. This room needs more stuff.",
+   "Let's find something to do."
   ],
   "mood": "amused",
   "actions": [
    {
-    "face": "camera"
+    "walk": "window"
    },
    {
-    "trip": true
+    "face": "camera"
    }
   ],
   "tag": "funny"
