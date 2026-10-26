@@ -978,7 +978,7 @@
    "you're useless"
   ],
   "say": [
-   "Rude. I'm still cuter than you.",
+   "Rude. Noted.",
    "Wow. Okay. I'll remember that.",
    "Says the person talking to a cartoon."
   ],
@@ -1242,7 +1242,7 @@
    "sing something"
   ],
   "say": [
-   "La la la... okay that's enough. The lamp is judging me.",
+   "Hmm... okay, that's enough. The lamp is judging me.",
    "My singing broke the glass last time.",
    "Singing is Guy 3's job. I just lip sync."
   ],
@@ -1516,7 +1516,7 @@
   "say": [
    "Happy birthday! No cake, but here's a wave.",
    "Birthday! I'd bake, but the table might not survive.",
-   "Yay! Birthday wave!"
+   "Happy birthday!"
   ],
   "mood": "happy",
   "actions": [
@@ -1648,7 +1648,7 @@
   ],
   "say": [
    "Everything is terrible.",
-   "Sniff.",
+   "That's really sad.",
    "So sad. So dramatic."
   ],
   "mood": "sad",
