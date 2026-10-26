@@ -566,7 +566,7 @@ async function handleReply(r) {
 // 3. ACTIONS — the body does what the brain sends (loop: talk > brain > words + action > ACTION)
 // ============================================================================
 // AIWorld.act([{walk:"sofa"}, {wave:2}, {lamp:true}])  — runs one after another
-//   {walk:"sofa"} or {walk:{x:1,z:2}}   walk to a room spot (names in ROOM_SPOTS); trips over 5 m she runs ({run:true} / {run:false} to force)
+//   {walk:"sofa"} or {walk:{x:1,z:2}}   walk to a room spot (names in ROOM_SPOTS); she walks; runs only on trips over 9 m or when told ({run:true} / {run:false} to force)
 //   {face:"camera"} | {face:90}         turn to the person, or to an angle in degrees
 //   {wave:2}                            wave for 2 seconds
 //   {point:"tv"} | {point:"camera"}     points at it with her arm and index finger (2 s; time:3 to change)
@@ -582,7 +582,7 @@ async function handleReply(r) {
 //   Walking into the ball kicks it.
 const act = { queue: [], cur: null, t: 0, walking: false, waving: 0, onDone: null, turnD: 0, turnT: 0, pointing: 0, pointAt: null, thumbs: 0 };
 const WALK_SPEED = 1.1;   // metres per second
-const RUN_SPEED = 2.6;    // long trips (over 5 m) she runs, with the Mixamo running clip
+const RUN_SPEED = 2.6;    // she runs only when told, or on trips over 9 m, with the Mixamo running clip
 
 // Furniture she must walk around (footprints, in metres). M = her body radius.
 const OBSTACLES = [
@@ -669,7 +669,7 @@ function startAction(a) {
     if (!s) { console.warn('unknown spot', a.walk); return finishAction(); }
     a._to = new THREE.Vector3(s.x, 0, s.z); a._path = findPath(girl.position, a._to); a._face = s.face; act.walking = true;
     let len = 0, prevP = girl.position; for (const q of a._path) { len += q.distanceTo(prevP); prevP = q; }
-    act.running = !!(a.run || (a.run !== false && len > 5 && MOCAP.ready && STATS.energy > 30));
+    act.running = !!(a.run || (a.run !== false && len > 9 && MOCAP.ready && STATS.energy > 30));
     act.lazy = !act.running && STATS.energy < 35;   // tired: slow, dragging walk
   } else if (a.face !== undefined) {
     a._yaw = a.face === 'camera' ? Math.atan2(camera.position.x - girl.position.x, camera.position.z - girl.position.z) : THREE.MathUtils.degToRad(+a.face);
@@ -1180,8 +1180,10 @@ function learnFingerAxes() {
 }
 function clipDelta(clip, t, key, out) {
   const tr = clip.tracks[key]; if (!tr) return out.set(0, 0, 0, 1);
+  // some bakes store each frame several times in a row; step over the copies so the WHOLE cycle plays (both feet)
+  const st = Math.max(1, Math.round(tr.length / 4 / clip.frames));
   const f = (t * 30) % clip.frames, i = Math.floor(f), j = (i + 1) % clip.frames, u = f - i;
-  out.fromArray(tr, i * 4); return out.slerp(_q2.fromArray(tr, j * 4), u);
+  out.fromArray(tr, i * st * 4); return out.slerp(_q2.fromArray(tr, j * st * 4), u);
 }
 function clipHip(clip, t, out) {
   const f = (t * 30) % clip.frames, i = Math.floor(f), j = (i + 1) % clip.frames, u = f - i;
