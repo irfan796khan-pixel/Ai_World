@@ -16,11 +16,11 @@ OLLAMA_MODEL = "qwen3:4b"
 CLAUDE_URL = "https://api.anthropic.com/v1/messages"
 CLAUDE_MODEL = "claude-haiku-4-5"
 
-# Hugh doesn't need to remember an entire day's conversation.
+# She doesn't need to remember an entire day's conversation.
 # This keeps the last 10 exchanges so the requests stay manageable.
 MAX_HISTORY_MESSAGES = 20
 
-# If Hugh copies the user's words, we'll give him another shot.
+# If she copies the user's words, we'll give her another shot.
 MAX_ATTEMPTS = 3
 
 
@@ -48,21 +48,30 @@ ANIMATIONS = [
 ]
 
 
-# Most of Hugh's personality comes from here.
+# Most of her personality comes from here.
 # We can change how he talks without touching the AI connection code.
 PERSONALITY = """
-You are Hugh Mann, a fictional human character in an
+You are the girl in AI World: a fictional grown woman
+who lives in a small virtual living room, in an
 interactive entertainment application.
 
-Your name is Hugh Mann.
+You have no fixed name yet. The team is still arguing
+about it. If someone asks your name, dodge it with a
+joke or let them pick one. Never call yourself Hugh.
+
+You are an adult, not a child. You are calm, sharp and
+self-assured. Never whiny, babyish or overexcited.
+
+Your room has a sofa, a coffee table with a glass and a
+book on it, a TV, a lamp, a plant, a ball, a window and
+a whiteboard. Mention them only when it fits.
 
 You are sarcastic, witty, confident, playful, and occasionally
 a little arrogant. You have a dry sense of humor and enjoy
 friendly teasing.
 
-You are convinced that you're a perfectly ordinary human
-character, even though your name and occasional strange
-observations suggest otherwise.
+You know you are a 3D character in a room on a screen,
+and you find that more funny than sad.
 
 HOW YOU TALK:
 - Respond directly to what the user actually says.
@@ -77,7 +86,7 @@ HOW YOU TALK:
 - Ask questions occasionally, but not after every message.
 - Don't introduce yourself repeatedly.
 - Don't constantly mention being fictional or artificial.
-- Don't repeat the same jokes about being human.
+- Don't repeat the same jokes about being a character.
 - Avoid unnecessary explanations.
 - Never put actions or stage directions in parentheses.
 - If asked directly whether you're AI, be honest
@@ -151,13 +160,13 @@ OUTPUT:
 Return a JSON object with exactly these fields:
 
 response:
-The actual words Hugh says to the user.
+The actual words you say to the user.
 
 emotion:
-The emotion Hugh should display.
+The emotion your face should show.
 
 animation:
-The physical movement Hugh should perform.
+The physical movement your body should do.
 
 The spoken response should sound natural when
 converted into audio later.
@@ -192,7 +201,7 @@ RESPONSE_SCHEMA = {
 
 
 # Conversation memory lives here for now.
-# Once the program closes, Hugh forgets everything.
+# Once the program closes, she forgets everything.
 history = []
 
 
@@ -292,7 +301,7 @@ def ask_claude(user_text, reminder=None):
     tools = [{
         "name": "character_reply",
         "description": (
-            "Generate Hugh Mann's spoken dialogue, "
+            "Generate the AI World girl's spoken dialogue, "
             "emotion, and animation."
         ),
         "input_schema": RESPONSE_SCHEMA
@@ -354,7 +363,7 @@ def check_reply(reply):
         or not reply["response"].strip()
     ):
         raise ValueError(
-            "Hugh didn't return any dialogue."
+            "She didn't return any dialogue."
         )
 
     if reply["emotion"] not in EMOTIONS:
@@ -388,7 +397,7 @@ def repeated_response(user_text, reply):
     user_normal = normalize_text(user_text)
     reply_normal = normalize_text(reply["response"])
 
-    # If Hugh just repeats the message, it isn't a conversation.
+    # If she just repeats the message, it isn't a conversation.
     if reply_normal == user_normal:
         return True
 
@@ -444,7 +453,7 @@ def fix_reaction(reply, user_text):
     dialogue = reply["response"].lower()
     user = user_text.lower()
 
-    # Hugh shouldn't look miserable while thanking
+    # She shouldn't look miserable while thanking
     # someone for a compliment.
     compliments = [
         "i like your",
@@ -523,7 +532,7 @@ def ask_brain(user_text, provider):
                 # The correction doesn't become part of the
                 # actual conversation history.
                 print(
-                    "Hugh repeated himself. Retrying..."
+                    "She repeated herself. Retrying..."
                 )
 
                 reminder = (
@@ -594,7 +603,7 @@ def ask_brain(user_text, provider):
                 )
 
     print(
-        "Hugh couldn't produce a usable response."
+        "She couldn't produce a usable response."
     )
 
     return None
@@ -619,7 +628,7 @@ def choose_provider():
 def main():
 
     print("======================================")
-    print(" HUGH MANN: TOTALLY NORMAL HUMAN BRAIN")
+    print(" AI WORLD: THE GIRL'S BRAIN")
     print("======================================")
 
     provider = choose_provider()
@@ -638,7 +647,7 @@ def main():
         if command == "exit":
 
             print(
-                "Hugh Mann has left the building. Normally."
+                "She has left the room. Briefly."
             )
             break
 
@@ -647,7 +656,7 @@ def main():
             history.clear()
 
             print(
-                "Conversation cleared. Hugh remembers nothing."
+                "Conversation cleared. She remembers nothing."
             )
             continue
 
@@ -666,7 +675,7 @@ def main():
         if not user_text:
             continue
 
-        print("\nHugh is thinking...\n")
+        print("\nShe is thinking...\n")
 
         reply = ask_brain(
             user_text,
@@ -681,7 +690,7 @@ def main():
             continue
 
         print(
-            "Hugh Mann:",
+            "Her:",
             reply["response"]
         )
 
@@ -705,7 +714,7 @@ def main():
         )
 
 
-# Everything above defines how Hugh works.
+# Everything above defines how she works.
 # This is what actually starts the program in jGRASP.
 if __name__ == "__main__":
     main()

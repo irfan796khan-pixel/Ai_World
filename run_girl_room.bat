@@ -1,6 +1,6 @@
 @echo off
 cd /d "%~dp0"
-rem Girl + Room only. Port 8081 so it does not clash with the main app (8080).
+rem Girl + Room + Brain. Port 8081 so it does not clash with the main app (8080).
 set PY=
 for /f "delims=" %%p in ('where python 2^>nul') do if not defined PY set "PY=%%p"
 if not defined PY if exist "%USERPROFILE%\miniconda3\python.exe" set "PY=%USERPROFILE%\miniconda3\python.exe"
@@ -13,4 +13,5 @@ if not defined PY (
   exit /b
 )
 start "" http://localhost:8081/Girl_Room.html
-"%PY%" -m http.server 8081
+rem Room + brain together (brain_server.py). Add "claude" after the file name to use Claude instead of Ollama.
+"%PY%" brain_server.py ollama

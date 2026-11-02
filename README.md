@@ -17,7 +17,14 @@ we talk  >  brain thinks  >  brain sends words + action  >  ACTION (this repo)
 Planned later for the body: a cartoon-style (stylized, not realistic) character, plus Convai for conversation. MetaHuman (realistic) is dropped. What is here now: a three.js web version (girl + living room).
 
 ## Run it (Windows)
-Double-click `run_girl_room.bat`. It opens http://localhost:8081/Girl_Room.html (needs Python, used only as a tiny local file server).
+Double-click `run_girl_room.bat`. It starts `brain_server.py`, which serves the room **and** the brain (Brain.py) on the same port, then opens the page.
+Before that, start the AI the brain uses: the **Ollama** app with the model `qwen3:4b` (`ollama pull qwen3:4b` once). For Claude instead, set `ANTHROPIC_API_KEY` in Windows and change `ollama` to `claude` at the end of `run_girl_room.bat`.
+The black window shows if the brain is ready, and every question and answer. When Ollama is off she says so out loud instead of hanging.
+
+How a sentence travels: you type → a quick reply answers at once if one matches → otherwise the page sends it to `/brain` → Brain.py answers `{response, emotion, animation}` → bubble + voice + face mood + move (wave, nod, shake_head, shrug, cross_arms, idle).
+Type `new chat` to clear the brain's memory of the chat (`reset` alone cleans up the room).
+
+The page is http://localhost:8081/Girl_Room.html (needs Python).
 Opening the html file directly does not work: the browser blocks loading `Girl_character_mixamo.glb` from disk.
 
 ## Files
@@ -26,7 +33,9 @@ Opening the html file directly does not work: the browser blocks loading `Girl_c
 - `Girl_character_mixamo_packed.glb` — the same girl packed with meshopt, much smaller. The page loads this one first; `Girl_Room.html?model=original` forces the big one.
 - `moves.json` — real motion from Imran's Mixamo clips (Idle, Walking, Running, Waving, Talking), baked so they fit her bones.
 - `quick_replies.json` — about 80 instant replies (around 490 trigger phrases, 240 answers), each tied to a face mood and body moves.
-- `run_girl_room.bat` — starts it.
+- `run_girl_room.bat` — starts it (room + brain).
+- `brain_server.py` — serves the page and connects it to `Brain.py` (`/brain`, `/brain/health`).
+- `Brain.py` — the brain (Ollama or Claude). She is a grown woman with no fixed name yet.
 - `VOICESTUDIO.md` — her voice: free local VoiceStudio (built into the page), with the browser voice as backup.
 - `tools/` — the Python scripts that rebuilt the face (cut the lips open, added teeth/tongue/mouth, new face shapes). Run `python build_face.py out.glb` with the old model saved as `orig.glb` (paths inside the script point to /home/claude/work).
 

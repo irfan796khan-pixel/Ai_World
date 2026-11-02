@@ -462,7 +462,7 @@ function setMood(name, amount, seconds) {
   FX.mood = name; FX.moodAmt = amount === undefined ? 1 : clamp01(amount);
   FX.moodUntil = seconds ? clock.elapsedTime + seconds : 0;
 }
-function gesture(kind) { FX.gesture = kind; FX.gestureT = 0; }   // 'nod' | 'shake'
+function gesture(kind) { FX.gesture = kind; FX.gestureT = 0; }   // 'nod' | 'shake' | 'shrug' (head tilt, for the brain)
 
 function faceTick(t, dt) {
   if (!loaded || window.AIWorld.idle === false) return;   // idle off = someone else drives the face (e.g. Audio2Face)
@@ -541,6 +541,7 @@ function faceTick(t, dt) {
     FX.gestureT += dt; const g = FX.gestureT, fade = 1 - clamp01((g - 0.9) / 0.3);
     if (FX.gesture === 'nod') hx += 0.14 * Math.sin(g * 10) * fade;
     if (FX.gesture === 'shake') hy += 0.2 * Math.sin(g * 11) * fade;
+    if (FX.gesture === 'shrug') { const u = Math.sin(Math.PI * clamp01(g / 1.2)); hz += 0.16 * u; hx += 0.05 * u; }
     if (g > 1.2) FX.gesture = null;
   }
   const kh = 1 - Math.exp(-dt * 8);
@@ -548,14 +549,15 @@ function faceTick(t, dt) {
 }
 
 // one call for the whole brain package: { response, emotion, animation | actions, audio }
-const ANIM_TO_ACTION = { wave: [{ wave: 2 }], nod: 'nod', shake_head: 'shake', idle: null };
+// every animation Brain.py can send (ANIMATIONS list there) has a move here
+const ANIM_TO_ACTION = { wave: [{ face: 'camera' }, { wave: 2 }], nod: 'nod', shake_head: 'shake', shrug: 'shrug', cross_arms: [{ rebel: 'cross', quiet: true }], idle: null };
 async function handleReply(r) {
   if (!r) return;
   if (r.emotion) setMood(r.emotion);
   if (Array.isArray(r.actions)) window.AIWorld.act(r.actions);
   else if (r.animation) {
     const a = ANIM_TO_ACTION[r.animation];
-    if (a === 'nod' || a === 'shake') gesture(a);
+    if (a === 'nod' || a === 'shake' || a === 'shrug') gesture(a);
     else if (Array.isArray(a)) window.AIWorld.act(a);
     else if (a === undefined) console.warn('AIWorld: no body move for animation "' + r.animation + '" yet');
   }
@@ -1385,13 +1387,22 @@ async function hear(text) {
       const j = await r.json();
       if (j && j.response && !j.audio) say(j.response);
       await handleReply(j);
-      if (j && j.learn !== false && j.response) learn({ match: [norm(text)], say: [j.response], mood: j.emotion || 'neutral', actions: j.actions, gesture: j.animation === 'nod' ? 'nod' : j.animation === 'shake_head' ? 'shake' : undefined });
+      if (j && j.learn !== false && j.response && !j.error) learn({ match: [norm(text)], say: [j.response], mood: j.emotion || 'neutral', actions: j.actions, gesture: j.animation === 'nod' ? 'nod' : j.animation === 'shake_head' ? 'shake' : undefined });
     } catch (err) { console.warn('brain door failed', err); say("The brain is not answering. Try one of my quick ones."); }
     return null;
   }
-  say("I don't know that one yet. No brain is connected.");
+  say("I don't know that one yet. No brain is connected. Start me with run_girl_room.bat.");
   return null;
 }
+// ---- brain: run_girl_room.bat starts brain_server.py, which serves this page AND the brain on the same port.
+//   The page asks /brain/health once; if the brain answers, typed text that no quick reply knows goes to /brain.
+const BRAIN = { ok: false, provider: null };
+fetch('brain/health').then(r => r.ok ? r.json() : null).then(j => {
+  if (!j || !j.brain) { console.log('no brain server: quick replies only (start with run_girl_room.bat to get the brain)'); return; }
+  BRAIN.ok = true; BRAIN.provider = j.provider;
+  if (!window.AIWorld.brainUrl && typeof window.AIWorld.onUnmatched !== 'function') window.AIWorld.brainUrl = 'brain';
+  console.log('brain connected: ' + j.provider + ' (' + j.model + ')' + (j.ready ? '' : ' — but ' + j.problem));
+}).catch(() => console.log('no brain server: quick replies only'));
 function learn(entry) {
   if (!entry || !entry.match || !entry.say) return false;
   const e = { match: [].concat(entry.match), say: [].concat(entry.say), mood: entry.mood || 'neutral' };
