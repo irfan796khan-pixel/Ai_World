@@ -27,6 +27,7 @@ Opening the html file directly does not work: the browser blocks loading `Girl_c
 - `moves.json` — real motion from Imran's Mixamo clips (Idle, Walking, Running, Waving, Talking), baked so they fit her bones.
 - `quick_replies.json` — about 80 instant replies (around 490 trigger phrases, 240 answers), each tied to a face mood and body moves.
 - `run_girl_room.bat` — starts it.
+- `VOICESTUDIO.md` — her voice: free local VoiceStudio (built into the page), with the browser voice as backup.
 - `tools/` — the Python scripts that rebuilt the face (cut the lips open, added teeth/tongue/mouth, new face shapes). Run `python build_face.py out.glb` with the old model saved as `orig.glb` (paths inside the script point to /home/claude/work).
 
 ## The action door (for Guy 1 — Brain)
@@ -81,14 +82,15 @@ AIWorld.build("spawn a red box on the table");
 Her model has no eye-look face shapes, so the eye roll is faked with the head and heavy lids. The flailing is code (strong random turns on every bone), not real ragdoll physics.
 
 ## Quick replies + talk bar (fast answers, no waiting for the brain)
-Type in the bar at the bottom (or call `AIWorld.hear(text)`). If the text matches `quick_replies.json`, she answers at once: speech bubble, face mood, and the moves. There is no built-in voice: the voice partner plugs in with `AIWorld.onSay(text)` and plays the sound with `AIWorld.speak`.
+Type in the bar at the bottom (or call `AIWorld.hear(text)`). If the text matches `quick_replies.json`, she answers at once: speech bubble, voice, face mood, and the moves. Voice order: `AIWorld.onSay(text)` if a voice partner set it, else VoiceStudio on localhost:3900 (see `VOICESTUDIO.md`), else the browser voice. The **Voice** button switches Studio → browser → off.
 If nothing matches, the text goes to the brain:
 ```js
 AIWorld.onUnmatched = (text) => { /* Guy 1: send to the brain, then AIWorld.reply({...}) */ };
 // or a small web door: POST {text} to this URL, it must answer with the Brain.py JSON ({response, emotion, animation | actions})
 AIWorld.brainUrl = "http://localhost:5005/brain";
 AIWorld.learn({ match: ["what is two plus two"], say: ["Four. Easy."], mood: "amused", actions: [{ thumbs: 2 }] });  // new reply, kept in this browser
-AIWorld.say("Hello!");        // speech bubble (and AIWorld.onSay if set)
+AIWorld.say("Hello!");        // speech bubble + voice (onSay, else VoiceStudio, else browser voice)
+AIWorld.voice.mode = "off";   // "studio" | "browser" | "off"
 AIWorld.onSay = (text) => { /* voice partner: make the audio, then AIWorld.speak(audio) */ };
 ```
 Answers from the brain through `brainUrl` are saved as new quick replies automatically, so the second time is instant.
