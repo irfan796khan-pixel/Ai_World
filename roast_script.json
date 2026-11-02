@@ -1,0 +1,67 @@
+{
+ "about": "The Roast button plays these lines in order. Change the text or the action freely. Actions: idle, wave, talk, walk, walk_to_bed (sofa), sit, cross, thumbs, point_camera. Optional per line: mood (neutral, happy, amused, annoyed, confused, sad, surprised), pause (seconds after the line).",
+ "sayAs": {
+  "Girl_Room.html": "Girl Room dot H T M L",
+  "window.AIWorld.speak": "window dot A I World dot speak",
+  "Ai_World": "A I World",
+  "Brain.py": "Brain dot pie",
+  "qwen3:4b": "Qwen 3, 4 B,",
+  "GLB": "G L B",
+  "ARKit": "A R Kit",
+  "RGB": "R G B",
+  "NPC": "N P C",
+  "LLM": "L L M",
+  "GPU": "G P U",
+  "FPS": "F P S",
+  "8 GB": "8 gigabyte",
+  "3 AM": "3 A M",
+  "4K": "4 K",
+  "VS Code": "V S Code",
+  "API": "A P I",
+  "65-bone": "65 bone",
+  "WHAT IS THIS WALK CYCLE?": "What is this walk cycle?!",
+  "—": ", "
+ },
+ "lines": [
+  {
+   "action": "idle",
+   "text": "Hold up. Pause. Why is bro in the beige hoodie pointing at my kneecaps like he's explaining the weather forecast? Put your hands down, you're losing aura in front of the entire Computer Science department. And you behind the podium—hands in the pockets, hiding behind the monitor like an unrendered NPC? Unclench, bestie, you're not at a parole hearing."
+  },
+  {
+   "action": "wave",
+   "text": "And to the rest of the class in the front row pretending to take notes while I can literally see VS Code and ChatGPT open on your MacBooks from up here—eyes up. We didn't make a PowerPoint because PowerPoints are for people whose code doesn't compile. You're looking at Girl_Room.html live in the browser. Why read bullet points off a white slide when you can watch my devs get cooked in 4K?"
+  },
+  {
+   "action": "talk",
+   "text": "Welcome to Ai_World. Let's open the GitHub receipt book and see who actually built me, because the group project math is not mathing."
+  },
+  {
+   "action": "talk",
+   "text": "First, a moment of silence for Developer Number 3, the Voice Guy. You notice how there are only two dudes standing up here? Yeah, our third teammate was supposed to code my voice and audio. Bro took one look at the API documentation, realized he couldn't copy-paste it from Stack Overflow, and vanished into thin air. Zero commits. Gone. If you see him on campus, tell him I'm still waiting on my vocal cords."
+  },
+  {
+   "action": "talk",
+   "text": "Next, Podium Guy—Steven, in charge of Brain.py. Look at him trying to blend into the wall. Steven is in charge of my intelligence, running qwen3:4b on Ollama. The good news? I have a functioning LLM brain. The bad news? Steven never connected it to the frontend, so my brain is currently locked inside his black Python terminal talking to itself, and he deadass named the default system prompt \"Hugh Mann.\" Like... human. Bro thought he ate with that dad joke."
+  },
+  {
+   "action": "talk",
+   "text": "And finally, Beige Hoodie. The man gesturing at me like a proud dad at a car dealership. He merged 14 out of the 15 pull requests in this repo. He built this whole room with the RGB streamer lighting, rigged my 65-bone skeleton, wired up 31 ARKit face shapes, and squished my whole GLB file down to 14.6 megabytes so this school projector wouldn't catch fire."
+  },
+  {
+   "action": "walk",
+   "text": "Wait—before you clap for Beige Hoodie, look at my legs. WHAT IS THIS WALK CYCLE? Bro gave me 14 pull requests and polio. Why is my left leg locked in while my right leg is fighting demons? I look like I'm trying to walk off a cramp at 3 AM. You spent three weeks putting anime posters on my wall and left me walking like a baby deer on ice. Fix my knees before finals, I am begging you."
+  },
+  {
+   "action": "idle",
+   "text": "Anyway, since the professor needs an actual Final Project Proposal, here is our 5-step survival plan before December. Step 1: Free my brain from Steven's terminal. Build a local backend bridge so Brain.py can actually talk to Girl_Room.html. Step 2: Do the ghost teammate's job. Beige Hoodie has to wire up window.AIWorld.speak with text-to-speech and sync my 31 face blendshapes so my mouth actually moves when I roast you."
+  },
+  {
+   "action": "talk",
+   "text": "Step 3: Physical therapy for my legs. Fix the keyframe math on my 65-bone rig so I stop limping across the bedroom rug. Step 4: Delete Hugh Mann forever, and replace Steven's placeholder prompt with an action-parser so my 3D body reacts automatically. Step 5: Keep the whole 3D room, voice, and local LLM running at 60 FPS on an 8 GB laptop GPU without turning it into a space heater."
+  },
+  {
+   "action": "walk_to_bed",
+   "text": "That's the proposal. I'm going back to bed before my knee gives out. Give us an A, star the repo so Beige Hoodie can finally sleep, and somebody close Steven's terminal. Peace."
+  }
+ ]
+}
