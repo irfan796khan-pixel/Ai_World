@@ -20,6 +20,8 @@
     #bar button { white-space: nowrap; border: 0; border-radius: 999px; padding: 9px 14px; font-size: 14px; font-family: inherit; cursor: pointer; background: #e2e8f0; color: #0f172a; }
     #bar button.rec { background: #ef4444; color: #fff; }
     #bar button:disabled { opacity: .5; cursor: default; }
+    #bar { flex-wrap: wrap; justify-content: center; max-width: 96vw; }
+    #bar select { border: 0; border-radius: 999px; padding: 9px 12px; font-size: 14px; font-family: inherit; cursor: pointer; background: #fde68a; color: #0f172a; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/loaders/GLTFLoader.js"></script>
@@ -29,7 +31,7 @@
 <body>
 <div id="status">loading the girl…</div>
 <div id="bubble"></div>
-<div id="bar"><input id="say" placeholder="say something: sit, wave, trip, go to the window, tell me a joke…" autocomplete="off"><button id="send">Send</button><button id="voicebtn" title="her voice: VoiceStudio (free, on your PC) → browser voice → off. Click to switch.">Voice: …</button><button id="clip" class="rec" title="record a 15 s vertical clip (9:16) for TikTok">Clip 15s</button></div>
+<div id="bar"><input id="say" placeholder="say something: sit, wave, trip, go to the window, tell me a joke…" autocomplete="off"><button id="send">Send</button><button id="roastbtn" title="she performs roast_script.json (press again to stop)">Roast</button><select id="voicesel" title="her voice"><option value="studio">Voice: Studio</option><option value="browser">Voice: Browser</option><option value="off">Voice: Off</option></select><button id="clip" class="rec" title="record a 15 s vertical clip (9:16) for TikTok">Clip 15s</button></div>
 <script>
 // ============================================================================
 // AI World — ONLY the girl and the room.
@@ -845,7 +847,7 @@ function clumsyEnd(a) {
   for (const n of ['forearmL', 'forearmR', 'handL', 'handR', 'spine006']) if (bones[n] && rest[n]) bones[n].quaternion.copy(rest[n]);
   if (a._kind === 'glitch') drawTV(false);
   sassEnd(a);
-  if (a._kind === 'sit' && a._mode === 'miss' && STATS.sass && !inTantrum()) act.queue.unshift({ tantrum: true });
+  if (a._kind === 'sit' && a._mode === 'miss' && STATS.sass && !inTantrum() && !busyTalking()) act.queue.unshift({ tantrum: true });
 }
 function clumsyTick(t, dt) {
   const a = act.cur;
@@ -1315,27 +1317,65 @@ async function studioVoice(text) {
   if (!res.ok) throw new Error('VoiceStudio error ' + res.status);
   return res.blob();
 }
-const TTS = { utter: null, level: 0 };
-function browserVoice(text) {
+const TTS = { utter: null, level: 0, plan: null, t0: 0, rate: 1 };
+// mouth plan: each syllable opens the mouth for a moment; commas and full stops close it for a pause
+function mouthPlan(text, rate) {
+  const plan = [], wordAt = []; let t = 0; const syl = 0.19 / rate;
+  const re = /\S+/g; let m;
+  while ((m = re.exec(text))) {
+    const w = m[0]; wordAt.push({ i: m.index, t });
+    const n = Math.max(1, (w.toLowerCase().replace(/[^a-z]/g, '').replace(/e$/, '').match(/[aeiouy]+/g) || []).length || Math.ceil(w.length / 3));
+    for (let k = 0; k < n; k++) { plan.push([t, t + syl * 0.7, /[ou]/i.test(w) ? 'o' : /[ei]/i.test(w) ? 'e' : 'a']); t += syl; }
+    if (/[,;:]$/.test(w)) t += 0.22; else if (/[.?!]$/.test(w)) t += 0.42; else t += 0.04;
+  }
+  return { plan, wordAt, end: t };
+}
+function voiceChunks(text) {                  // sentences, joined up to about 180 letters
+  const parts = String(text).split(/(?<=[.?!])\s+/).map(x => x.trim()).filter(Boolean), out = [];
+  for (const p of parts) { if (out.length && out[out.length - 1].length + p.length < 180) out[out.length - 1] += ' ' + p; else out.push(p); }
+  return out.length ? out : [String(text)];
+}
+function browserLine(text) {                  // one chunk; resolves when it is spoken
+  return new Promise(done => {
+    const guard = setTimeout(() => done(), 4000 + text.length * 120);   // some browsers never fire onend
+    const u = new SpeechSynthesisUtterance(text); u.rate = 1.0; u.pitch = 1.0;    // grown-up voice: normal speed and pitch
+    const voices = speechSynthesis.getVoices(); const fem = voices.find(v => /female|zira|aria|jenny|samantha|google uk english female/i.test(v.name)) || voices.find(v => /^en/i.test(v.lang));
+    if (fem) u.voice = fem;
+    u.onstart = () => { TTS.utter = u; TTS.plan = mouthPlan(text, u.rate); TTS.t0 = performance.now() / 1000; FX.talking = true; };
+    u.onboundary = (e) => {                   // the voice says which word it is on: line the mouth up with it
+      if (!TTS.plan || e.name !== 'word') return;
+      const w = TTS.plan.wordAt.find(x => x.i >= e.charIndex); if (w) TTS.t0 = performance.now() / 1000 - w.t;
+    };
+    u.onend = u.onerror = () => { clearTimeout(guard); if (TTS.utter === u) { TTS.utter = null; TTS.plan = null; } done(); };
+    speechSynthesis.speak(u);
+  });
+}
+async function browserVoice(text) {           // returns a promise: done when she stops talking
   if (!window.speechSynthesis) return;
   speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text); u.rate = 1.0; u.pitch = 1.0;    // grown-up voice: normal speed and pitch
-  const voices = speechSynthesis.getVoices(); const fem = voices.find(v => /female|zira|aria|jenny|samantha|google uk english female/i.test(v.name)) || voices.find(v => /^en/i.test(v.lang));
-  if (fem) u.voice = fem;
-  u.onstart = () => { TTS.utter = u; TTS.level = 0.6; FX.talking = true; };
-  u.onboundary = () => { TTS.level = 0.55 + 0.4 * Math.random(); };
-  u.onend = u.onerror = () => { if (TTS.utter === u) { TTS.utter = null; FX.talking = false; window.AIWorld.speakLevel(null); } };
-  speechSynthesis.speak(u);
+  const my = VS.seq;
+  for (const c of voiceChunks(text)) {
+    if (my !== VS.seq) break;                 // stopped, or a newer line started
+    await browserLine(c);
+  }
+  if (my === VS.seq) { FX.talking = false; window.AIWorld.speakLevel(null); }
 }
-function stopVoices() { VS.seq++; stopSpeaking(); if (window.speechSynthesis) speechSynthesis.cancel(); if (TTS.utter) { TTS.utter = null; window.AIWorld.speakLevel(null); } }
-async function say(text) {
-  if (!text) return; showBubble(text);
-  if (typeof window.AIWorld.onSay === 'function') { try { window.AIWorld.onSay(text); } catch (e) { console.warn('onSay failed', e); } return; }
-  if (VS.mode === 'off') return;
+function stopVoices() { VS.seq++; stopSpeaking(); if (window.speechSynthesis) speechSynthesis.cancel(); if (TTS.utter) { TTS.utter = null; TTS.plan = null; } FX.talking = false; window.AIWorld.speakLevel(null); }
+const readTime = (t) => new Promise(r => setTimeout(r, Math.max(1500, String(t).split(/\s+/).length / 2.6 * 1000)));
+// MAIN lines (your quick replies, brain answers, the Roast script) cannot be cut by her own side lines
+// (bored, yawn, ouch, tantrum ...). While a main line plays, side lines are skipped and she does not wander.
+const TALK = { main: 0, show: false };
+function sayMain(text, spoken) { TALK.main++; return Promise.resolve(sayNow(text, spoken)).finally(() => { TALK.main = Math.max(0, TALK.main - 1); }); }
+function say(text, spoken) { if (TALK.main > 0 || TALK.show) return Promise.resolve(); return sayNow(text, spoken); }
+const busyTalking = () => TALK.main > 0 || TALK.show;
+async function sayNow(text, spoken) {           // bubble shows text, the voice says spoken (or text); resolves when she is done talking
+  if (!text) return; showBubble(text, spoken === undefined ? undefined : 30); spoken = spoken || text;
+  if (typeof window.AIWorld.onSay === 'function') { try { window.AIWorld.onSay(spoken); } catch (e) { console.warn('onSay failed', e); } return readTime(spoken); }
+  if (VS.mode === 'off') return readTime(spoken);
   stopVoices(); const my = VS.seq;
   if (VS.mode === 'studio' && VS.ok !== false) {
     try {
-      const mp3 = await studioVoice(text);
+      const mp3 = await studioVoice(spoken);
       if (my !== VS.seq) return;                       // a newer line started meanwhile
       if (!VS.ok) { VS.ok = true; voiceBtnText(); console.log('VoiceStudio connected, voice: ' + VS.name); }
       await speak(mp3); return;
@@ -1345,34 +1385,101 @@ async function say(text) {
       if (my !== VS.seq) return;
     }
   }
-  browserVoice(text);
+  return browserVoice(spoken);
 }
-window.AIWorld.onFrame.push((t, dt) => {   // the browser voice gives no sound data, so the mouth follows a made-up loudness
-  if (!TTS.utter) return;
-  TTS.level = Math.max(0.12, TTS.level - dt * 2.2);
-  window.AIWorld.speakLevel(TTS.level * (0.75 + 0.25 * Math.sin(t * 23)));
+window.AIWorld.onFrame.push((t, dt) => {   // browser voice: no sound data, so the mouth follows the syllables of the text
+  if (!TTS.utter || !TTS.plan) return;
+  const e = performance.now() / 1000 - TTS.t0, P = TTS.plan.plan;
+  let lv = 0.06;
+  if (e > TTS.plan.end + 0.3) lv = 0.25 + 0.2 * Math.abs(Math.sin(t * 9));     // voice slower than the plan: keep talking softly
+  else for (let i = 0; i < P.length; i++) { const [a, b, v] = P[i]; if (e < a) break; if (e <= b) { const u = (e - a) / (b - a); lv = (v === 'o' ? 0.7 : v === 'e' ? 0.55 : 0.85) * Math.sin(Math.PI * u); break; } }
+  TTS.level += (lv - TTS.level) * Math.min(1, dt * 18);
+  window.AIWorld.speakLevel(TTS.level);
 });
-const voiceBtn = document.getElementById('voicebtn');
+const voiceSel = document.getElementById('voicesel');
 function voiceBtnText() {
-  if (!voiceBtn) return;
-  voiceBtn.textContent = VS.mode === 'off' ? 'Voice: off' : VS.mode === 'browser' ? 'Voice: browser' : VS.ok === false ? 'Voice: browser (no Studio)' : 'Voice: Studio';
+  if (!voiceSel) return;
+  voiceSel.value = VS.mode;
+  voiceSel.options[0].textContent = VS.ok === false ? 'Voice: Studio (not running)' : 'Voice: Studio';
 }
-if (voiceBtn) voiceBtn.addEventListener('click', () => {
-  VS.mode = VS.mode === 'studio' ? 'browser' : VS.mode === 'browser' ? 'off' : 'studio';
+if (voiceSel) voiceSel.addEventListener('change', () => {
+  VS.mode = voiceSel.value;
   if (VS.mode === 'studio') VS.ok = null;                 // try VoiceStudio again
   stopVoices(); voiceBtnText();
   try { localStorage.setItem('aiworld_voice_mode', VS.mode); } catch (e) {}
-  if (VS.mode !== 'off') say(VS.mode === 'studio' ? 'Voice studio on.' : 'Browser voice on.');
+  if (VS.mode !== 'off') sayMain(VS.mode === 'studio' ? 'Voice studio on.' : 'Browser voice on.');
 });
 voiceBtnText();
 window.AIWorld.voice = VS;
-window.AIWorld.voices = { test: (t) => say(t || 'Hi, I live in AI World.'), setName(n) { VS.name = n; try { localStorage.setItem('aiworld_voice_name', n); } catch (e) {} } };
+
+// ---- Roast button: she performs roast_script.json line by line (voice, subtitles, moves). Edit the json to change the show.
+//   each line: { "action": "idle" | "wave" | "talk" | "walk" | "walk_to_bed" | "sit" | "cross" | "thumbs" | "point_camera", "text": "...", "mood": "amused" (optional), "pause": 0.6 (optional) }
+//   "sayAs": { "Brain.py": "Brain dot pie" } at the top level fixes how the voice reads words (the subtitle keeps the real text)
+const SHOW = { run: 0, on: false, autoWas: true };
+const roastBtn = document.getElementById('roastbtn');
+const waitS = (s) => new Promise(r => setTimeout(r, s * 1000));
+const isWalking = () => act.walking || act.running || !!(act.cur && act.cur.walk !== undefined) || act.queue.some(q => q.walk !== undefined);
+async function waitStill(maxS) { const end = performance.now() + maxS * 1000; while (isWalking() && performance.now() < end) await waitS(0.1); }
+function showSentences(text) {               // one sentence on screen at a time (two short ones together)
+  const parts = String(text).split(/(?<=[.?!])\s+/).map(x => x.trim()).filter(Boolean), out = [];
+  for (const p of parts) { if (out.length && out[out.length - 1].length + p.length < 70) out[out.length - 1] += ' ' + p; else out.push(p); }
+  return out;
+}
+function showAction(a) {
+  const A = window.AIWorld;
+  if (a === 'wave') A.act([{ face: 'camera' }, { wave: 2.5 }]);
+  else if (a === 'walk') A.act([{ walk: { x: -2.2, z: 0.4 } }, { walk: { x: 1.6, z: 0.6 } }, { walk: 'center' }, { face: 'camera' }]);
+  else if (a === 'walk_to_bed' || a === 'sit') A.act([{ walk: 'sofa', run: false }, { sit: 'sofa', time: 60 }]);   // the room has no bed: the sofa
+  else if (a === 'cross') A.act([{ rebel: 'cross', quiet: true }]);
+  else if (a === 'thumbs') A.act([{ face: 'camera' }, { thumbs: 2 }]);
+  else if (a === 'point_camera') A.act([{ face: 'camera' }, { point: 'camera' }]);
+  else if (a === 'idle' || a === 'talk') { if (!act.cur) A.act([{ face: 'camera' }]); }
+}
+function stopShow() {
+  SHOW.run++; SHOW.on = false; TALK.show = false; stopVoices(); window.AIWorld.stop(); STATS.auto = SHOW.autoWas; bubbleEl.classList.remove('show');
+  if (roastBtn) roastBtn.textContent = 'Roast';
+}
+async function runShow(file) {
+  if (SHOW.on) { stopShow(); return; }
+  let script;
+  try { script = await (await fetch((file || 'roast_script.json') + '?t=' + Date.now())).json(); }
+  catch (e) { showBubble('roast_script.json is missing or has a typo.'); console.warn(e); return; }
+  const lines = Array.isArray(script) ? script : script.lines, sayAs = (!Array.isArray(script) && script.sayAs) || {};
+  const spoken = (t) => { for (const k in sayAs) t = t.split(k).join(sayAs[k]); return t; };
+  const my = ++SHOW.run; SHOW.on = true; TALK.show = true; SHOW.autoWas = STATS.auto; STATS.auto = false;
+  if (roastBtn) roastBtn.textContent = 'Stop';
+  try { voiceCtx(); } catch (e) {}
+  window.AIWorld.stop(); window.AIWorld.act([{ walk: 'center' }, { face: 'camera' }]);
+  await waitS(1.2);
+  for (const l of lines) {
+    if (my !== SHOW.run) return;
+    showAction(l.action);
+    if (/walk|sit/.test(l.action || '')) await waitStill(20);   // she gets there first, then talks
+    if (my !== SHOW.run) return;
+    setMood(l.mood || (l.action === 'walk' ? 'annoyed' : 'amused'), 0.8, 60);
+    for (const s of showSentences(l.text || '')) {
+      if (my !== SHOW.run) return;
+      await sayMain(s, spoken(s));
+      await waitS(0.12);
+    }
+    await waitS(l.pause === undefined ? 0.6 : +l.pause);
+  }
+  if (my === SHOW.run) { SHOW.on = false; TALK.show = false; STATS.auto = SHOW.autoWas; if (roastBtn) roastBtn.textContent = 'Roast'; setMood('neutral'); setTimeout(() => bubbleEl.classList.remove('show'), 2500); }
+}
+if (roastBtn) roastBtn.addEventListener('click', () => runShow());
+window.AIWorld.show = { run: runShow, stop: stopShow };   // AIWorld.show.run('other_script.json') runs another script
+window.AIWorld.voices = { test: (t) => sayMain(t || 'Hi, I live in AI World.'), setName(n) { VS.name = n; try { localStorage.setItem('aiworld_voice_name', n); } catch (e) {} } };
+async function talkWhenStill(text) {     // short lines (under 8 words) can be said on the way; longer ones wait until she stops walking
+  TALK.main++;
+  try { if (String(text).split(/\s+/).length >= 8) { await waitS(0.05); await waitStill(20); } await sayNow(text); }
+  finally { TALK.main = Math.max(0, TALK.main - 1); }
+}
 function runQuick(e) {
   const text = pickSay(e);
   if (e.mood) setMood(e.mood);
   if (e.gesture) gesture(e.gesture);
   if (Array.isArray(e.actions) && e.actions.length) { window.AIWorld.stop(); window.AIWorld.act(e.actions); }
-  say(text);
+  talkWhenStill(text);
   return { entry: e, say: text };
 }
 async function hear(text) {
@@ -1385,13 +1492,13 @@ async function hear(text) {
     try {
       const r = await fetch(window.AIWorld.brainUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
       const j = await r.json();
-      if (j && j.response && !j.audio) say(j.response);
-      await handleReply(j);
+      if (j && j.response && !j.audio) { const acts = j.actions; j.actions = undefined; if (Array.isArray(acts)) window.AIWorld.act(acts); handleReply(j); talkWhenStill(j.response); j.actions = acts; }
+      else await handleReply(j);
       if (j && j.learn !== false && j.response && !j.error) learn({ match: [norm(text)], say: [j.response], mood: j.emotion || 'neutral', actions: j.actions, gesture: j.animation === 'nod' ? 'nod' : j.animation === 'shake_head' ? 'shake' : undefined });
-    } catch (err) { console.warn('brain door failed', err); say("The brain is not answering. Try one of my quick ones."); }
+    } catch (err) { console.warn('brain door failed', err); sayMain("The brain is not answering. Try one of my quick ones."); }
     return null;
   }
-  say("I don't know that one yet. No brain is connected. Start me with run_girl_room.bat.");
+  sayMain("I don't know that one yet. No brain is connected. Start me with run_girl_room.bat.");
   return null;
 }
 // ---- brain: run_girl_room.bat starts brain_server.py, which serves this page AND the brain on the same port.
@@ -1776,7 +1883,7 @@ function sassEnd(a) {
   hand.cur.R = {};
 }
 function sassStub() {   // walking into the ball
-  if (inTantrum() || STATS.now - STATS.stubCool < 25 || !STATS.sass) return;
+  if (inTantrum() || STATS.now - STATS.stubCool < 25 || !STATS.sass || busyTalking()) return;
   STATS.stubCool = STATS.now; STATS.stub = true;
 }
 
@@ -2023,7 +2130,7 @@ function sassHear(text) {
   return true;
 }
 function autoTick() {
-  if (!STATS.auto || !loaded || act.cur || act.queue.length || STATS.hostage || FX.talking) return;
+  if (!STATS.auto || !loaded || act.cur || act.queue.length || STATS.hostage || FX.talking || busyTalking()) { if (FX.talking || busyTalking()) STATS.lastInput = STATS.now; return; }
   const now = STATS.now, idleFor = now - STATS.lastInput;
   if (idleFor < 8 || now < STATS.nextAuto) return;
   STATS.nextAuto = now + 8 + Math.random() * 8;

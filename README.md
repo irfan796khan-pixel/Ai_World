@@ -36,6 +36,7 @@ Opening the html file directly does not work: the browser blocks loading `Girl_c
 - `run_girl_room.bat` — starts it (room + brain).
 - `brain_server.py` — serves the page and connects it to `Brain.py` (`/brain`, `/brain/health`).
 - `Brain.py` — the brain (Ollama or Claude). She is a grown woman with no fixed name yet.
+- `roast_script.json` — the show for the **Roast** button: she performs the lines in order (voice, one-sentence subtitles, moves). Edit the text/actions freely; `sayAs` fixes how the voice reads words like Brain.py. Press Roast again to stop. `AIWorld.show.run('other.json')` plays another script.
 - `VOICESTUDIO.md` — her voice: free local VoiceStudio (built into the page), with the browser voice as backup.
 - `tools/` — the Python scripts that rebuilt the face (cut the lips open, added teeth/tongue/mouth, new face shapes). Run `python build_face.py out.glb` with the old model saved as `orig.glb` (paths inside the script point to /home/claude/work).
 
