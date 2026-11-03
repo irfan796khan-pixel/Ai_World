@@ -1310,6 +1310,13 @@ function showBubble(text, seconds) {
 //   3. VoiceStudio not running or blocked  -> the browser's built-in voice (mouth movement is made up)
 //   Change live: AIWorld.voice.mode = 'studio' | 'browser' | 'off',  AIWorld.voice.name = 'alloy',  AIWorld.voice.url = '...'
 const VS = { mode: 'studio', url: 'http://localhost:3900/v1/audio/speech', name: 'alloy', ok: null, seq: 0 };
+// page_server.py (run_girl_room.bat) passes /v1/audio/... through to VoiceStudio, so the browser does not block it.
+// The page checks that once; if this page's own server does not pass voice through, it calls VoiceStudio on port 3900 directly.
+const VS_LOCAL = 'v1/audio/speech';
+if (location.protocol.startsWith('http')) fetch('v1/audio/voices').then(r => {
+  if (r.ok && /json/.test(r.headers.get('content-type') || '')) { VS.url = VS_LOCAL; if (VS.ok === false) VS.ok = null; voiceBtnText(); console.log('voice: VoiceStudio through this page server'); }
+  else if (r.status === 502) console.warn('voice: page server is ready, but VoiceStudio is closed. Open the VoiceStudio app.');
+}).catch(() => {});
 try { const m = localStorage.getItem('aiworld_voice_mode'); if (m) VS.mode = m; const n = localStorage.getItem('aiworld_voice_name'); if (n) VS.name = n; } catch (e) {}
 async function studioVoice(text) {
   const res = await fetch(VS.url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer local' },
@@ -1373,6 +1380,7 @@ async function sayNow(text, spoken) {           // bubble shows text, the voice 
   if (typeof window.AIWorld.onSay === 'function') { try { window.AIWorld.onSay(spoken); } catch (e) { console.warn('onSay failed', e); } return readTime(spoken); }
   if (VS.mode === 'off') return readTime(spoken);
   stopVoices(); const my = VS.seq;
+  if (VS.mode === 'studio' && VS.ok === false && Date.now() > (VS.retryAt || 0)) VS.ok = null;   // VoiceStudio may be open now: try again
   if (VS.mode === 'studio' && VS.ok !== false) {
     try {
       const mp3 = await studioVoice(spoken);
@@ -1381,7 +1389,7 @@ async function sayNow(text, spoken) {           // bubble shows text, the voice 
       await speak(mp3); return;
     } catch (e) {
       if (VS.ok !== false) console.warn('VoiceStudio not reachable on ' + VS.url + ' — using the browser voice. Start VoiceStudio, then click the Voice button.', e);
-      VS.ok = false; voiceBtnText();
+      VS.ok = false; voiceBtnText(); VS.retryAt = Date.now() + 20000;
       if (my !== VS.seq) return;
     }
   }
