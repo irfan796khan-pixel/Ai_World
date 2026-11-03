@@ -70,6 +70,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return ("VoiceStudio is not reachable on " + VOICESTUDIO + ": " + str(e)).encode(), 502, "text/plain"
 
     def _send(self, status, ctype, data, cache=""):
+        try:
+            self._send_now(status, ctype, data, cache)
+        except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
+            pass   # the page stopped waiting (new line, page closed): the line is still saved in voice_cache/
+
+    def _send_now(self, status, ctype, data, cache):
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
