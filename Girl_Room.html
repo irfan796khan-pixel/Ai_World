@@ -1508,20 +1508,20 @@ async function hear(text) {
 // ---- brain: run_girl_room.bat starts brain_server.py, which serves this page AND the brain on the same port.
 //   The page asks /brain/health once; if the brain answers, typed text that no quick reply knows goes to /brain.
 const BRAIN = { ok: false, provider: null };
-fetch('brain/health').then(r => r.ok ? r.json() : null).then(j => {
-  if (!j || !j.brain) { console.log('no brain server: quick replies only (start with run_girl_room.bat to get the brain)'); return; }
-  BRAIN.ok = true; BRAIN.provider = j.provider;
-  if (!window.AIWorld.brainUrl && typeof window.AIWorld.onUnmatched !== 'function') window.AIWorld.brainUrl = 'brain';
-  console.log('brain connected: ' + j.provider + ' (' + j.model + ')' + (j.ready ? '' : ' — but ' + j.problem));
-}).catch(() => {
-  // no brain on this page's own server: try Brain.py on its own port (run_girl_room.bat can start "Brain.py --serve --port 5005")
+function brainOn5005() {   // no brain on this page's own server: try Brain.py on its own port (run_girl_room.bat can start "Brain.py --serve --port 5005")
   fetch('http://localhost:5005/health').then(r => r.ok ? r.json() : null).then(j => {
     if (!j) { console.log('no brain server: quick replies only'); return; }
     BRAIN.ok = true; BRAIN.provider = j.brain || 'Brain.py';
     if (!window.AIWorld.brainUrl && typeof window.AIWorld.onUnmatched !== 'function') window.AIWorld.brainUrl = 'http://localhost:5005/brain';
     console.log('brain connected on port 5005: ' + BRAIN.provider);
   }).catch(() => console.log('no brain server: quick replies only'));
-});
+}
+fetch('brain/health').then(r => r.ok ? r.json() : null).then(j => {
+  if (!j || !j.brain) { brainOn5005(); return; }
+  BRAIN.ok = true; BRAIN.provider = j.provider;
+  if (!window.AIWorld.brainUrl && typeof window.AIWorld.onUnmatched !== 'function') window.AIWorld.brainUrl = 'brain';
+  console.log('brain connected: ' + j.provider + ' (' + j.model + ')' + (j.ready ? '' : ' — but ' + j.problem));
+}).catch(() => brainOn5005());
 function learn(entry) {
   if (!entry || !entry.match || !entry.say) return false;
   const e = { match: [].concat(entry.match), say: [].concat(entry.say), mood: entry.mood || 'neutral' };
