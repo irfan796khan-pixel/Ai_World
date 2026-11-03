@@ -401,7 +401,7 @@ const FX = {
   action: null,                 // face from a clumsy move this frame
   blinkIn: 2, blinkT: -1, blinkDouble: false,
   level: 0, levelAvg: 0, low: 0, high: 0, talking: false, extLevel: null,
-  emph: 0, nod: 0, gesture: null, gestureT: 0,
+  emph: 0, nod: 0, gesture: null, gestureT: 0, emphAt: -9, talkW: 0, lastTalkAt: -9, glance: 0, glanceY: 0,
   headX: 0, headY: 0, headZ: 0,
   seed: Math.random() * 100
 };
@@ -492,18 +492,27 @@ function faceTick(t, dt) {
   FX.level += (v.level - FX.level) * k1;
   FX.low += (v.low - FX.low) * k1; FX.high += (v.high - FX.high) * k1;
   FX.levelAvg += (FX.level - FX.levelAvg) * (1 - Math.exp(-dt * 1.5));
-  if (FX.level > 0.35 && FX.level > FX.levelAvg * 1.7 && FX.emph < 0.2) { FX.emph = 1; FX.nod = 1; }   // a strong word: brows + small nod
+  if (FX.level > 0.35 && FX.level > FX.levelAvg * 1.7 && t - FX.emphAt > 0.9) { FX.emphAt = t; FX.emph = 0.7 + 0.3 * Math.random(); FX.nod = Math.random() < 0.6 ? 1 : 0; }   // a stressed word (at most about once a second): brows up a little, sometimes a small nod
   FX.emph = Math.max(0, FX.emph - dt * 3); FX.nod = Math.max(0, FX.nod - dt * 2.5);
   const L = FX.level;
+  const speaking = FX.talking || L > 0.05;
+  if (speaking) FX.lastTalkAt = t;
+  const wasW = FX.talkW;
+  FX.talkW += ((t - FX.lastTalkAt < 1.2 ? 1 : 0) - FX.talkW) * (1 - Math.exp(-dt * 3));   // stays "in conversation" through short pauses
+  if (wasW < 0.15 && FX.talkW >= 0.15 && Math.random() < 0.7) { FX.glance = 1; FX.glanceY = (Math.random() < 0.5 ? -1 : 1) * (0.08 + 0.06 * Math.random()); }   // starting a thought: glance aside, then back to you
+  FX.glance = Math.max(0, FX.glance - dt * 1.4);
   if (L > 0.01) {
-    add('jawOpen', 0.8 * Math.pow(L, 0.7));   // talking mouth: opens clearly even on quiet sounds
-    add('mouthFunnel', 0.45 * L * FX.low);         // "oo / oh" sounds: round lips
-    add('mouthPucker', 0.2 * L * FX.low);
-    add('mouthStretchLeft', 0.35 * L * FX.high);   // "ee / s" sounds: wide lips
-    add('mouthStretchRight', 0.35 * L * FX.high);
-    add('mouthClose', 0.08 * (1 - L) * (FX.talking ? 1 : 0));
+    // real speech: the jaw opens only a little (about half way at most); the lips make most of the shapes
+    add('jawOpen', 0.42 * Math.pow(L, 0.8));
+    add('mouthLowerDown', 0.18 * L);
+    add('mouthUpperUp', 0.1 * L * (0.4 + FX.high));
+    add('mouthFunnel', 0.35 * L * FX.low);         // "oo / oh" sounds: round lips
+    add('mouthPucker', 0.15 * L * FX.low);
+    add('mouthStretchLeft', 0.25 * L * FX.high);   // "ee / s" sounds: wide lips
+    add('mouthStretchRight', 0.25 * L * FX.high);
+    add('mouthClose', (0.06 * (1 - L) + 0.3 * clamp01((FX.levelAvg - L) * 2.5)) * (FX.talking ? 1 : 0));   // lips touch on quiet dips (b, m, p)
   }
-  add('browInnerUp', 0.35 * FX.emph); add('browOuterUpLeft', 0.25 * FX.emph); add('browOuterUpRight', 0.25 * FX.emph);
+  add('browInnerUp', 0.22 * FX.emph); add('browOuterUpLeft', 0.16 * FX.emph); add('browOuterUpRight', 0.16 * FX.emph);
 
   // blinking: every 1.5–5 s, sometimes twice, faster while talking
   FX.blinkIn -= dt;
@@ -529,16 +538,21 @@ function faceTick(t, dt) {
   // smooth everything toward the target, so nothing snaps
   for (const k of ALL_FACE) {
     const target = clamp01(tgt[k] || 0);
-    const fast = k === 'eyeBlinkLeft' || k === 'eyeBlinkRight' || FX.action || (L > 0.01 && /^(jaw|mouthF|mouthP|mouthS|mouthC)/.test(k));
+    const fast = k === 'eyeBlinkLeft' || k === 'eyeBlinkRight' || FX.action;
+    const mouth = L > 0.01 && /^(jaw|mouth)/.test(k);
     const c = FX.cur[k] || 0;
-    FX.cur[k] = fast ? target : c + (target - c) * (1 - Math.exp(-dt * 7));
+    const rate = mouth ? (target > c ? 26 : 16) : 7;       // mouth: quick but smooth (no puppet snapping)
+    FX.cur[k] = fast ? target : c + (target - c) * (1 - Math.exp(-dt * rate));
     setMorph(k, FX.cur[k]);
   }
 
   // head: mood tilt + talking nods + nod/shake gestures (used by idleTick)
   const hm = HEAD_FOR_MOOD[FX.mood] || [0, 0, 0];
   let hx = hm[0] * FX.moodAmt, hy = hm[1] + (FX.leadY || 0), hz = hm[2] * FX.moodAmt;
-  hx += 0.06 * Math.sin(Math.PI * FX.nod) + 0.02 * L * Math.sin(t * 9);
+  hx += 0.05 * Math.sin(Math.PI * FX.nod);                                    // small nod on a stressed word
+  hx += 0.025 * FX.talkW * wobble(t, 0.55, 0.9);                               // talking: slow, easy head movement (no fast shaking)
+  hy += FX.talkW * (0.05 * wobble(t, 0.33, 0.61)) + FX.glanceY * Math.sin(Math.PI * Math.min(1, (1 - FX.glance) * 1.4)) * (FX.glance > 0 ? 1 : 0);
+  hz += 0.03 * FX.talkW * wobble(t, 0.27, 0.47);
   if (FX.gesture) {
     FX.gestureT += dt; const g = FX.gestureT, fade = 1 - clamp01((g - 0.9) / 0.3);
     if (FX.gesture === 'nod') hx += 0.14 * Math.sin(g * 10) * fade;
@@ -1205,11 +1219,16 @@ function mocapTick(t, dt) {
   if (act.walking) { want = act.running ? 'running' : 'walking'; if (act.lazy) speed = 0.62; }
   else if (turning) { want = 'walking'; speed = 0.85; }            // small steps while she turns on the spot
   else if (act.waving > 0) want = 'waving';
-  else if (FX.talking || FX.level > 0.08) want = 'talking';
+  else if (FX.talkW > 0.3) want = 'talking';          // stays on through the short pauses between sentences
   for (const k in MOCAP.layers) {
     const L = MOCAP.layers[k];
-    if (k === want) { if (L.w < 0.01) L.t = 0; L.speed = speed; }
-    L.w += ((k === want ? 1 : 0) - L.w) * Math.min(1, dt * (k === 'walking' || k === 'running' ? 9 : 5));
+    if (k === want) {
+      if (L.w < 0.01) L.t = k === 'talking' ? Math.random() * 10 : 0;   // talking: start somewhere new in the clip, so the hands do not repeat the same move
+      L.speed = k === 'talking' ? 0.8 + 0.15 * (0.5 + 0.5 * Math.sin(t * 0.13)) : speed;
+    }
+    // talking: the clip moves her only 55% (the rest stays relaxed idle), so the hands are calmer, like a real chat
+    const goal = want === 'talking' ? (k === 'talking' ? 0.55 : k === 'idle' ? 0.45 : 0) : (k === want ? 1 : 0);
+    L.w += (goal - L.w) * Math.min(1, dt * (k === 'walking' || k === 'running' ? 9 : k === 'talking' || want === 'talking' ? 2.2 : 5));
     if (L.w > 0.001) L.t += dt * L.speed;
   }
   // 2. how much the clips own the body: not during clumsy moves / sitting
@@ -1456,7 +1475,7 @@ const isWalking = () => act.walking || act.running || !!(act.cur && act.cur.walk
 async function waitStill(maxS) { const end = performance.now() + maxS * 1000; while (isWalking() && performance.now() < end) await waitS(0.1); }
 function showSentences(text) {               // one sentence on screen at a time (two short ones together)
   const parts = String(text).split(/(?<=[.?!])\s+/).map(x => x.trim()).filter(Boolean), out = [];
-  for (const p of parts) { if (out.length && out[out.length - 1].length + p.length < 70) out[out.length - 1] += ' ' + p; else out.push(p); }
+  for (const p of parts) { if (out.length && out[out.length - 1].length + p.length < 130) out[out.length - 1] += ' ' + p; else out.push(p); }   // longer pieces: her voice flows like one thought
   return out;
 }
 function showAction(a) {
