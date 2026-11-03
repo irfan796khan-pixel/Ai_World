@@ -1309,7 +1309,10 @@ function showBubble(text, seconds) {
 //   2. VoiceStudio (free, local, github.com/debpalash/VoiceStudio) on http://localhost:3900  -> real voice, face follows the sound
 //   3. VoiceStudio not running or blocked  -> the browser's built-in voice (mouth movement is made up)
 //   Change live: AIWorld.voice.mode = 'studio' | 'browser' | 'off',  AIWorld.voice.name = 'alloy',  AIWorld.voice.url = '...'
-const VS = { mode: 'studio', url: 'http://localhost:3900/v1/audio/speech', name: 'alloy', ok: null, seq: 0 };
+// her ONE voice: the VoiceStudio profile "AI World Girl" (female, young adult, moderate pitch, american accent, seed 42).
+// A saved profile keeps the same voice on every line; 'alloy' made a different voice each time.
+const GIRL_VOICE = 'AI World Girl';
+const VS = { mode: 'studio', url: 'http://localhost:3900/v1/audio/speech', name: GIRL_VOICE, ok: null, seq: 0 };
 // page_server.py (run_girl_room.bat) passes /v1/audio/... through to VoiceStudio, so the browser does not block it.
 // The page checks that once; if this page's own server does not pass voice through, it calls VoiceStudio on port 3900 directly.
 const VS_LOCAL = 'v1/audio/speech';
@@ -1317,7 +1320,7 @@ if (location.protocol.startsWith('http')) fetch('v1/audio/voices').then(r => {
   if (r.ok && /json/.test(r.headers.get('content-type') || '')) { VS.url = VS_LOCAL; if (VS.ok === false) VS.ok = null; voiceBtnText(); console.log('voice: VoiceStudio through this page server'); warmShow(); }
   else if (r.status === 502) console.warn('voice: page server is ready, but VoiceStudio is closed. Open the VoiceStudio app.');
 }).catch(() => {});
-try { const m = localStorage.getItem('aiworld_voice_mode'); if (m) VS.mode = m; const n = localStorage.getItem('aiworld_voice_name'); if (n) VS.name = n; } catch (e) {}
+try { const m = localStorage.getItem('aiworld_voice_mode'); if (m) VS.mode = m; const n = localStorage.getItem('aiworld_voice_name'); if (n && n !== 'alloy') VS.name = n; } catch (e) {}
 // VoiceStudio on this laptop runs on the CPU: one line takes 10-30 s to make. So the page
 //   1. keeps every line it got (VCACHE) and asks only once per line,
 //   2. makes the NEXT lines of the Roast script while she says the current one,
@@ -1431,7 +1434,7 @@ const voiceSel = document.getElementById('voicesel');
 function voiceBtnText() {
   if (!voiceSel) return;
   voiceSel.value = VS.mode;
-  voiceSel.options[0].textContent = VS.ok === false ? 'Voice: Studio (not running)' : 'Voice: Studio';
+  voiceSel.options[0].textContent = VS.ok === false ? 'Voice: Studio (not running)' : 'Voice: Studio (' + VS.name + ')';
 }
 if (voiceSel) voiceSel.addEventListener('change', () => {
   VS.mode = voiceSel.value;
