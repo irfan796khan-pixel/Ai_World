@@ -1310,6 +1310,13 @@ function showBubble(text, seconds) {
 //   3. VoiceStudio not running or blocked  -> the browser's built-in voice (mouth movement is made up)
 //   Change live: AIWorld.voice.mode = 'studio' | 'browser' | 'off',  AIWorld.voice.name = 'alloy',  AIWorld.voice.url = '...'
 const VS = { mode: 'studio', url: 'http://localhost:3900/v1/audio/speech', name: 'alloy', ok: null, seq: 0 };
+// page_server.py (run_girl_room.bat) passes /v1/audio/... through to VoiceStudio, so the browser does not block it.
+// The page checks that once; if this page's own server does not pass voice through, it calls VoiceStudio on port 3900 directly.
+const VS_LOCAL = 'v1/audio/speech';
+if (location.protocol.startsWith('http')) fetch('v1/audio/voices').then(r => {
+  if (r.ok && /json/.test(r.headers.get('content-type') || '')) { VS.url = VS_LOCAL; if (VS.ok === false) VS.ok = null; voiceBtnText(); console.log('voice: VoiceStudio through this page server'); }
+  else if (r.status === 502) console.warn('voice: page server is ready, but VoiceStudio is closed. Open the VoiceStudio app.');
+}).catch(() => {});
 try { const m = localStorage.getItem('aiworld_voice_mode'); if (m) VS.mode = m; const n = localStorage.getItem('aiworld_voice_name'); if (n) VS.name = n; } catch (e) {}
 async function studioVoice(text) {
   const res = await fetch(VS.url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer local' },
@@ -1373,6 +1380,7 @@ async function sayNow(text, spoken) {           // bubble shows text, the voice 
   if (typeof window.AIWorld.onSay === 'function') { try { window.AIWorld.onSay(spoken); } catch (e) { console.warn('onSay failed', e); } return readTime(spoken); }
   if (VS.mode === 'off') return readTime(spoken);
   stopVoices(); const my = VS.seq;
+  if (VS.mode === 'studio' && VS.ok === false && Date.now() > (VS.retryAt || 0)) VS.ok = null;   // VoiceStudio may be open now: try again
   if (VS.mode === 'studio' && VS.ok !== false) {
     try {
       const mp3 = await studioVoice(spoken);
@@ -1381,7 +1389,7 @@ async function sayNow(text, spoken) {           // bubble shows text, the voice 
       await speak(mp3); return;
     } catch (e) {
       if (VS.ok !== false) console.warn('VoiceStudio not reachable on ' + VS.url + ' — using the browser voice. Start VoiceStudio, then click the Voice button.', e);
-      VS.ok = false; voiceBtnText();
+      VS.ok = false; voiceBtnText(); VS.retryAt = Date.now() + 20000;
       if (my !== VS.seq) return;
     }
   }
@@ -1467,7 +1475,11 @@ async function runShow(file) {
   if (my === SHOW.run) { SHOW.on = false; TALK.show = false; STATS.auto = SHOW.autoWas; if (roastBtn) roastBtn.textContent = 'Roast'; setMood('neutral'); setTimeout(() => bubbleEl.classList.remove('show'), 2500); }
 }
 if (roastBtn) roastBtn.addEventListener('click', () => runShow());
-window.AIWorld.show = { run: runShow, stop: stopShow };   // AIWorld.show.run('other_script.json') runs another script
+window.AIWorld.show = { run: runShow, stop: stopShow };
+window.AIWorld.startProposal = () => runShow();                   // old name for the class script
+if (/(?:[?#&])proposal(?:=|&|$)/.test(location.search + location.hash)) {   // Girl_Room.html?proposal starts the script by itself
+  const waitReady = setInterval(() => { if (loaded && MOCAP.ready) { clearInterval(waitReady); setTimeout(() => runShow(), 1200); } }, 300);
+}   // AIWorld.show.run('other_script.json') runs another script
 window.AIWorld.voices = { test: (t) => sayMain(t || 'Hi, I live in AI World.'), setName(n) { VS.name = n; try { localStorage.setItem('aiworld_voice_name', n); } catch (e) {} } };
 async function talkWhenStill(text) {     // short lines (under 8 words) can be said on the way; longer ones wait until she stops walking
   TALK.main++;
@@ -1504,12 +1516,20 @@ async function hear(text) {
 // ---- brain: run_girl_room.bat starts brain_server.py, which serves this page AND the brain on the same port.
 //   The page asks /brain/health once; if the brain answers, typed text that no quick reply knows goes to /brain.
 const BRAIN = { ok: false, provider: null };
+function brainOn5005() {   // no brain on this page's own server: try Brain.py on its own port (run_girl_room.bat can start "Brain.py --serve --port 5005")
+  fetch('http://localhost:5005/health').then(r => r.ok ? r.json() : null).then(j => {
+    if (!j) { console.log('no brain server: quick replies only'); return; }
+    BRAIN.ok = true; BRAIN.provider = j.brain || 'Brain.py';
+    if (!window.AIWorld.brainUrl && typeof window.AIWorld.onUnmatched !== 'function') window.AIWorld.brainUrl = 'http://localhost:5005/brain';
+    console.log('brain connected on port 5005: ' + BRAIN.provider);
+  }).catch(() => console.log('no brain server: quick replies only'));
+}
 fetch('brain/health').then(r => r.ok ? r.json() : null).then(j => {
-  if (!j || !j.brain) { console.log('no brain server: quick replies only (start with run_girl_room.bat to get the brain)'); return; }
+  if (!j || !j.brain) { brainOn5005(); return; }
   BRAIN.ok = true; BRAIN.provider = j.provider;
   if (!window.AIWorld.brainUrl && typeof window.AIWorld.onUnmatched !== 'function') window.AIWorld.brainUrl = 'brain';
   console.log('brain connected: ' + j.provider + ' (' + j.model + ')' + (j.ready ? '' : ' — but ' + j.problem));
-}).catch(() => console.log('no brain server: quick replies only'));
+}).catch(() => brainOn5005());
 function learn(entry) {
   if (!entry || !entry.match || !entry.say) return false;
   const e = { match: [].concat(entry.match), say: [].concat(entry.say), mood: entry.mood || 'neutral' };

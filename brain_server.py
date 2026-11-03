@@ -50,7 +50,12 @@ def offline_reply(problem):
             "animation": "shrug", "error": problem, "learn": False}
 
 
+from page_server import Handler as _VoiceHandler   # passes /v1/audio/... to VoiceStudio (port 3900)
+
+
 class Handler(SimpleHTTPRequestHandler):
+    _voice = _VoiceHandler._voice
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=HERE, **kwargs)
 
@@ -64,6 +69,8 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if self.path.startswith("/v1/"):
+            return self._voice("GET")
         if self.path.split("?")[0].rstrip("/") == "/brain/health":
             problem = brain_problem()
             model = Brain.CLAUDE_MODEL if PROVIDER == "claude" else Brain.OLLAMA_MODEL
@@ -72,6 +79,8 @@ class Handler(SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def do_POST(self):
+        if self.path.startswith("/v1/"):
+            return self._voice("POST")
         if self.path.split("?")[0].rstrip("/") != "/brain":
             return self.send_json(404, {"error": "unknown address"})
         try:
