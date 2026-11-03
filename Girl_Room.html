@@ -1467,7 +1467,11 @@ async function runShow(file) {
   if (my === SHOW.run) { SHOW.on = false; TALK.show = false; STATS.auto = SHOW.autoWas; if (roastBtn) roastBtn.textContent = 'Roast'; setMood('neutral'); setTimeout(() => bubbleEl.classList.remove('show'), 2500); }
 }
 if (roastBtn) roastBtn.addEventListener('click', () => runShow());
-window.AIWorld.show = { run: runShow, stop: stopShow };   // AIWorld.show.run('other_script.json') runs another script
+window.AIWorld.show = { run: runShow, stop: stopShow };
+window.AIWorld.startProposal = () => runShow();                   // old name for the class script
+if (/(?:[?#&])proposal(?:=|&|$)/.test(location.search + location.hash)) {   // Girl_Room.html?proposal starts the script by itself
+  const waitReady = setInterval(() => { if (loaded && MOCAP.ready) { clearInterval(waitReady); setTimeout(() => runShow(), 1200); } }, 300);
+}   // AIWorld.show.run('other_script.json') runs another script
 window.AIWorld.voices = { test: (t) => sayMain(t || 'Hi, I live in AI World.'), setName(n) { VS.name = n; try { localStorage.setItem('aiworld_voice_name', n); } catch (e) {} } };
 async function talkWhenStill(text) {     // short lines (under 8 words) can be said on the way; longer ones wait until she stops walking
   TALK.main++;
@@ -1509,7 +1513,15 @@ fetch('brain/health').then(r => r.ok ? r.json() : null).then(j => {
   BRAIN.ok = true; BRAIN.provider = j.provider;
   if (!window.AIWorld.brainUrl && typeof window.AIWorld.onUnmatched !== 'function') window.AIWorld.brainUrl = 'brain';
   console.log('brain connected: ' + j.provider + ' (' + j.model + ')' + (j.ready ? '' : ' — but ' + j.problem));
-}).catch(() => console.log('no brain server: quick replies only'));
+}).catch(() => {
+  // no brain on this page's own server: try Brain.py on its own port (run_girl_room.bat can start "Brain.py --serve --port 5005")
+  fetch('http://localhost:5005/health').then(r => r.ok ? r.json() : null).then(j => {
+    if (!j) { console.log('no brain server: quick replies only'); return; }
+    BRAIN.ok = true; BRAIN.provider = j.brain || 'Brain.py';
+    if (!window.AIWorld.brainUrl && typeof window.AIWorld.onUnmatched !== 'function') window.AIWorld.brainUrl = 'http://localhost:5005/brain';
+    console.log('brain connected on port 5005: ' + BRAIN.provider);
+  }).catch(() => console.log('no brain server: quick replies only'));
+});
 function learn(entry) {
   if (!entry || !entry.match || !entry.say) return false;
   const e = { match: [].concat(entry.match), say: [].concat(entry.say), mood: entry.mood || 'neutral' };
