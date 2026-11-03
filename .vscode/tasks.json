@@ -1,0 +1,17 @@
+{
+  // Terminal > Run Task... > "AI World: start (page + brain + voice)"
+  // Starts Brain.py (port 5005) and page_server.py (port 8081, voice goes to VoiceStudio on 3900).
+  // Keep the VoiceStudio app open. Then open http://localhost:8081/Girl_Room.html
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "AI World: start (page + brain + voice)",
+      "type": "shell",
+      "command": "${workspaceFolder}\\run_girl_room.bat",
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    }
+  ]
+}

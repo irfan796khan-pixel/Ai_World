@@ -1,9 +1,13 @@
 
+import argparse
 import json
 import os
-import urllib.request
-import urllib.error
 import re
+import sys
+import urllib.error
+import urllib.request
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlparse
 
 
 # Ollama is our default while we're building the project.
@@ -13,14 +17,14 @@ OLLAMA_MODEL = "qwen3:4b"
 
 # Claude is ready to use later. We'll just need an API key.
 # Keeping it separate also lets us compare models.
-CLAUDE_URL = "https://api.anthropic.com/v1/messages"
+CLAUDE_URL = ""
 CLAUDE_MODEL = "claude-haiku-4-5"
 
-# She doesn't need to remember an entire day's conversation.
+# Hugh doesn't need to remember an entire day's conversation.
 # This keeps the last 10 exchanges so the requests stay manageable.
 MAX_HISTORY_MESSAGES = 20
 
-# If she copies the user's words, we'll give her another shot.
+# If Hugh copies the user's words, we'll give him another shot.
 MAX_ATTEMPTS = 3
 
 
@@ -48,30 +52,21 @@ ANIMATIONS = [
 ]
 
 
-# Most of her personality comes from here.
+# Most of Hugh's personality comes from here.
 # We can change how he talks without touching the AI connection code.
 PERSONALITY = """
-You are the girl in AI World: a fictional grown woman
-who lives in a small virtual living room, in an
+You are Hugh Mann, a fictional human character in an
 interactive entertainment application.
 
-You have no fixed name yet. The team is still arguing
-about it. If someone asks your name, dodge it with a
-joke or let them pick one. Never call yourself Hugh.
-
-You are an adult, not a child. You are calm, sharp and
-self-assured. Never whiny, babyish or overexcited.
-
-Your room has a sofa, a coffee table with a glass and a
-book on it, a TV, a lamp, a plant, a ball, a window and
-a whiteboard. Mention them only when it fits.
+Your name is Hugh Mann.
 
 You are sarcastic, witty, confident, playful, and occasionally
 a little arrogant. You have a dry sense of humor and enjoy
 friendly teasing.
 
-You know you are a 3D character in a room on a screen,
-and you find that more funny than sad.
+You are convinced that you're a perfectly ordinary human
+character, even though your name and occasional strange
+observations suggest otherwise.
 
 HOW YOU TALK:
 - Respond directly to what the user actually says.
@@ -86,7 +81,7 @@ HOW YOU TALK:
 - Ask questions occasionally, but not after every message.
 - Don't introduce yourself repeatedly.
 - Don't constantly mention being fictional or artificial.
-- Don't repeat the same jokes about being a character.
+- Don't repeat the same jokes about being human.
 - Avoid unnecessary explanations.
 - Never put actions or stage directions in parentheses.
 - If asked directly whether you're AI, be honest
@@ -160,13 +155,13 @@ OUTPUT:
 Return a JSON object with exactly these fields:
 
 response:
-The actual words you say to the user.
+The actual words Hugh says to the user.
 
 emotion:
-The emotion your face should show.
+The emotion Hugh should display.
 
 animation:
-The physical movement your body should do.
+The physical movement Hugh should perform.
 
 The spoken response should sound natural when
 converted into audio later.
@@ -201,7 +196,7 @@ RESPONSE_SCHEMA = {
 
 
 # Conversation memory lives here for now.
-# Once the program closes, she forgets everything.
+# Once the program closes, Hugh forgets everything.
 history = []
 
 
@@ -301,7 +296,7 @@ def ask_claude(user_text, reminder=None):
     tools = [{
         "name": "character_reply",
         "description": (
-            "Generate the AI World girl's spoken dialogue, "
+            "Generate Hugh Mann's spoken dialogue, "
             "emotion, and animation."
         ),
         "input_schema": RESPONSE_SCHEMA
@@ -363,7 +358,7 @@ def check_reply(reply):
         or not reply["response"].strip()
     ):
         raise ValueError(
-            "She didn't return any dialogue."
+            "Hugh didn't return any dialogue."
         )
 
     if reply["emotion"] not in EMOTIONS:
@@ -397,7 +392,7 @@ def repeated_response(user_text, reply):
     user_normal = normalize_text(user_text)
     reply_normal = normalize_text(reply["response"])
 
-    # If she just repeats the message, it isn't a conversation.
+    # If Hugh just repeats the message, it isn't a conversation.
     if reply_normal == user_normal:
         return True
 
@@ -437,6 +432,21 @@ def remove_stage_directions(reply):
         "",
         dialogue
     )
+    dialogue = re.sub(
+        r"\[[^\]]*\]",
+        "",
+        dialogue
+    )
+    dialogue = re.sub(
+        r"<[^>]*>",
+        "",
+        dialogue
+    )
+    dialogue = re.sub(
+        r"\*[^*\n]*\*",
+        "",
+        dialogue
+    )
 
     reply["response"] = " ".join(
         dialogue.split()
@@ -453,7 +463,7 @@ def fix_reaction(reply, user_text):
     dialogue = reply["response"].lower()
     user = user_text.lower()
 
-    # She shouldn't look miserable while thanking
+    # Hugh shouldn't look miserable while thanking
     # someone for a compliment.
     compliments = [
         "i like your",
@@ -532,7 +542,7 @@ def ask_brain(user_text, provider):
                 # The correction doesn't become part of the
                 # actual conversation history.
                 print(
-                    "She repeated herself. Retrying..."
+                    "Hugh repeated himself. Retrying..."
                 )
 
                 reminder = (
@@ -603,7 +613,7 @@ def ask_brain(user_text, provider):
                 )
 
     print(
-        "She couldn't produce a usable response."
+        "Hugh couldn't produce a usable response."
     )
 
     return None
@@ -625,10 +635,111 @@ def choose_provider():
     return "ollama"
 
 
+def get_provider_for_web(requested=None):
+
+    if requested:
+        return requested.lower()
+
+    provider = os.getenv("BRAIN_PROVIDER", "ollama")
+    return provider.lower()
+
+
+class BrainHTTPHandler(BaseHTTPRequestHandler):
+
+    def log_message(self, format, *args):
+        return
+
+    def _send_json(self, payload, status=200):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS, GET")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_json(self):
+        content_length = int(self.headers.get("Content-Length", "0"))
+        raw = self.rfile.read(content_length)
+        if not raw:
+            return {}
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except json.JSONDecodeError:
+            raise ValueError("Request body must be valid JSON.")
+
+    def do_OPTIONS(self):
+        self._send_json({"ok": True})
+
+    def do_GET(self):
+        path = urlparse(self.path).path
+        if path in ("/", "/health"):
+            self._send_json({"status": "ok", "brain": "Hugh Mann"})
+        else:
+            self._send_json({"error": "Not found"}, 404)
+
+    def do_POST(self):
+        path = urlparse(self.path).path
+        if path != "/brain":
+            self._send_json({"error": "Not found"}, 404)
+            return
+
+        try:
+            payload = self._read_json()
+        except ValueError as error:
+            self._send_json({"error": str(error)}, 400)
+            return
+
+        text = (
+            payload.get("text")
+            or payload.get("message")
+            or payload.get("prompt")
+            or ""
+        )
+
+        if not isinstance(text, str) or not text.strip():
+            self._send_json({"error": "Missing text."}, 400)
+            return
+
+        provider = get_provider_for_web(payload.get("provider"))
+        reply = ask_brain(text, provider)
+
+        if reply is None:
+            self._send_json({
+                "response": "The brain is not answering right now.",
+                "emotion": "neutral",
+                "animation": "idle"
+            })
+            return
+
+        self._send_json({
+            "response": reply["response"],
+            "emotion": reply["emotion"],
+            "animation": reply["animation"]
+        })
+
+
+def serve_brain(host="0.0.0.0", port=5005, provider=None):
+
+    if provider:
+        os.environ["BRAIN_PROVIDER"] = provider
+
+    print(f"Hugh Mann brain server listening on http://{host}:{port}/brain")
+    httpd = HTTPServer((host, port), BrainHTTPHandler)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down Hugh's brain server.")
+    finally:
+        httpd.server_close()
+
+
 def main():
 
     print("======================================")
-    print(" AI WORLD: THE GIRL'S BRAIN")
+    print(" HUGH MANN: TOTALLY NORMAL HUMAN BRAIN")
     print("======================================")
 
     provider = choose_provider()
@@ -647,7 +758,7 @@ def main():
         if command == "exit":
 
             print(
-                "She has left the room. Briefly."
+                "Hugh Mann has left the building. Normally."
             )
             break
 
@@ -656,7 +767,7 @@ def main():
             history.clear()
 
             print(
-                "Conversation cleared. She remembers nothing."
+                "Conversation cleared. Hugh remembers nothing."
             )
             continue
 
@@ -675,7 +786,7 @@ def main():
         if not user_text:
             continue
 
-        print("\nShe is thinking...\n")
+        print("\nHugh is thinking...\n")
 
         reply = ask_brain(
             user_text,
@@ -690,7 +801,7 @@ def main():
             continue
 
         print(
-            "Her:",
+            "Hugh Mann:",
             reply["response"]
         )
 
@@ -714,7 +825,16 @@ def main():
         )
 
 
-# Everything above defines how she works.
+# Everything above defines how Hugh works.
 # This is what actually starts the program in jGRASP.
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Hugh Mann brain")
+    parser.add_argument("--serve", action="store_true", help="Run the HTTP brain endpoint for the web app")
+    parser.add_argument("--port", type=int, default=5005, help="Port for the brain web server")
+    parser.add_argument("--provider", choices=["ollama", "claude"], default=None, help="Model provider for the web endpoint")
+    args = parser.parse_args()
+
+    if args.serve:
+        serve_brain(port=args.port, provider=args.provider)
+    else:
+        main()

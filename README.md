@@ -16,16 +16,22 @@ we talk  >  brain thinks  >  brain sends words + action  >  ACTION (this repo)
 
 Planned later for the body: a cartoon-style (stylized, not realistic) character, plus Convai for conversation. MetaHuman (realistic) is dropped. What is here now: a three.js web version (girl + living room).
 
-## Run it (Windows)
-Double-click `run_girl_room.bat`. It starts `brain_server.py`, which serves the room **and** the brain (Brain.py) on the same port, then opens the page.
-Before that, start the AI the brain uses: the **Ollama** app with the model `qwen3:4b` (`ollama pull qwen3:4b` once). For Claude instead, set `ANTHROPIC_API_KEY` in Windows and change `ollama` to `claude` at the end of `run_girl_room.bat`.
-The black window shows if the brain is ready, and every question and answer. When Ollama is off she says so out loud instead of hanging.
+## Run it (Windows) — one click
+Double-click `run_girl_room.bat` (or the **Start AI World** shortcut on the Desktop, or VS Code: Terminal → Run Task → "AI World: start"). It:
+1. opens **VoiceStudio** if it is not open yet, and waits (up to 90 s) until her voice answers on port 3900,
+2. starts the brain: `Brain.py --serve --port 5005` (Ollama `qwen3:4b`; run `ollama pull qwen3:4b` once),
+3. starts `page_server.py` on port 8081 (the room + her voice passed through to VoiceStudio, so the browser does not block it),
+4. opens http://localhost:8081/Girl_Room.html.
+If a part is already running it is not started twice. Keep the black windows open while you use her.
 
-How a sentence travels: you type → a quick reply answers at once if one matches → otherwise the page sends it to `/brain` → Brain.py answers `{response, emotion, animation}` → bubble + voice + face mood + move (wave, nod, shake_head, shrug, cross_arms, idle).
+Her voice: the VoiceStudio profile **AI World Girl** (female, young adult, moderate pitch, American accent). Every line VoiceStudio makes is saved in `voice_cache/` and plays at once next time; the Roast lines are made in the background after the page opens (the button shows `Roast (voice x/45)`). VoiceStudio is much faster on the NVIDIA GPU (about 2 s a line) than on the CPU (10–30 s).
+
+Other way to start: `python brain_server.py ollama` serves the room and the brain together on 8081 (also passes the voice through).
+
+How a sentence travels: you type → a quick reply answers at once if one matches → otherwise the page sends it to the brain → Brain.py answers `{response, emotion, animation}` → bubble + voice + face mood + move (wave, nod, shake_head, shrug, cross_arms, idle).
 Type `new chat` to clear the brain's memory of the chat (`reset` alone cleans up the room).
-
-The page is http://localhost:8081/Girl_Room.html (needs Python).
-Opening the html file directly does not work: the browser blocks loading `Girl_character_mixamo.glb` from disk.
+`Girl_Room.html?proposal` starts the Roast (class) script by itself.
+Opening the html file directly (file:///) does not work: the browser blocks loading `Girl_character_mixamo.glb` and her voice.
 
 ## Files
 - `Girl_Room.html` — the room + the girl + the action door. One file, three.js r147 from CDN (r128 could only blend 8 face shapes at once, so moods with many shapes lost the jaw).
@@ -33,7 +39,9 @@ Opening the html file directly does not work: the browser blocks loading `Girl_c
 - `Girl_character_mixamo_packed.glb` — the same girl packed with meshopt, much smaller. The page loads this one first; `Girl_Room.html?model=original` forces the big one.
 - `moves.json` — real motion from Imran's Mixamo clips (Idle, Walking, Running, Waving, Talking), baked so they fit her bones.
 - `quick_replies.json` — about 80 instant replies (around 490 trigger phrases, 240 answers), each tied to a face mood and body moves.
-- `run_girl_room.bat` — starts it (room + brain).
+- `run_girl_room.bat` — one click: VoiceStudio + brain + room.
+- `page_server.py` — serves the room on 8081 and passes `/v1/audio/...` to VoiceStudio (saves every made line in `voice_cache/`).
+- `wait_for.py` — small helper the start file uses to wait until VoiceStudio / the brain answers.
 - `brain_server.py` — serves the page and connects it to `Brain.py` (`/brain`, `/brain/health`).
 - `Brain.py` — the brain (Ollama or Claude). She is a grown woman with no fixed name yet.
 - `roast_script.json` — the show for the **Roast** button: she performs the lines in order (voice, one-sentence subtitles, moves). Edit the text/actions freely; `sayAs` fixes how the voice reads words like Brain.py. Press Roast again to stop. `AIWorld.show.run('other.json')` plays another script.
