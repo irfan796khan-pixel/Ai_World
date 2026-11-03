@@ -1314,15 +1314,38 @@ const VS = { mode: 'studio', url: 'http://localhost:3900/v1/audio/speech', name:
 // The page checks that once; if this page's own server does not pass voice through, it calls VoiceStudio on port 3900 directly.
 const VS_LOCAL = 'v1/audio/speech';
 if (location.protocol.startsWith('http')) fetch('v1/audio/voices').then(r => {
-  if (r.ok && /json/.test(r.headers.get('content-type') || '')) { VS.url = VS_LOCAL; if (VS.ok === false) VS.ok = null; voiceBtnText(); console.log('voice: VoiceStudio through this page server'); }
+  if (r.ok && /json/.test(r.headers.get('content-type') || '')) { VS.url = VS_LOCAL; if (VS.ok === false) VS.ok = null; voiceBtnText(); console.log('voice: VoiceStudio through this page server'); warmShow(); }
   else if (r.status === 502) console.warn('voice: page server is ready, but VoiceStudio is closed. Open the VoiceStudio app.');
 }).catch(() => {});
 try { const m = localStorage.getItem('aiworld_voice_mode'); if (m) VS.mode = m; const n = localStorage.getItem('aiworld_voice_name'); if (n) VS.name = n; } catch (e) {}
-async function studioVoice(text) {
-  const res = await fetch(VS.url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer local' },
-    body: JSON.stringify({ model: 'tts-1', voice: VS.name, input: text }) });
-  if (!res.ok) throw new Error('VoiceStudio error ' + res.status);
-  return res.blob();
+// VoiceStudio on this laptop runs on the CPU: one line takes 10-30 s to make. So the page
+//   1. keeps every line it got (VCACHE) and asks only once per line,
+//   2. makes the NEXT lines of the Roast script while she says the current one,
+//   3. gets the Roast lines ready in the background after the page opens (page_server.py also saves them in voice_cache/, so next time they play at once).
+const VCACHE = new Map();
+function studioVoice(text) {
+  const k = VS.name + '|' + text;
+  if (VCACHE.has(k)) return VCACHE.get(k);
+  const p = fetch(VS.url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer local' },
+    body: JSON.stringify({ model: 'tts-1', voice: VS.name, input: text }) })
+    .then(res => { if (!res.ok) throw new Error('VoiceStudio error ' + res.status); return res.blob(); });
+  VCACHE.set(k, p);
+  p.catch(() => VCACHE.delete(k));        // failed: ask again next time
+  return p;
+}
+const PREP = { run: 0, done: 0, total: 0 };
+async function prepVoices(list, opts) {   // makes the lines one by one, in order (VoiceStudio has one worker)
+  const my = ++PREP.run; PREP.done = 0; PREP.total = list.length; prepText();
+  for (const t of list) {
+    if (my !== PREP.run || VS.mode !== 'studio' || VS.ok === false) break;
+    if (opts && opts.background) while (TALK.main > 0 && !TALK.show && my === PREP.run) await waitS(0.3);   // a live reply goes first
+    try { await studioVoice(t); } catch (e) { break; }
+    if (my === PREP.run) { PREP.done++; prepText(); }
+  }
+}
+function prepText() {
+  const b = document.getElementById('roastbtn'); if (!b || SHOW.on) return;
+  b.textContent = PREP.total && PREP.done < PREP.total ? 'Roast (voice ' + PREP.done + '/' + PREP.total + ')' : 'Roast';
 }
 const TTS = { utter: null, level: 0, plan: null, t0: 0, rate: 1 };
 // mouth plan: each syllable opens the mouth for a moment; commas and full stops close it for a pause
@@ -1445,7 +1468,7 @@ function showAction(a) {
 }
 function stopShow() {
   SHOW.run++; SHOW.on = false; TALK.show = false; stopVoices(); window.AIWorld.stop(); STATS.auto = SHOW.autoWas; bubbleEl.classList.remove('show');
-  if (roastBtn) roastBtn.textContent = 'Roast';
+  if (roastBtn) roastBtn.textContent = 'Roast'; prepText();
 }
 async function runShow(file) {
   if (SHOW.on) { stopShow(); return; }
@@ -1455,6 +1478,8 @@ async function runShow(file) {
   const lines = Array.isArray(script) ? script : script.lines, sayAs = (!Array.isArray(script) && script.sayAs) || {};
   const spoken = (t) => { for (const k in sayAs) t = t.split(k).join(sayAs[k]); return t; };
   const my = ++SHOW.run; SHOW.on = true; TALK.show = true; SHOW.autoWas = STATS.auto; STATS.auto = false;
+  if (VS.mode === 'studio' && VS.ok !== false && typeof window.AIWorld.onSay !== 'function')
+    prepVoices(lines.flatMap(l => showSentences(l.text || '').map(spoken)));   // she says line 1 while line 2, 3 ... are being made
   if (roastBtn) roastBtn.textContent = 'Stop';
   try { voiceCtx(); } catch (e) {}
   window.AIWorld.stop(); window.AIWorld.act([{ walk: 'center' }, { face: 'camera' }]);
@@ -1472,10 +1497,20 @@ async function runShow(file) {
     }
     await waitS(l.pause === undefined ? 0.6 : +l.pause);
   }
-  if (my === SHOW.run) { SHOW.on = false; TALK.show = false; STATS.auto = SHOW.autoWas; if (roastBtn) roastBtn.textContent = 'Roast'; setMood('neutral'); setTimeout(() => bubbleEl.classList.remove('show'), 2500); }
+  if (my === SHOW.run) { SHOW.on = false; TALK.show = false; STATS.auto = SHOW.autoWas; if (roastBtn) roastBtn.textContent = 'Roast'; prepText(); setMood('neutral'); setTimeout(() => bubbleEl.classList.remove('show'), 2500); }
 }
 if (roastBtn) roastBtn.addEventListener('click', () => runShow());
-window.AIWorld.show = { run: runShow, stop: stopShow };
+async function warmShow(file) {           // after the page opens: get the Roast lines ready, quietly, one by one
+  if (VS.mode !== 'studio') return;
+  try {
+    const script = await (await fetch((file || 'roast_script.json') + '?t=' + Date.now())).json();
+    const lines = Array.isArray(script) ? script : script.lines, sayAs = (!Array.isArray(script) && script.sayAs) || {};
+    const spoken = (t) => { for (const k in sayAs) t = t.split(k).join(sayAs[k]); return t; };
+    await waitS(3);
+    if (!SHOW.on) prepVoices(lines.flatMap(l => showSentences(l.text || '').map(spoken)), { background: true });
+  } catch (e) { console.warn('could not get the Roast voice ready', e); }
+}
+window.AIWorld.show = { run: runShow, stop: stopShow, warm: warmShow };
 window.AIWorld.startProposal = () => runShow();                   // old name for the class script
 if (/(?:[?#&])proposal(?:=|&|$)/.test(location.search + location.hash)) {   // Girl_Room.html?proposal starts the script by itself
   const waitReady = setInterval(() => { if (loaded && MOCAP.ready) { clearInterval(waitReady); setTimeout(() => runShow(), 1200); } }, 300);
