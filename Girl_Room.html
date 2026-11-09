@@ -31,7 +31,7 @@
 <body>
 <div id="status">loading the girl…</div>
 <div id="bubble"></div>
-<div id="bar"><input id="say" placeholder="say something: sit, wave, trip, go to the window, tell me a joke…" autocomplete="off"><button id="send">Send</button><button id="live" title="hands-free live chat: just speak (click again to stop)">Live chat</button><button id="roastbtn" title="she performs the class presentation, roast_script.json (press again to stop)">Presentation</button><select id="voicesel" title="her voice"><option value="studio">Voice: Studio</option><option value="browser">Voice: Browser</option><option value="off">Voice: Off</option></select><button id="clip" class="rec" title="record a 15 s vertical clip (9:16) for TikTok">Clip 15s</button></div>
+<div id="bar"><input id="say" placeholder="say something: sit, wave, trip, go to the window, tell me a joke…" autocomplete="off"><button id="send">Send</button><button id="live" title="hands-free live chat: just speak (click again to stop)">Live chat</button><button id="roastbtn" title="she performs the class presentation, roast_script.json (press again to stop)">Presentation</button><select id="voicesel" title="her voice"><option value="studio">Voice: Her voice</option><option value="browser">Voice: Browser</option><option value="off">Voice: Off</option></select><button id="clip" class="rec" title="record a 15 s vertical clip (9:16) for TikTok">Clip 15s</button></div>
 <script>
 // ============================================================================
 // AI World — ONLY the girl and the room.
@@ -1462,7 +1462,7 @@ const voiceSel = document.getElementById('voicesel');
 function voiceBtnText() {
   if (!voiceSel) return;
   voiceSel.value = VS.mode;
-  voiceSel.options[0].textContent = VS.ok === false ? 'Voice: Studio (not running)' : 'Voice: Studio (' + VS.name + ')';
+  voiceSel.options[0].textContent = VS.ok === false ? 'Voice: Her voice (not running)' : 'Voice: Her voice (teen girl)';
 }
 if (voiceSel) voiceSel.addEventListener('change', () => {
   VS.mode = voiceSel.value;
@@ -1824,7 +1824,11 @@ async function liveOn(prefer) {
   LIVE.on = true; liveText('Starting mic…');
   try { voiceCtx(); } catch (e) {}
   let ok = false;
-  if (prefer !== 'browser') { try { ok = await startVad(); } catch (e) { console.warn('VAD could not start', e); } }
+  if (prefer !== 'browser') {                    // VoiceStudio does the speech-to-text: is it running? if not, use the browser at once
+    let stt = false; try { stt = (await fetch('v1/stt/health')).ok; } catch (e) {}
+    if (stt) { try { ok = await startVad(); } catch (e) { console.warn('VAD could not start', e); } }
+    else console.log('live chat: VoiceStudio speech-to-text not running, using the browser speech recognition');
+  }
   if (!ok) ok = startBrowserRec();
   if (!ok) { LIVE.on = false; liveIdle(); sayMain("Live talk can't start here. Allow the microphone, or use Chrome or Edge."); return false; }
   liveIdle(); console.log('live talk on: ' + LIVE.mode); return true;

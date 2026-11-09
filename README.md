@@ -113,6 +113,13 @@ AIWorld.onSay = (text) => { /* another voice: make the audio, then AIWorld.speak
 ```
 Answers from the brain through `brainUrl` are saved as new quick replies automatically, so the second time is instant.
 
+## Her voice (teen girl, Piper)
+Her voice is made on the laptop by `girl_voice.py` with **Piper** (free, offline, the same engine as the Adam Voice phone app v3). VoiceStudio is no longer needed for her voice.
+- Voice: Piper `en_US-hfc_female-medium` (the highest of the 5 US female Piper voices we measured: 235 Hz), lifted about 2 semitones for a teen sound (`LIFT = 1.12` in `girl_voice.py`; 1.0 = normal).
+- `run_girl_room.bat` runs `python girl_voice.py --setup` first: the first time it installs `piper-tts` and downloads the voice (about 63 MB, into `voices/`).
+- `page_server.py` answers `/v1/audio/speech` with Piper (a line takes about 0.3 s) and keeps every line in `voice_cache/`. If Piper is not ready it still forwards to VoiceStudio.
+- Live chat speech-to-text still uses VoiceStudio if it is running; if not, Live chat uses the browser's speech recognition from the first sentence.
+
 ## Live chat (hands-free, button "Live chat")
 Press **Live chat** once, allow the microphone, then just talk. No typing.
 1. **Silero VAD** ([ricky0123/vad](https://github.com/ricky0123/vad), ISC licence, loaded from the CDN) hears when you start and stop talking.

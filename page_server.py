@@ -1,4 +1,9 @@
-"""Serves the AI World folder on http://localhost:8081 and passes voice requests to VoiceStudio.
+"""Serves the AI World folder on http://localhost:8081 and makes her voice.
+
+Her voice: girl_voice.py (Piper teen girl voice, on this laptop, no VoiceStudio needed).
+If Piper is not ready, voice requests go to VoiceStudio (port 3900) as before.
+Speech-to-text for Live chat (/v1/audio/transcriptions) still goes to VoiceStudio; without it the
+page uses the browser's own speech recognition.
 
 Why: the page (port 8081) and VoiceStudio (port 3900) are different addresses, so the browser
 blocks the page from calling VoiceStudio directly. The page calls /v1/audio/... on THIS server
@@ -16,6 +21,12 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import json
+
+try:
+    import girl_voice
+except Exception:
+    girl_voice = None
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8081
 VOICESTUDIO = "http://127.0.0.1:3900"
@@ -37,6 +48,36 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         body = None
         if method == "POST":
             body = self.rfile.read(int(self.headers.get("Content-Length", "0") or 0))
+        piper = girl_voice is not None and girl_voice.ready()
+        if piper and method == "GET" and self.path.startswith("/v1/audio/voices"):
+            data = json.dumps({"data": [{"id": "AI World Girl", "name": "AI World Girl (Piper teen)"}]}).encode()
+            return self._send(200, "application/json", data)
+        if self.path.startswith("/v1/stt/health"):       # can VoiceStudio do Live chat speech-to-text right now?
+            try:
+                with urllib.request.urlopen(VOICESTUDIO + "/health", timeout=1.5) as res:
+                    return self._send(200, "text/plain", b"ok")
+            except Exception:
+                return self._send(503, "text/plain", b"VoiceStudio not running")
+        if piper and method == "POST" and self.path.startswith("/v1/audio/speech"):
+            try:
+                text = json.loads(body or b"{}").get("input", "")
+            except Exception:
+                text = ""
+            if not text.strip():
+                return self._send(400, "text/plain", b"no text")
+            key = os.path.join(CACHE, "piper-" + hashlib.sha1((girl_voice.VOICE + "|%s|" % girl_voice.LIFT + text).encode()).hexdigest() + ".wav")
+            if os.path.exists(key):
+                with open(key, "rb") as f:
+                    return self._send(200, "audio/wav", f.read(), "hit")
+            try:
+                data = girl_voice.speak(text)
+            except Exception as e:
+                return self._send(500, "text/plain", ("Piper failed: " + str(e)).encode())
+            os.makedirs(CACHE, exist_ok=True)
+            with open(key + ".part", "wb") as f:
+                f.write(data)
+            os.replace(key + ".part", key)
+            return self._send(200, "audio/wav", data, "made")
         key = None
         if method == "POST" and self.path.startswith("/v1/audio/speech"):
             key = os.path.join(CACHE, hashlib.sha1(body).hexdigest() + ".mp3")
@@ -101,5 +142,9 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 
 if __name__ == "__main__":
-    print("AI World page: http://localhost:%d/Girl_Room.html   (voice goes to VoiceStudio on %s)" % (PORT, VOICESTUDIO))
+    if girl_voice is not None and girl_voice.ready():
+        print("AI World page: http://localhost:%d/Girl_Room.html   (her voice: Piper teen girl, on this laptop)" % PORT)
+        threading.Thread(target=lambda: girl_voice.speak("Hi."), daemon=True).start()   # load the voice now, so the first line is quick
+    else:
+        print("AI World page: http://localhost:%d/Girl_Room.html   (voice goes to VoiceStudio on %s)" % (PORT, VOICESTUDIO))
     Server(("", PORT), Handler).serve_forever()
