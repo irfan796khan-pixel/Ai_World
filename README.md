@@ -35,7 +35,7 @@ Opening the html file directly (file:///) does not work: the browser blocks load
 ## Files
 - `Girl_Room.html` — the room + the girl + the action door. One file, three.js r147 from CDN (r128 could only blend 8 face shapes at once, so moods with many shapes lost the jaw).
 - `Girl_character_mixamo.glb` — the girl (65-bone Mixamo skeleton incl. fingers, 31 face shapes, a real openable mouth with teeth and tongue).
-- `Girl_character_mixamo_packed.glb` — the same girl packed with meshopt (14.6 MB instead of 62.6 MB). The page loads this one first; `Girl_Room.html?model=original` forces the big one.
+- `Girl_character_mixamo_packed.glb` — the same girl packed with meshopt (14.0 MB instead of 62.6 MB). Rebuilt 9 Nov with `npx @gltf-transform/cli@4.2.1 meshopt Girl_character_mixamo.glb Girl_character_mixamo_packed.glb --quantize-texcoord 16 --quantize-position 16`: the old packed file had lost 58 points and showed the open mouth as stretched skin (no dark mouth, no teeth). Keep 16-bit texcoords: the mouth inside, teeth and tongue use single colour spots on the texture. The page loads this one first; `Girl_Room.html?model=original` forces the big one.
 - `moves.json` — real motion from Imran's Mixamo clips (Idle, Walking, Running, Waving, Talking), baked so they fit her bones.
 - `quick_replies.json` — 81 instant replies (496 trigger phrases, 243 answers), each tied to a face mood and body moves.
 - `run_girl_room.bat` — one click: VoiceStudio + brain + room.
