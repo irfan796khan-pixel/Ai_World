@@ -566,7 +566,7 @@ function faceTick(t, dt) {
 
 // one call for the whole brain package: { response, emotion, animation | actions, audio }
 // every animation Brain.py can send (ANIMATIONS list there) has a move here
-const ANIM_TO_ACTION = { wave: [{ face: 'camera' }, { wave: 2 }], nod: 'nod', shake_head: 'shake', shrug: 'shrug', cross_arms: [{ rebel: 'cross', quiet: true }], idle: null };
+const ANIM_TO_ACTION = { wave: [{ face: 'camera' }, { wave: 2 }], arguing: [{ body: 'arguing' }], argue: [{ body: 'arguing' }], question: [{ body: 'question' }], question_two_hands: [{ body: 'question2' }], secret: [{ body: 'secret' }], laugh: [{ body: 'funny' }], funny: [{ body: 'funny' }], talk: [{ body: 'conversation' }], phone: [{ body: 'phone' }], phone_pacing: [{ body: 'phone_pacing' }], nod: 'nod', shake_head: 'shake', shrug: 'shrug', cross_arms: [{ rebel: 'cross', quiet: true }], idle: null };
 async function handleReply(r) {
   if (!r) return;
   if (r.emotion) setMood(r.emotion);
@@ -699,6 +699,15 @@ function startAction(a) {
     act.pointAt = p; act.pointing = +a.time || 2; a._dur = act.pointing + 0.4;
   }
   else if (a.thumbs !== undefined) { act.thumbs = +a.thumbs || 2; a._dur = act.thumbs + 0.4; }
+  else if (a.body !== undefined) {            // {body:"arguing", time:4}: talking gesture on top of her clips; it does not hold up the next action
+    if (!startBody(a.body, a.time)) return finishAction();
+    if (gestureName(a.body) === 'phone_pacing') {   // walk back and forth while on the phone
+      const x0 = girl.position.x, z0 = girl.position.z, n = Math.max(2, Math.round(GEST.left / 3));
+      const legs = []; for (let i = 0; i < n; i++) legs.push({ walk: { x: x0 + (i % 2 ? 0 : 1.2), z: z0 }, run: false, _sub: true });
+      legs.push({ walk: { x: x0, z: z0 }, run: false, _sub: true }); act.queue.unshift(...legs);
+    }
+    a._dur = 0.05;
+  }
   else if (a.trip !== undefined) { a._kind = 'trip'; a._dur = 3.6; a._slid = 0; }
   else if (a.sit !== undefined) {
     const miss = a.sit === 'miss', hold = +a.time || 3;
@@ -1624,6 +1633,107 @@ async function record(seconds = 15, opts = {}) {
   return blob;
 }
 clipEl.addEventListener('click', () => record(15));
+// ---- BODY GESTURES while talking (from Imran's GestureType list, fitted to her bones)
+//   Added ON TOP of her Mixamo clips, so idle / talking / walking keep running underneath.
+//   Angles are in her own body frame (she faces +Z): x = lean / bend forward, y = turn, z = sideways. Same numbers as the list.
+//   Her bones: chest = spine.003, head = spine.006, arms = upper_arm / forearm / hand .L .R (in her file .R sits on her LEFT; the code finds the real side).
+//   AIWorld.act([{ body: "arguing", time: 4 }])   or   AIWorld.body("secret", 3)
+const GESTURES = {
+  secret(s, t) {                       // telling a secret: hunched, turned, right hand cupped at the mouth
+    const f = Math.sin(t * 2.0) * 0.03;
+    s.chest(0.18 + f, -0.22, 0); s.head(0.05, -0.25, 0.08);
+    s.armR(-0.95, 0, 0.25); s.elbowR(-2.25 + f); s.handR(0, 0.8, 0);
+  },
+  arguing(s, t) {                      // standing arguing: forward lean, chopping right hand, left hand pushing
+    const b = Math.sin(t * 3.2);
+    s.chest(0.15 + b * 0.04, 0, 0); s.head(0.12 + Math.sin(t * 3.2 + 0.3) * 0.08, 0, 0);
+    s.armR(-0.55 + b * 0.25, 0, -0.1); s.elbowR(-1.2 + b * 0.45);
+    s.armL(-0.3, 0, 0.3); s.elbowL(-1.0 - b * 0.2);
+  },
+  funny(s, t) {                        // finding something funny: head back, chest shakes with the laugh
+    const l = Math.sin(t * 6.0), k = Math.sin(t * 1.2);
+    s.head(-0.15 + l * 0.04, k * 0.08, 0); s.chest(-0.05 + l * 0.03, 0, 0);
+    s.armR(-0.1, 0, -0.1); s.armL(-0.1, 0, 0.1);
+    s.elbowR(-0.5 + l * 0.08); s.elbowL(-0.5 + l * 0.08);
+  },
+  conversation(s, t) {                 // general conversation: weight shift, small nods, easy forearms
+    const c = t * 1.4;
+    s.chest(0, Math.sin(c * 0.6) * 0.06, 0); s.head(Math.sin(c * 1.2) * 0.06, 0, 0);
+    s.elbowR(-0.9 + Math.sin(c) * 0.25); s.elbowL(-0.7 + Math.cos(c * 0.8) * 0.2);
+  },
+  question(s, t) {                     // asking with one hand: right forearm up, palm rolls, head tilts
+    const c = Math.sin(t * 1.8);
+    s.head(0, 0, -0.08 + c * 0.04);
+    s.armR(-0.25, 0, -0.35 + c * 0.06); s.elbowR(-1.25 + c * 0.3); s.handR(c * 0.25, -0.9, 0);
+    s.elbowL(-0.2);
+  },
+  question2(s, t) {                    // asking with two hands: elbows in, both palms open
+    const p = Math.sin(t * 1.5);
+    s.chest(0.05 + p * 0.03, 0, 0);
+    s.armR(-0.15, 0, -0.3); s.armL(-0.15, 0, 0.3);
+    s.elbowR(-1.25 + p * 0.25); s.elbowL(-1.25 + p * 0.25);
+    s.handR(0, -0.9 - p * 0.2, 0); s.handL(0, 0.9 + p * 0.2, 0);
+  },
+  phone(s, t) {                        // talking on the phone (written here, it was missing): right hand at the ear, left arm across the waist
+    const c = Math.sin(t * 1.3);
+    s.head(0.04 + c * 0.03, -0.1, 0.12); s.chest(0, -0.06, 0);
+    s.armR(-0.9, 0, 0.15); s.elbowR(-2.55); s.handR(0, 1.4, 0);
+    s.armL(-0.25, 0, 0.1); s.elbowL(-1.3 + c * 0.05);
+  },
+  phone_pacing(s, t) {                 // pacing on the phone (written here, it was missing): same arm, she walks back and forth
+    GESTURES.phone(s, t);
+  },
+};
+// your names (GestureType.X) work too
+const GESTURE_ALIAS = { two_hand_question: 'question2', one_hand_question: 'question', general_conversation: 'conversation', phone_talking: 'phone',
+  talking_funny: 'funny', telling_secret: 'secret', argue: 'arguing', laugh: 'funny', talk: 'conversation', ask: 'question' };
+const gestureName = (n) => { n = String(n || '').toLowerCase().replace(/[\s-]+/g, '_'); return GESTURES[n] ? n : GESTURE_ALIAS[n] || null; };
+const GEST = { name: null, left: 0, w: 0, t: 0, phone: null };
+const GEST_BONES = ['spine003', 'spine006', 'upper_armR', 'forearmR', 'handR', 'upper_armL', 'forearmL', 'handL'];   // parents first
+function startBody(name, secs) {
+  const n = gestureName(name); if (!n) { console.warn('AIWorld: unknown body gesture "' + name + '". Known: ' + Object.keys(GESTURES).join(', ')); return false; }
+  GEST.name = n; GEST.left = +secs || (n.startsWith('phone') ? 6 : 4); GEST.t = 0; return true;
+}
+function phoneProp(show) {                     // a small phone in her right hand for the phone gestures (placed in the room each frame)
+  const hand = bones['hand' + (GEST.R || 'R')], arm = bones['forearm' + (GEST.R || 'R')];
+  if (show && !GEST.phone && hand) {
+    GEST.phone = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.145, 0.011), new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.35 }));
+    scene.add(GEST.phone);
+  }
+  if (!GEST.phone) return;
+  GEST.phone.visible = !!show;
+  if (!show || !hand || !arm) return;
+  const h = hand.getWorldPosition(new THREE.Vector3()), e = arm.getWorldPosition(new THREE.Vector3());
+  const dir = h.clone().sub(e).normalize();                     // along her forearm, into the palm
+  const toHead = bones.spine006 ? bones.spine006.getWorldPosition(new THREE.Vector3()).sub(h).setY(0).normalize() : new THREE.Vector3();
+  GEST.phone.position.copy(h).addScaledVector(dir, 0.065).addScaledVector(toHead, 0.025);
+  GEST.phone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+}
+const _gq = new THREE.Quaternion(), _ge = new THREE.Euler();
+function gestureTick(t, dt) {
+  if (!loaded) return;
+  const clumsy = act.cur && act.cur._kind;
+  const pacing = GEST.name === 'phone_pacing';
+  const on = GEST.name && GEST.left > 0 && !clumsy && (pacing || !act.walking) && !(act.pointing > 0);
+  if (GEST.left > 0) { GEST.left -= dt; GEST.t += dt; }
+  GEST.w += ((on ? 1 : 0) - GEST.w) * Math.min(1, dt * 4);
+  if (GEST.w < 0.005) { if (GEST.left <= 0) GEST.name = null; phoneProp(false); return; }
+  // her file names the arms the other way round (like her fingers): find her real right arm (she faces +Z, so her right is -X)
+  if (GEST.R === undefined) GEST.R = girl.worldToLocal(bones.upper_armR.getWorldPosition(new THREE.Vector3())).x < 0 ? 'R' : 'L';
+  const R = GEST.R, L = R === 'R' ? 'L' : 'R';
+  const off = {}; const put = (n) => (x = 0, y = 0, z = 0) => { off[n] = [x, y, z]; };
+  const s = { chest: put('spine003'), head: put('spine006'), armR: put('upper_arm' + R), armL: put('upper_arm' + L),
+    elbowR: (x) => put('forearm' + R)(x), elbowL: (x) => put('forearm' + L)(x), handR: put('hand' + R), handL: put('hand' + L) };
+  GESTURES[GEST.name](s, GEST.t);
+  for (const n of GEST_BONES) {
+    const b = bones[n], o = off[n]; if (!b || !o) continue;
+    _gq.setFromEuler(_ge.set(o[0] * GEST.w, o[1] * GEST.w, o[2] * GEST.w));   // fade in / out
+    const G = _gq.multiply(gl(b));                            // turn it in her body frame
+    b.quaternion.copy(gl(b.parent).invert().multiply(G));
+    b.updateMatrixWorld(true);
+  }
+  phoneProp(GEST.w > 0.3 && GEST.name.startsWith('phone'));
+}
 // ---- LIVE TALK: hands-free voice conversation (button "Live")
 //   Your voice -> Silero VAD (github.com/ricky0123/vad, ISC) finds where you start and stop talking
 //   -> VoiceStudio Whisper on this PC (/v1/audio/transcriptions, through page_server.py) turns it into text
@@ -1726,6 +1836,8 @@ window.AIWorld.live = { start: liveOn, stop: liveOff, isOn: () => LIVE.on, mode:
   get lang() { return LIVE.lang; }, set lang(v) { LIVE.lang = String(v || 'en'); },
   get model() { return LIVE.model; }, set model(v) { LIVE.model = String(v); },
   said: liveSaid };
+window.AIWorld.body = (name, secs) => startBody(name, secs);
+window.AIWorld.bodyGestures = () => Object.keys(GESTURES);
 Object.assign(window.AIWorld, { hear, learn, say, record, quick: QUICK, brainUrl: null, onUnmatched: null, afterRender: [],
   quickList: () => [...QUICK.learned, ...QUICK.lib], forgetLearned() { QUICK.learned = []; localStorage.removeItem('aiworld_quick_learned'); } });
 
@@ -2360,6 +2472,7 @@ function animate() {
   limbsTick(t, dt);
   clumsyTick(t, dt);
   handsAndTurnTick(t, dt);
+  gestureTick(t, dt);
   sassTick(t, dt);
   faceTick(t, dt);
   physicsTick(dt);

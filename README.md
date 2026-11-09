@@ -133,6 +133,28 @@ AIWorld.onHeard = (text) => {};   // called with every heard sentence
 ```
 Tested in headless Chrome with a fake microphone and real Whisper (tiny.en): she heard "Can you wave at me please?" and answered with the wave quick reply. Not yet tested with a real mic on the Windows laptop, and the Whisper model name VoiceStudio wants was not found in its docs (the page sends `whisper-1`).
 
+## Talking gestures (body language)
+8 gestures from Imran's GestureType list, added **on top of** her Mixamo clips, so idle, talking and walking keep running underneath. They fade in and out.
+| Name | What she does |
+|---|---|
+| `secret` | hunches, turns, right hand cupped at her mouth |
+| `arguing` | leans in, chops with the right hand |
+| `funny` | head back, chest shakes with laughter |
+| `conversation` | weight shift, small nods, easy forearms |
+| `question` | one hand up, palm rolling, head tilt |
+| `question2` | both forearms out, palms open |
+| `phone` | right hand at her ear with a small phone, left arm across her waist |
+| `phone_pacing` | the phone pose while she walks back and forth |
+
+```js
+AIWorld.act([{ body: "arguing", time: 4 }]);   // does not hold up the next action, so she can talk at the same time
+AIWorld.body("secret", 3);                      // same thing, direct
+AIWorld.bodyGestures();                         // the list
+// the brain can send them as "animation": arguing, question, question_two_hands, secret, laugh, talk, phone, phone_pacing
+```
+The original names work too (`ARGUING`, `TELLING_SECRET`, `TWO_HAND_QUESTION` …).
+The pasted numbers were made for another skeleton, so on her some arms went the wrong way (arguing hit her back, the secret hand stayed in front). Each one was re-tuned by its description and checked in pictures. Her file has the `.R` arm on her LEFT side; the code finds the real right arm itself. `phone` and `phone_pacing` were listed but had no code, so they were written new. Gestures pause during clumsy moves and pointing, and (except pacing) while she walks.
+
 ## Clip button (TikTok)
 "Clip 15s" records 15 seconds of the room as a vertical 9:16 video (720 x 1280, 30 fps) with her voice if `AIWorld.speak` is playing, and downloads it as `.webm`.
 `await AIWorld.record(15, { download: false })` gives the video Blob instead.
