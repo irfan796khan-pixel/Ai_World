@@ -1,20 +1,19 @@
-# AI World — Body / Surrounding (Guy 2)
+# AI World
 
-This repo is only the **body and the room**. The brain and the voice are made by the other two team members.
+A cartoon 3D girl who lives in a living room on a web page. You talk to her, the brain decides what she says and does, and her body, face and voice do it.
 
 ## The loop
 ```
-we talk  >  brain thinks  >  brain sends words + action  >  ACTION (this repo)
+we talk  >  brain thinks  >  brain sends words + emotion + action  >  she speaks, makes the face and moves
 ```
 
-## 3-person team
+## 2-person team
 | Part | Who | Job |
 |---|---|---|
-| Brain | Guy 1 (Claude API) | Decides what the character says and how she reacts |
-| **Body / Surrounding** | **Guy 2 (this repo)** | 3D model, movements, room, walking to places |
-| Voice / Face | Guy 3 (ElevenLabs + NVIDIA Audio2Face) | Speaks the words, moves the lips |
+| Brain | Steven (`Brain.py`) | Decides what she says, her emotion and her move (Ollama `qwen3:4b` now, Claude ready for later) |
+| Body, room, face and voice | Imran (`Girl_Room.html` + servers) | 3D model, movements, the room, face shapes, VoiceStudio voice, quick replies, Roast show |
 
-Planned later for the body: a cartoon-style (stylized, not realistic) character, plus Convai for conversation. MetaHuman (realistic) is dropped. What is here now: a three.js web version (girl + living room).
+The voice and the face are now part of the body side (VoiceStudio + the face system in the page). MetaHuman (realistic) is dropped; she stays cartoon style.
 
 ## Run it (Windows) — one click
 Double-click `run_girl_room.bat` (or the **Start AI World** shortcut on the Desktop, or VS Code: Terminal → Run Task → "AI World: start"). It:
@@ -36,19 +35,20 @@ Opening the html file directly (file:///) does not work: the browser blocks load
 ## Files
 - `Girl_Room.html` — the room + the girl + the action door. One file, three.js r147 from CDN (r128 could only blend 8 face shapes at once, so moods with many shapes lost the jaw).
 - `Girl_character_mixamo.glb` — the girl (65-bone Mixamo skeleton incl. fingers, 31 face shapes, a real openable mouth with teeth and tongue).
-- `Girl_character_mixamo_packed.glb` — the same girl packed with meshopt, much smaller. The page loads this one first; `Girl_Room.html?model=original` forces the big one.
+- `Girl_character_mixamo_packed.glb` — the same girl packed with meshopt (14.6 MB instead of 62.6 MB). The page loads this one first; `Girl_Room.html?model=original` forces the big one.
 - `moves.json` — real motion from Imran's Mixamo clips (Idle, Walking, Running, Waving, Talking), baked so they fit her bones.
-- `quick_replies.json` — about 80 instant replies (around 490 trigger phrases, 240 answers), each tied to a face mood and body moves.
+- `quick_replies.json` — 81 instant replies (496 trigger phrases, 243 answers), each tied to a face mood and body moves.
 - `run_girl_room.bat` — one click: VoiceStudio + brain + room.
 - `page_server.py` — serves the room on 8081 and passes `/v1/audio/...` to VoiceStudio (saves every made line in `voice_cache/`).
 - `wait_for.py` — small helper the start file uses to wait until VoiceStudio / the brain answers.
 - `brain_server.py` — serves the page and connects it to `Brain.py` (`/brain`, `/brain/health`).
-- `Brain.py` — the brain (Ollama or Claude). She is a grown woman with no fixed name yet.
+- `Brain.py` — the brain (Ollama or Claude). Its character prompt is still the placeholder "Hugh Mann".
+- `BrainWithScript.py` — the same brain plus a `script` command that reads a fixed intro text.
 - `roast_script.json` — the show for the **Roast** button: she performs the lines in order (voice, one-sentence subtitles, moves). Edit the text/actions freely; `sayAs` fixes how the voice reads words like Brain.py. Press Roast again to stop. `AIWorld.show.run('other.json')` plays another script.
 - `VOICESTUDIO.md` — her voice: free local VoiceStudio (built into the page), with the browser voice as backup.
 - `tools/` — the Python scripts that rebuilt the face (cut the lips open, added teeth/tongue/mouth, new face shapes). Run `python build_face.py out.glb` with the old model saved as `orig.glb` (paths inside the script point to /home/claude/work).
 
-## The action door (for Guy 1 — Brain)
+## The action door (for the brain)
 Everything goes through `window.AIWorld` in the page.
 
 ```js
@@ -100,16 +100,16 @@ AIWorld.build("spawn a red box on the table");
 Her model has no eye-look face shapes, so the eye roll is faked with the head and heavy lids. The flailing is code (strong random turns on every bone), not real ragdoll physics.
 
 ## Quick replies + talk bar (fast answers, no waiting for the brain)
-Type in the bar at the bottom (or call `AIWorld.hear(text)`). If the text matches `quick_replies.json`, she answers at once: speech bubble, voice, face mood, and the moves. Voice order: `AIWorld.onSay(text)` if a voice partner set it, else VoiceStudio on localhost:3900 (see `VOICESTUDIO.md`), else the browser voice. The **Voice** button switches Studio → browser → off.
+Type in the bar at the bottom (or call `AIWorld.hear(text)`). If the text matches `quick_replies.json`, she answers at once: speech bubble, voice, face mood, and the moves. Voice order: `AIWorld.onSay(text)` if set, else VoiceStudio on localhost:3900 (see `VOICESTUDIO.md`), else the browser voice. The **Voice** button switches Studio → browser → off.
 If nothing matches, the text goes to the brain:
 ```js
-AIWorld.onUnmatched = (text) => { /* Guy 1: send to the brain, then AIWorld.reply({...}) */ };
+AIWorld.onUnmatched = (text) => { /* send to the brain, then AIWorld.reply({...}) */ };
 // or a small web door: POST {text} to this URL, it must answer with the Brain.py JSON ({response, emotion, animation | actions})
 AIWorld.brainUrl = "http://localhost:5005/brain";
 AIWorld.learn({ match: ["what is two plus two"], say: ["Four. Easy."], mood: "amused", actions: [{ thumbs: 2 }] });  // new reply, kept in this browser
 AIWorld.say("Hello!");        // speech bubble + voice (onSay, else VoiceStudio, else browser voice)
 AIWorld.voice.mode = "off";   // "studio" | "browser" | "off"
-AIWorld.onSay = (text) => { /* voice partner: make the audio, then AIWorld.speak(audio) */ };
+AIWorld.onSay = (text) => { /* another voice: make the audio, then AIWorld.speak(audio) */ };
 ```
 Answers from the brain through `brainUrl` are saved as new quick replies automatically, so the second time is instant.
 
@@ -122,7 +122,7 @@ Idle, walking, running, waving and talking now come from Imran's Mixamo clips (`
 Turning on the spot uses small walking steps, and her head turns first toward where she goes. The clumsy moves (trip, sit, knock, TV scare) still use the code moves, and the clips fade out while they run.
 To add a clip: download it from Mixamo as FBX, bake it with the same method into `moves.json` (new key), then use it in `mocapTick`.
 
-## The face door (for Guy 3 — Voice, and for the Brain)
+## The face door (voice and brain plug in here)
 Her face runs by itself with 4 layers mixed every frame: **mood** (from the brain's emotion), **alive** (natural blinks, sometimes double, tiny uneven movement), **talking** (mouth, brows and head follow her voice) and **action** (the clumsy moves set their own face).
 
 ```js
@@ -130,7 +130,7 @@ AIWorld.mood("happy");                 // neutral, happy, laugh, amused, annoyed
                                        // (also: sassy, skeptical, shocked, bored, laughing, mad)
 AIWorld.mood("annoyed", 0.6, 3);       // strength 0..1, back to neutral after 3 s
 AIWorld.gesture("nod");                // or "shake"
-await AIWorld.speak(blobOrUrl);        // plays her voice (e.g. the MP3 Blob from ElevenLabs) — mouth, brows and head follow the sound
+await AIWorld.speak(blobOrUrl);        // plays her voice (e.g. the MP3 Blob from VoiceStudio) — mouth, brows and head follow the sound
 AIWorld.stopSpeaking();
 AIWorld.speakLevel(0.7);               // if the voice plays somewhere else: feed loudness 0..1 every frame, null to stop
 AIWorld.talking();                     // true while she talks
@@ -141,7 +141,7 @@ AIWorld.reply({ response: "Fine.", emotion: "annoyed", actions: [{walk:"sofa"}, 
 // animation: wave -> waves, nod / shake_head -> head gesture, idle -> nothing. shrug / cross_arms: no body move yet.
 
 AIWorld.morphNames();                  // 28 face shapes (ARKit names), see below
-AIWorld.idle = false;                  // hand the face to someone else (e.g. Audio2Face); then use AIWorld.setMorph(name, 0..1)
+AIWorld.idle = false;                  // hand the face to an outside driver; then use AIWorld.setMorph(name, 0..1)
 ```
 Sound only plays after the person clicks or presses a key once on the page (browser rule).
 
