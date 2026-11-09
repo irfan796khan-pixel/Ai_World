@@ -31,7 +31,7 @@
 <body>
 <div id="status">loading the girl…</div>
 <div id="bubble"></div>
-<div id="bar"><input id="say" placeholder="say something: sit, wave, trip, go to the window, tell me a joke…" autocomplete="off"><button id="send">Send</button><button id="live" title="hands-free live talk: just speak (click again to stop)">Live</button><button id="roastbtn" title="she performs roast_script.json (press again to stop)">Roast</button><select id="voicesel" title="her voice"><option value="studio">Voice: Studio</option><option value="browser">Voice: Browser</option><option value="off">Voice: Off</option></select><button id="clip" class="rec" title="record a 15 s vertical clip (9:16) for TikTok">Clip 15s</button></div>
+<div id="bar"><input id="say" placeholder="say something: sit, wave, trip, go to the window, tell me a joke…" autocomplete="off"><button id="send">Send</button><button id="live" title="hands-free live chat: just speak (click again to stop)">Live chat</button><button id="roastbtn" title="she performs the class presentation, roast_script.json (press again to stop)">Presentation</button><select id="voicesel" title="her voice"><option value="studio">Voice: Studio</option><option value="browser">Voice: Browser</option><option value="off">Voice: Off</option></select><button id="clip" class="rec" title="record a 15 s vertical clip (9:16) for TikTok">Clip 15s</button></div>
 <script>
 // ============================================================================
 // AI World — ONLY the girl and the room.
@@ -1367,7 +1367,7 @@ async function prepVoices(list, opts) {   // makes the lines one by one, in orde
 }
 function prepText() {
   const b = document.getElementById('roastbtn'); if (!b || SHOW.on) return;
-  b.textContent = PREP.total && PREP.done < PREP.total ? 'Roast (voice ' + PREP.done + '/' + PREP.total + ')' : 'Roast';
+  b.textContent = PREP.total && PREP.done < PREP.total ? 'Presentation (voice ' + PREP.done + '/' + PREP.total + ')' : 'Presentation';
 }
 const TTS = { utter: null, level: 0, plan: null, t0: 0, rate: 1 };
 // mouth plan: each syllable opens the mouth for a moment; commas and full stops close it for a pause
@@ -1490,7 +1490,7 @@ function showAction(a) {
 }
 function stopShow() {
   SHOW.run++; SHOW.on = false; TALK.show = false; stopVoices(); window.AIWorld.stop(); STATS.auto = SHOW.autoWas; bubbleEl.classList.remove('show');
-  if (roastBtn) roastBtn.textContent = 'Roast'; prepText();
+  if (roastBtn) roastBtn.textContent = 'Presentation'; prepText();
 }
 async function runShow(file) {
   if (SHOW.on) { stopShow(); return; }
@@ -1519,7 +1519,7 @@ async function runShow(file) {
     }
     await waitS(l.pause === undefined ? 0.6 : +l.pause);
   }
-  if (my === SHOW.run) { SHOW.on = false; TALK.show = false; STATS.auto = SHOW.autoWas; if (roastBtn) roastBtn.textContent = 'Roast'; prepText(); setMood('neutral'); setTimeout(() => bubbleEl.classList.remove('show'), 2500); }
+  if (my === SHOW.run) { SHOW.on = false; TALK.show = false; STATS.auto = SHOW.autoWas; if (roastBtn) roastBtn.textContent = 'Presentation'; prepText(); setMood('neutral'); setTimeout(() => bubbleEl.classList.remove('show'), 2500); }
 }
 if (roastBtn) roastBtn.addEventListener('click', () => runShow());
 async function warmShow(file) {           // after the page opens: get the Roast lines ready, quietly, one by one
@@ -1635,7 +1635,7 @@ const LIVE = { on: false, mode: null, vad: null, rec: null, busy: false, quietUn
 const liveEl = document.getElementById('live');
 const sheTalks = () => FX.talking || TALK.main > 0 || TALK.show || (window.speechSynthesis && speechSynthesis.speaking);
 function liveText(s) { if (liveEl) { liveEl.textContent = s; liveEl.classList.toggle('rec', LIVE.on); } }
-function liveIdle() { if (LIVE.on) liveText(LIVE.mode === 'browser' ? 'Live: on (browser)' : 'Live: on'); else liveText('Live'); }
+function liveIdle() { if (LIVE.on) liveText(LIVE.mode === 'browser' ? 'Live chat: on (browser)' : 'Live chat: on'); else liveText('Live chat'); }
 window.AIWorld.onFrame.push(() => { if (sheTalks()) LIVE.quietUntil = performance.now() + 700; });   // her echo can last a moment after she stops
 const canHear = () => LIVE.on && !LIVE.busy && (LIVE.bargeIn || (!sheTalks() && performance.now() > LIVE.quietUntil));
 // Whisper sometimes "hears" these from silence or noise: drop them
