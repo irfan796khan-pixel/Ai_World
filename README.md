@@ -11,7 +11,7 @@ we talk  >  brain thinks  >  brain sends words + emotion + action  >  she speaks
 | Part | Who | Job |
 |---|---|---|
 | Brain | Steven (`Brain.py`) | Decides what she says, her emotion and her move (Ollama `qwen3:4b` now, Claude ready for later) |
-| Body, room, face and voice | Imran (`Girl_Room.html` + servers) | 3D model, movements, the room, face shapes, VoiceStudio voice, quick replies, Roast show |
+| Body, room, face and voice | Imran (`Girl_Room.html` + servers) | 3D model, movements, the room, face shapes, VoiceStudio voice, quick replies, Presentation show |
 
 The voice and the face are now part of the body side (VoiceStudio + the face system in the page). MetaHuman (realistic) is dropped; she stays cartoon style.
 
@@ -23,13 +23,13 @@ Double-click `run_girl_room.bat` (or the **Start AI World** shortcut on the Desk
 4. opens http://localhost:8081/Girl_Room.html.
 If a part is already running it is not started twice. Keep the black windows open while you use her.
 
-Her voice: the VoiceStudio profile **AI World Girl** (female, young adult, moderate pitch, American accent). Every line VoiceStudio makes is saved in `voice_cache/` and plays at once next time; the Roast lines are made in the background after the page opens (the button shows `Roast (voice x/45)`). VoiceStudio is much faster on the NVIDIA GPU (about 2 s a line) than on the CPU (10–30 s).
+Her voice: the VoiceStudio profile **AI World Girl** (female, young adult, moderate pitch, American accent). Every line VoiceStudio makes is saved in `voice_cache/` and plays at once next time; the presentation lines are made in the background after the page opens (the button shows `Presentation (voice x/45)`). VoiceStudio is much faster on the NVIDIA GPU (about 2 s a line) than on the CPU (10–30 s).
 
 Other way to start: `python brain_server.py ollama` serves the room and the brain together on 8081 (also passes the voice through).
 
 How a sentence travels: you type → a quick reply answers at once if one matches → otherwise the page sends it to the brain → Brain.py answers `{response, emotion, animation}` → bubble + voice + face mood + move (wave, nod, shake_head, shrug, cross_arms, idle).
 Type `new chat` to clear the brain's memory of the chat (`reset` alone cleans up the room).
-`Girl_Room.html?proposal` starts the Roast (class) script by itself.
+`Girl_Room.html?proposal` starts the class presentation script by itself.
 Opening the html file directly (file:///) does not work: the browser blocks loading `Girl_character_mixamo.glb` and her voice.
 
 ## Files
@@ -44,7 +44,7 @@ Opening the html file directly (file:///) does not work: the browser blocks load
 - `brain_server.py` — serves the page and connects it to `Brain.py` (`/brain`, `/brain/health`).
 - `Brain.py` — the brain (Ollama or Claude). Its character prompt is still the placeholder "Hugh Mann".
 - `BrainWithScript.py` — the same brain plus a `script` command that reads a fixed intro text.
-- `roast_script.json` — the show for the **Roast** button: she performs the lines in order (voice, one-sentence subtitles, moves). Edit the text/actions freely; `sayAs` fixes how the voice reads words like Brain.py. Press Roast again to stop. `AIWorld.show.run('other.json')` plays another script.
+- `roast_script.json` — the show for the **Presentation** button: she performs the lines in order (voice, one-sentence subtitles, moves). Edit the text/actions freely; `sayAs` fixes how the voice reads words like Brain.py. Press Presentation again to stop. `AIWorld.show.run('other.json')` plays another script.
 - `VOICESTUDIO.md` — her voice: free local VoiceStudio (built into the page), with the browser voice as backup.
 - `tools/` — the Python scripts that rebuilt the face (cut the lips open, added teeth/tongue/mouth, new face shapes). Run `python build_face.py out.glb` with the old model saved as `orig.glb` (paths inside the script point to /home/claude/work).
 
@@ -113,18 +113,18 @@ AIWorld.onSay = (text) => { /* another voice: make the audio, then AIWorld.speak
 ```
 Answers from the brain through `brainUrl` are saved as new quick replies automatically, so the second time is instant.
 
-## Live talk (hands-free, button "Live")
-Press **Live** once, allow the microphone, then just talk. No typing.
+## Live chat (hands-free, button "Live chat")
+Press **Live chat** once, allow the microphone, then just talk. No typing.
 1. **Silero VAD** ([ricky0123/vad](https://github.com/ricky0123/vad), ISC licence, loaded from the CDN) hears when you start and stop talking.
 2. **VoiceStudio's local Whisper** (`/v1/audio/transcriptions`, passed through `page_server.py`) turns your words into text on the PC. Free, nothing leaves the laptop.
 3. The text goes into `hear()` like typed text: quick reply first, else the brain. She answers with voice, face and moves.
 
-The button shows **Live: on**, **Listening…** and **Thinking…**. What you said shows in the text box as "you said: …".
+The button shows **Live chat: on**, **Listening…** and **Thinking…**. What you said shows in the text box as "you said: …".
 While she talks the mic is ignored, so she does not hear her own voice through the speakers. Headphones work best.
-If VoiceStudio's speech-to-text fails twice, it switches to the browser's own speech recognition (Chrome or Edge; that one sends your voice to Google or Microsoft). The button then says **Live: on (browser)**.
+If VoiceStudio's speech-to-text fails twice, it switches to the browser's own speech recognition (Chrome or Edge; that one sends your voice to Google or Microsoft). The button then says **Live chat: on (browser)**.
 
 ```js
-AIWorld.live.start();             // same as pressing Live ("browser" = force the browser recognition)
+AIWorld.live.start();             // same as pressing Live chat ("browser" = force the browser recognition)
 AIWorld.live.stop();
 AIWorld.live.bargeIn = true;      // let you cut her off by talking (best with headphones)
 AIWorld.live.lang = "en";         // language sent to Whisper
@@ -132,6 +132,28 @@ AIWorld.live.heard();             // the last 50 things she heard
 AIWorld.onHeard = (text) => {};   // called with every heard sentence
 ```
 Tested in headless Chrome with a fake microphone and real Whisper (tiny.en): she heard "Can you wave at me please?" and answered with the wave quick reply. Not yet tested with a real mic on the Windows laptop, and the Whisper model name VoiceStudio wants was not found in its docs (the page sends `whisper-1`).
+
+## Talking gestures (body language)
+8 gestures from Imran's GestureType list, added **on top of** her Mixamo clips, so idle, talking and walking keep running underneath. They fade in and out.
+| Name | What she does |
+|---|---|
+| `secret` | hunches, turns, right hand cupped at her mouth |
+| `arguing` | leans in, chops with the right hand |
+| `funny` | head back, chest shakes with laughter |
+| `conversation` | weight shift, small nods, easy forearms |
+| `question` | one hand up, palm rolling, head tilt |
+| `question2` | both forearms out, palms open |
+| `phone` | right hand at her ear with a small phone, left arm across her waist |
+| `phone_pacing` | the phone pose while she walks back and forth |
+
+```js
+AIWorld.act([{ body: "arguing", time: 4 }]);   // does not hold up the next action, so she can talk at the same time
+AIWorld.body("secret", 3);                      // same thing, direct
+AIWorld.bodyGestures();                         // the list
+// the brain can send them as "animation": arguing, question, question_two_hands, secret, laugh, talk, phone, phone_pacing
+```
+The original names work too (`ARGUING`, `TELLING_SECRET`, `TWO_HAND_QUESTION` …).
+The pasted numbers were made for another skeleton, so on her some arms went the wrong way (arguing hit her back, the secret hand stayed in front). Each one was re-tuned by its description and checked in pictures. Her file has the `.R` arm on her LEFT side; the code finds the real right arm itself. `phone` and `phone_pacing` were listed but had no code, so they were written new. Gestures pause during clumsy moves and pointing, and (except pacing) while she walks.
 
 ## Clip button (TikTok)
 "Clip 15s" records 15 seconds of the room as a vertical 9:16 video (720 x 1280, 30 fps) with her voice if `AIWorld.speak` is playing, and downloads it as `.webm`.
