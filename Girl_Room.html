@@ -1364,13 +1364,34 @@ function studioVoice(text) {
   p.catch(() => VCACHE.delete(k));        // failed: ask again next time
   return p;
 }
+// Her voice in pieces: the FIRST sentence goes alone (so she starts talking fast), the rest in pieces of
+// up to about 150 letters. While she says one piece, the next pieces are already being made.
+function fastChunks(text) {
+  const sents = String(text).split(/(?<=[.?!])\s+/).map(x => x.trim()).filter(Boolean);
+  if (!sents.length) return [String(text)];
+  const out = [];
+  let first = sents.shift();
+  if (first.length > 120) {                      // very long first sentence: cut it at a comma
+    const m = first.slice(0, 120).lastIndexOf(', ');
+    if (m > 25) { sents.unshift(first.slice(m + 2)); first = first.slice(0, m + 1); }
+  }
+  out.push(first);
+  for (const p of sents) { if (out.length > 1 && out[out.length - 1].length + p.length < 150) out[out.length - 1] += ' ' + p; else out.push(p); }
+  return out;
+}
+function voicePieces(text) {                     // starts making every piece, one after another, right now
+  const parts = fastChunks(text), proms = [];
+  parts.forEach((c, i) => { proms.push(i === 0 ? studioVoice(c) : proms[i - 1].then(() => studioVoice(c), () => studioVoice(c))); });
+  proms.forEach(p => p.catch(() => {}));
+  return { parts, proms };
+}
 const PREP = { run: 0, done: 0, total: 0 };
 async function prepVoices(list, opts) {   // makes the lines one by one, in order (VoiceStudio has one worker)
   const my = ++PREP.run; PREP.done = 0; PREP.total = list.length; prepText();
   for (const t of list) {
     if (my !== PREP.run || VS.mode !== 'studio' || VS.ok === false) break;
     if (opts && opts.background) while (TALK.main > 0 && !TALK.show && my === PREP.run) await waitS(0.3);   // a live reply goes first
-    try { await studioVoice(t); } catch (e) { break; }
+    try { for (const c of fastChunks(t)) await studioVoice(c); } catch (e) { break; }
     if (my === PREP.run) { PREP.done++; prepText(); }
   }
 }
@@ -1436,12 +1457,18 @@ async function sayNow(text, spoken) {           // bubble shows text, the voice 
   stopVoices(); const my = VS.seq;
   if (VS.mode === 'studio' && VS.ok === false && Date.now() > (VS.retryAt || 0)) VS.ok = null;   // VoiceStudio may be open now: try again
   if (VS.mode === 'studio' && VS.ok !== false) {
+    const pv = voicePieces(spoken); let i = 0;
     try {
-      const mp3 = await studioVoice(spoken);
-      if (my !== VS.seq) return;                       // a newer line started meanwhile
-      if (!VS.ok) { VS.ok = true; voiceBtnText(); console.log('VoiceStudio connected, voice: ' + VS.name); }
-      await speak(mp3); return;
+      for (; i < pv.parts.length; i++) {
+        const audio = await pv.proms[i];               // piece i is ready (the next ones are being made meanwhile)
+        if (my !== VS.seq) return;                     // a newer line started meanwhile
+        if (!VS.ok) { VS.ok = true; voiceBtnText(); console.log('her voice connected: ' + VS.name); }
+        await speak(audio);
+        if (my !== VS.seq) return;
+      }
+      return;
     } catch (e) {
+      if (i > 0) { if (my !== VS.seq) return; return browserVoice(pv.parts.slice(i).join(' ')); }   // failed half way: say the rest with the browser voice
       if (VS.ok !== false) console.warn('VoiceStudio not reachable on ' + VS.url + ' — using the browser voice. Start VoiceStudio, then click the Voice button.', e);
       VS.ok = false; voiceBtnText(); VS.retryAt = Date.now() + 20000;
       if (my !== VS.seq) return;
