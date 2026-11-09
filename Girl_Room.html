@@ -286,6 +286,21 @@ function skinnedBox(root) {
   });
   return box;
 }
+// ---- MOUTH LOOK (Imran, 9 Nov: open less, teeth less bright and less visible)
+const TALK_JAW = 0.28;                          // how far her jaw opens while talking (was 0.42; 1 = fully open)
+// Her teeth take their colour from one spot of the skin picture (UV 0.6748, 0.8369 = colour 234,224,225).
+// Point them at a darker flat spot of the same picture instead (UV 0.9482, 0.7607 = colour 166,156,157: teeth in shadow).
+// Nothing else on her skin changes. Set TEETH_UV = null to get the bright teeth back.
+const TEETH_UV_NOW = [0.674805, 0.836914], TEETH_UV = [0.9482421875, 0.7607421875];
+function dullTeeth(mesh) {
+  const uv = mesh.geometry && mesh.geometry.attributes.uv; if (!uv || !TEETH_UV) return 0;
+  let n = 0;
+  for (let i = 0; i < uv.count; i++) {
+    if (Math.abs(uv.getX(i) - TEETH_UV_NOW[0]) < 0.0015 && Math.abs(uv.getY(i) - TEETH_UV_NOW[1]) < 0.0015) { uv.setXY(i, TEETH_UV[0], TEETH_UV[1]); n++; }
+  }
+  if (n) uv.needsUpdate = true;
+  return n;
+}
 function onGirl(gltf) {
   const obj = gltf.scene;
   // same size rule as index.html: biggest side = 1.9, feet on the floor, centered
@@ -298,6 +313,7 @@ function onGirl(gltf) {
   obj.position.set(-c.x, -sBox.min.y, -c.z);
   obj.traverse(o => {
     if (o.isBone) bones[o.name] = o;
+    if (o.isMesh && o.morphTargetDictionary && o.morphTargetDictionary.jawOpen !== undefined) console.log('teeth made duller: ' + dullTeeth(o) + ' points');
     if (o.isMesh) {
       o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false;
       if (o.morphTargetDictionary) morphMeshes.push(o);
@@ -503,8 +519,8 @@ function faceTick(t, dt) {
   FX.glance = Math.max(0, FX.glance - dt * 1.4);
   if (L > 0.01) {
     // real speech: the jaw opens only a little (about half way at most); the lips make most of the shapes
-    add('jawOpen', 0.42 * Math.pow(L, 0.8));
-    add('mouthLowerDown', 0.18 * L);
+    add('jawOpen', TALK_JAW * Math.pow(L, 0.8));
+    add('mouthLowerDown', 0.12 * L);
     add('mouthUpperUp', 0.1 * L * (0.4 + FX.high));
     add('mouthFunnel', 0.35 * L * FX.low);         // "oo / oh" sounds: round lips
     add('mouthPucker', 0.15 * L * FX.low);
