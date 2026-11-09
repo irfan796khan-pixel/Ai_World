@@ -1493,9 +1493,10 @@ function showAction(a) {
   else if (a === 'walk') A.act([{ walk: { x: -2.2, z: 0.4 } }, { walk: { x: 1.6, z: 0.6 } }, { walk: 'center' }, { face: 'camera' }]);
   else if (a === 'walk_to_bed' || a === 'sit') A.act([{ walk: 'sofa', run: false }, { sit: 'sofa', time: 60 }]);   // the room has no bed: the sofa
   else if (a === 'cross') A.act([{ rebel: 'cross', quiet: true }]);
-  else if (a === 'thumbs') A.act([{ face: 'camera' }, { thumbs: 2 }]);
-  else if (a === 'point_camera') A.act([{ face: 'camera' }, { point: 'camera' }]);
+  else if (a === 'thumbs' || a === 'thumbs_up') A.act([{ face: 'camera' }, { thumbs: 2 }]);
+  else if (a === 'point_camera' || a === 'point') A.act([{ face: 'camera' }, { point: 'camera' }]);
   else if (a === 'idle' || a === 'talk') { if (!act.cur) A.act([{ face: 'camera' }]); }
+  else if (gestureName(a)) A.act([{ face: 'camera' }, { body: a, time: 8 }]);   // arguing, question, question2, secret, funny ... talking gestures
 }
 function stopShow() {
   SHOW.run++; SHOW.on = false; TALK.show = false; stopVoices(); window.AIWorld.stop(); STATS.auto = SHOW.autoWas; bubbleEl.classList.remove('show');
