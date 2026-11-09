@@ -113,6 +113,26 @@ AIWorld.onSay = (text) => { /* another voice: make the audio, then AIWorld.speak
 ```
 Answers from the brain through `brainUrl` are saved as new quick replies automatically, so the second time is instant.
 
+## Live talk (hands-free, button "Live")
+Press **Live** once, allow the microphone, then just talk. No typing.
+1. **Silero VAD** ([ricky0123/vad](https://github.com/ricky0123/vad), ISC licence, loaded from the CDN) hears when you start and stop talking.
+2. **VoiceStudio's local Whisper** (`/v1/audio/transcriptions`, passed through `page_server.py`) turns your words into text on the PC. Free, nothing leaves the laptop.
+3. The text goes into `hear()` like typed text: quick reply first, else the brain. She answers with voice, face and moves.
+
+The button shows **Live: on**, **Listening…** and **Thinking…**. What you said shows in the text box as "you said: …".
+While she talks the mic is ignored, so she does not hear her own voice through the speakers. Headphones work best.
+If VoiceStudio's speech-to-text fails twice, it switches to the browser's own speech recognition (Chrome or Edge; that one sends your voice to Google or Microsoft). The button then says **Live: on (browser)**.
+
+```js
+AIWorld.live.start();             // same as pressing Live ("browser" = force the browser recognition)
+AIWorld.live.stop();
+AIWorld.live.bargeIn = true;      // let you cut her off by talking (best with headphones)
+AIWorld.live.lang = "en";         // language sent to Whisper
+AIWorld.live.heard();             // the last 50 things she heard
+AIWorld.onHeard = (text) => {};   // called with every heard sentence
+```
+Tested in headless Chrome with a fake microphone and real Whisper (tiny.en): she heard "Can you wave at me please?" and answered with the wave quick reply. Not yet tested with a real mic on the Windows laptop, and the Whisper model name VoiceStudio wants was not found in its docs (the page sends `whisper-1`).
+
 ## Clip button (TikTok)
 "Clip 15s" records 15 seconds of the room as a vertical 9:16 video (720 x 1280, 30 fps) with her voice if `AIWorld.speak` is playing, and downloads it as `.webm`.
 `await AIWorld.record(15, { download: false })` gives the video Blob instead.

@@ -31,7 +31,7 @@
 <body>
 <div id="status">loading the girl…</div>
 <div id="bubble"></div>
-<div id="bar"><input id="say" placeholder="say something: sit, wave, trip, go to the window, tell me a joke…" autocomplete="off"><button id="send">Send</button><button id="roastbtn" title="she performs roast_script.json (press again to stop)">Roast</button><select id="voicesel" title="her voice"><option value="studio">Voice: Studio</option><option value="browser">Voice: Browser</option><option value="off">Voice: Off</option></select><button id="clip" class="rec" title="record a 15 s vertical clip (9:16) for TikTok">Clip 15s</button></div>
+<div id="bar"><input id="say" placeholder="say something: sit, wave, trip, go to the window, tell me a joke…" autocomplete="off"><button id="send">Send</button><button id="live" title="hands-free live talk: just speak (click again to stop)">Live</button><button id="roastbtn" title="she performs roast_script.json (press again to stop)">Roast</button><select id="voicesel" title="her voice"><option value="studio">Voice: Studio</option><option value="browser">Voice: Browser</option><option value="off">Voice: Off</option></select><button id="clip" class="rec" title="record a 15 s vertical clip (9:16) for TikTok">Clip 15s</button></div>
 <script>
 // ============================================================================
 // AI World — ONLY the girl and the room.
@@ -1624,6 +1624,108 @@ async function record(seconds = 15, opts = {}) {
   return blob;
 }
 clipEl.addEventListener('click', () => record(15));
+// ---- LIVE TALK: hands-free voice conversation (button "Live")
+//   Your voice -> Silero VAD (github.com/ricky0123/vad, ISC) finds where you start and stop talking
+//   -> VoiceStudio Whisper on this PC (/v1/audio/transcriptions, through page_server.py) turns it into text
+//   -> hear(text): quick reply or brain -> her voice + face + moves.
+//   No VoiceStudio? It falls back to the browser's own speech recognition (Chrome / Edge).
+//   While she talks the mic is ignored (so she does not hear herself), unless AIWorld.live.bargeIn = true.
+const LIVE = { on: false, mode: null, vad: null, rec: null, busy: false, quietUntil: 0, bargeIn: false, lang: 'en',
+  sttUrl: 'v1/audio/transcriptions', model: 'whisper-1', heard: [] };
+const liveEl = document.getElementById('live');
+const sheTalks = () => FX.talking || TALK.main > 0 || TALK.show || (window.speechSynthesis && speechSynthesis.speaking);
+function liveText(s) { if (liveEl) { liveEl.textContent = s; liveEl.classList.toggle('rec', LIVE.on); } }
+function liveIdle() { if (LIVE.on) liveText(LIVE.mode === 'browser' ? 'Live: on (browser)' : 'Live: on'); else liveText('Live'); }
+window.AIWorld.onFrame.push(() => { if (sheTalks()) LIVE.quietUntil = performance.now() + 700; });   // her echo can last a moment after she stops
+const canHear = () => LIVE.on && !LIVE.busy && (LIVE.bargeIn || (!sheTalks() && performance.now() > LIVE.quietUntil));
+// Whisper sometimes "hears" these from silence or noise: drop them
+const JUNK = /^(you|thank you\.?|thanks for watching!?|bye\.?|\.+|\[.*\]|\(.*\)|♪+|uh+|um+|hmm+)$/i;
+function loadScript(src) { return new Promise((ok, bad) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => bad(new Error('could not load ' + src)); document.head.appendChild(s); }); }
+function wavBlob(f32, rate) {                 // 16 kHz Float32 from the VAD -> 16-bit mono WAV file
+  const n = f32.length, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) { const s = Math.max(-1, Math.min(1, f32[i])); v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true); }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+async function whisper(f32) {                 // VoiceStudio speech-to-text (OpenAI style)
+  const fd = new FormData(); fd.append('file', wavBlob(f32, 16000), 'speech.wav'); fd.append('model', LIVE.model); fd.append('language', LIVE.lang); fd.append('response_format', 'json');
+  const r = await fetch(LIVE.sttUrl, { method: 'POST', headers: { Authorization: 'Bearer local' }, body: fd });
+  if (!r.ok) throw new Error('transcription ' + r.status + ': ' + (await r.text()).slice(0, 200));
+  const j = await r.json(); return String(j.text || '').trim();
+}
+function liveSaid(text) {                     // one thing you said: show it, then answer like typed text
+  text = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!text || text.length < 2 || JUNK.test(text)) { liveIdle(); return; }
+  LIVE.heard.push(text); LIVE.heard = LIVE.heard.slice(-50);
+  console.log('live heard:', text);
+  if (LIVE.bargeIn && sheTalks()) stopVoices();
+  if (sayEl) sayEl.placeholder = 'you said: ' + text;
+  liveIdle();
+  if (typeof window.AIWorld.onHeard === 'function') { try { window.AIWorld.onHeard(text); } catch (e) {} }
+  return hear(text);
+}
+async function startVad() {                   // best way: Silero VAD + VoiceStudio Whisper
+  if (!window.vad) {
+    await loadScript('https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.wasm.min.js');
+    await loadScript('https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/bundle.min.js');
+  }
+  LIVE.vad = await window.vad.MicVAD.new({
+    model: 'v5', positiveSpeechThreshold: 0.6, negativeSpeechThreshold: 0.4, redemptionMs: 700, minSpeechMs: 300, preSpeechPadMs: 300,
+    onnxWASMBasePath: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/',
+    baseAssetPath: 'https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/',
+    onSpeechRealStart: () => { if (canHear()) { liveText('Listening…'); if (LIVE.bargeIn && sheTalks()) stopVoices(); } },
+    onVADMisfire: () => liveIdle(),
+    onSpeechEnd: async (audio) => {
+      if (!canHear() && !(LIVE.bargeIn && LIVE.on)) { liveIdle(); return; }   // started while she talked: her own voice, skip
+      LIVE.busy = true; liveText('Thinking…');
+      try { const t = await whisper(audio); LIVE.busy = false; LIVE.fails = 0; await liveSaid(t); }
+      catch (e) {
+        LIVE.busy = false; LIVE.fails = (LIVE.fails || 0) + 1; liveIdle();
+        console.warn('VoiceStudio speech-to-text failed (' + LIVE.fails + ')', e);
+        if (LIVE.fails < 2) return;                    // one miss can be VoiceStudio busy: try again next time
+        console.warn('switching to the browser speech recognition');
+        stopVad(); if (!startBrowserRec()) { liveOff(); sayMain("I can't hear you. Start VoiceStudio, or use Chrome or Edge."); }
+      }
+    },
+  });
+  LIVE.vad.start(); LIVE.mode = 'vad'; return true;
+}
+function stopVad() { try { LIVE.vad && LIVE.vad.destroy(); } catch (e) {} LIVE.vad = null; }
+function startBrowserRec() {                  // backup: Chrome / Edge built-in speech recognition (it sends audio to Google / Microsoft)
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) return false;
+  const r = new SR(); r.lang = LIVE.lang === 'en' ? 'en-US' : LIVE.lang; r.continuous = true; r.interimResults = true;
+  r.onresult = (ev) => {
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const res = ev.results[i];
+      if (!res.isFinal) { if (canHear()) liveText('Listening…'); continue; }
+      if (canHear()) liveSaid(res[0].transcript); else liveIdle();
+    }
+  };
+  r.onerror = (ev) => { if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') { liveOff(); sayMain("I need the microphone. Allow it in the browser."); } };
+  r.onend = () => { if (LIVE.on && LIVE.rec === r) { try { r.start(); } catch (e) {} } };   // the browser stops after a while: start again
+  try { r.start(); } catch (e) { return false; }
+  LIVE.rec = r; LIVE.mode = 'browser'; liveIdle(); return true;
+}
+function stopBrowserRec() { const r = LIVE.rec; LIVE.rec = null; try { r && r.stop(); } catch (e) {} }
+async function liveOn(prefer) {
+  if (LIVE.on) return true;
+  LIVE.on = true; liveText('Starting mic…');
+  try { voiceCtx(); } catch (e) {}
+  let ok = false;
+  if (prefer !== 'browser') { try { ok = await startVad(); } catch (e) { console.warn('VAD could not start', e); } }
+  if (!ok) ok = startBrowserRec();
+  if (!ok) { LIVE.on = false; liveIdle(); sayMain("Live talk can't start here. Allow the microphone, or use Chrome or Edge."); return false; }
+  liveIdle(); console.log('live talk on: ' + LIVE.mode); return true;
+}
+function liveOff() { LIVE.on = false; LIVE.busy = false; stopVad(); stopBrowserRec(); LIVE.mode = null; liveIdle(); }
+if (liveEl) liveEl.addEventListener('click', () => { if (LIVE.on) liveOff(); else liveOn(); });
+window.AIWorld.live = { start: liveOn, stop: liveOff, isOn: () => LIVE.on, mode: () => LIVE.mode, heard: () => LIVE.heard.slice(),
+  get bargeIn() { return LIVE.bargeIn; }, set bargeIn(v) { LIVE.bargeIn = !!v; },
+  get lang() { return LIVE.lang; }, set lang(v) { LIVE.lang = String(v || 'en'); },
+  get model() { return LIVE.model; }, set model(v) { LIVE.model = String(v); },
+  said: liveSaid };
 Object.assign(window.AIWorld, { hear, learn, say, record, quick: QUICK, brainUrl: null, onUnmatched: null, afterRender: [],
   quickList: () => [...QUICK.learned, ...QUICK.lib], forgetLearned() { QUICK.learned = []; localStorage.removeItem('aiworld_quick_learned'); } });
 
