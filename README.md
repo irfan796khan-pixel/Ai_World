@@ -118,6 +118,7 @@ Her voice is made on the laptop by `girl_voice.py` with **Piper** (free, offline
 - Voice: Piper `en_US-hfc_female-medium` (the highest of the 5 US female Piper voices we measured: 235 Hz), lifted about 2 semitones for a teen sound (`LIFT = 1.12` in `girl_voice.py`; 1.0 = normal).
 - `run_girl_room.bat` runs `python girl_voice.py --setup` first: the first time it installs `piper-tts` and downloads the voice (about 63 MB, into `voices/`).
 - `page_server.py` answers `/v1/audio/speech` with Piper (a line takes about 0.3 s) and keeps every line in `voice_cache/`. If Piper is not ready it still forwards to VoiceStudio.
+- Long answers are cut into pieces: the first sentence alone, the rest in pieces of up to about 150 letters. She starts talking as soon as the first piece is ready, and the next pieces are made in the background while she talks. Test: a 16.7 s answer took 1.75 s to make in one go; the first piece took 0.19 s.
 - Live chat speech-to-text still uses VoiceStudio if it is running; if not, Live chat uses the browser's speech recognition from the first sentence.
 
 ## Live chat (hands-free, button "Live chat")
