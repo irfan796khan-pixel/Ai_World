@@ -1,7 +1,7 @@
 @echo off
 cd /d "%~dp0"
 title AI World - starting
-rem ONE CLICK: VoiceStudio (her voice) + Brain.py (her brain, port 5005) + page_server.py (the room, port 8081), then opens her.
+rem ONE CLICK: her voice (Piper, girl_voice.py) + Brain.py (her brain, port 5005) + page_server.py (the room, port 8081), then opens her.
 
 rem ---- find Python
 set PY=
@@ -16,24 +16,11 @@ if not defined PY (
   exit /b
 )
 
-rem ---- 1. VoiceStudio: open it if it is not running yet
-set VS_EXE=C:\Program Files\VoiceStudio\voicestudio.exe
-tasklist /fi "imagename eq voicestudio.exe" | find /i "voicestudio.exe" >nul
-if errorlevel 1 (
-  if exist "%VS_EXE%" (
-    echo Opening VoiceStudio...
-    start "" "%VS_EXE%"
-  ) else (
-    echo VoiceStudio is not installed at "%VS_EXE%" - she will use the browser voice.
-  )
-) else (
-  echo VoiceStudio is already open.
-)
-
-rem ---- 2. wait until her voice is ready (port 3900), at most 90 seconds
-echo Waiting for her voice (VoiceStudio on port 3900)...
-"%PY%" wait_for.py http://127.0.0.1:3900/health 90
-if errorlevel 1 (echo Voice not ready yet - she uses the browser voice until VoiceStudio is up.) else (echo Voice ready.)
+rem ---- 1. her voice: Piper teen girl voice on this laptop (girl_voice.py). First time only: installs Piper + downloads the voice (about 63 MB).
+echo Getting her voice ready...
+"%PY%" girl_voice.py --setup
+if errorlevel 1 (echo Her voice could not be set up - she uses the browser voice.)
+rem VoiceStudio is no longer needed for her voice. If it is running, Live chat uses it for speech-to-text; if not, the browser does that.
 
 rem ---- 3. brain (Steven's Brain.py) in its own window, unless it is already running
 "%PY%" wait_for.py http://127.0.0.1:5005/health 0
