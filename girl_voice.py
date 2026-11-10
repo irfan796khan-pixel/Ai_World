@@ -2,7 +2,7 @@
 
 Same engine as the "Adam Voice" phone app (v3, Piper). No VoiceStudio needed.
   voice   : Piper "en_US-hfc_female-medium" (the highest of the 5 US female Piper voices we measured)
-  teen    : made 12% slower, then played 12% faster -> same speed, about 2 semitones higher = younger
+  pitch   : LIFT 1.0 = the plain voice (chosen). LIFT 1.12 = made 12% slower, played 12% faster -> about 2 semitones higher
 page_server.py uses it for /v1/audio/speech, so the page does not change.
 
 Setup (run_girl_room.bat does this by itself, only the first time):
@@ -20,7 +20,7 @@ import wave
 
 VOICE = "en_US-hfc_female-medium"
 VOICE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/hfc_female/medium/" + VOICE
-LIFT = 1.12                     # 1.0 = normal grown-up pitch, 1.12 = about 2 semitones higher (teen)
+LIFT = 1.0                      # 1.0 = normal pitch (Imran chose "1 hfc female plain", 9 Nov). 1.12 = about 2 semitones higher (teen)
 HERE = os.path.dirname(os.path.abspath(__file__))
 VOICE_DIR = os.path.join(HERE, "voices")
 MODEL = os.path.join(VOICE_DIR, VOICE + ".onnx")
