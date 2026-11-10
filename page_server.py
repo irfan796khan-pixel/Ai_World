@@ -27,6 +27,7 @@ try:
     import girl_voice
 except Exception:
     girl_voice = None
+import shelf   # her memory shelf: /api/books (your files in memory_books/)
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8081
 VOICESTUDIO = "http://127.0.0.1:3900"
@@ -128,11 +129,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/v1/"):
             return self._voice("GET")
+        if shelf.handle_get(self):
+            return
         return super().do_GET()
 
     def do_POST(self):
         if self.path.startswith("/v1/"):
             return self._voice("POST")
+        if shelf.handle_post(self):
+            return
         self.send_error(404)
 
 

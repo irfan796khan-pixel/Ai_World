@@ -32,6 +32,17 @@ Type `new chat` to clear the brain's memory of the chat (`reset` alone cleans up
 `Girl_Room.html?proposal` starts the class presentation script by itself.
 Opening the html file directly (file:///) does not work: the browser blocks loading `Girl_character_mixamo.glb` and her voice.
 
+## Cozy room, memory shelf and hologram teacher (section 7 of Girl_Room.html)
+- **Cozy room:** fairy lights that twinkle, pillows, a teddy bear and a bunny, a bean bag, a pink rug and an "AI World" neon sign. Say `cozy mode off` / `make the room cozy`, or `AIWorld.cozy(false)`.
+- **Memory shelf:** a bookshelf on the left wall. Every book is one of YOUR files in the folder `memory_books/` (pictures: jpg png gif webp bmp, notes: txt md). Put files there from your computer, press **Add to shelf** (works from a phone browser too), or drag a file onto the room. `memory_books/` is in `.gitignore`, so your files never go to GitHub.
+  - `open the picture of the beach`, `show me my shopping list note`, `pull out a random picture` -> she walks to the shelf, pulls the book out, it flies to the TV and opens there.
+  - `what's on your shelf` -> the list of books on the TV.
+- **Hologram teacher:** `explain how rainbows work`, `teach me about atoms`, `how does the internet work` -> she taps her wrist, a neon screen pops up beside her, a glowing 3D model is built next to it (atom, solar system, globe, DNA, wave, gears, chart, network, heart, rocket, or a spinning shape), and she explains step by step while pointing at the screen. The steps come from the brain; with no brain only a few built-in topics work (atoms, solar system, gravity, internet, rainbows, DNA, heart). `close the hologram` hides it.
+- **Three-point lighting (podcast style):** a soft KEY light 45 degrees to the camera's right just above her eyes, a FILL light on the other side at half strength (2:1), and an EDGE light behind and above her for a rim on hair and shoulders, plus the room's practical lights (lamp, fairy lights, neon). The rig follows her and the camera. `AIWorld.lights({key:1, fill:0.5, edge:1.3})` or `AIWorld.lights(false)`.
+- **Neon answer card:** ask her any question ("why is the sky blue?", "what's your name") and while she answers, a pink neon card shoots out of her wrist and floats beside her head with your question and her answer typing itself out, then slides back into her wrist. `AIWorld.answerCard("question", "answer")` shows one by hand.
+- Actions for the brain: `{book:"beach"}`, `{book:"random"}`, `{shelf:"list"}`, `{holo:"how magnets work"}`, `{holo:{title:"Magnets", steps:["...","..."], build:"wave"}}`, `{holo:false}`.
+- Server: `shelf.py` adds `GET /api/books` (the list) and `POST /api/books?name=file.jpg` (save a file) to `page_server.py` and `brain_server.py`.
+
 ## Files
 - `Girl_Room.html` — the room + the girl + the action door. One file, three.js r147 from CDN (r128 could only blend 8 face shapes at once, so moods with many shapes lost the jaw).
 - `Girl_character_mixamo.glb` — the girl (65-bone Mixamo skeleton incl. fingers, 31 face shapes, a real openable mouth with teeth and tongue).

@@ -50,6 +50,7 @@ def offline_reply(problem):
             "animation": "shrug", "error": problem, "learn": False}
 
 
+import shelf  # noqa: E402  her memory shelf: /api/books
 from page_server import Handler as _VoiceHandler   # passes /v1/audio/... to VoiceStudio (port 3900)
 
 
@@ -76,11 +77,15 @@ class Handler(SimpleHTTPRequestHandler):
             model = Brain.CLAUDE_MODEL if PROVIDER == "claude" else Brain.OLLAMA_MODEL
             return self.send_json(200, {"brain": True, "provider": PROVIDER, "model": model,
                                         "ready": not problem, "problem": problem})
+        if shelf.handle_get(self):
+            return
         return super().do_GET()
 
     def do_POST(self):
         if self.path.startswith("/v1/"):
             return self._voice("POST")
+        if shelf.handle_post(self):
+            return
         if self.path.split("?")[0].rstrip("/") != "/brain":
             return self.send_json(404, {"error": "unknown address"})
         try:
