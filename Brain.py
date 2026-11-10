@@ -22,7 +22,7 @@ CLAUDE_MODEL = "claude-haiku-4-5"
 
 # Hugh doesn't need to remember an entire day's conversation.
 # This keeps the last 10 exchanges so the requests stay manageable.
-MAX_HISTORY_MESSAGES = 40   # DAY_MEMORY_V2: last 20 back-and-forths word for word (the rest is in the day summary)
+MAX_HISTORY_MESSAGES = 16   # FAST: last 8 back-and-forths word for word (the rest is in the day summary). Was 40: long prompts made every reply slow
 
 # If Hugh copies the user's words, we'll give him another shot.
 MAX_ATTEMPTS = 3
@@ -191,6 +191,9 @@ import datetime
 import threading
 MEMORY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brain_memory")
 SUMMARY_EVERY = 10          # update the summary after every 10 new messages
+SUMMARY_MAX_LINES = 20      # FAST: the summary reads at most the last 20 new lines (it used to grow without end and time out)
+KEEP_ALIVE = "60m"           # FAST: keep the model loaded in Ollama for 60 minutes (default 5) so it does not reload
+last_reply_at = [0.0]       # FAST: the summary waits until she has been quiet for a while
 day_log = []
 day_summary = [""]
 summary_done = [0]          # how many messages of day_log are already in the summary
@@ -249,13 +252,20 @@ def message_text(m):
 
 
 def update_summary():
-    # runs in the background, so the next reply does not wait for it
+    # runs in the background. Ollama does one job at a time, so it waits until she has been
+    # quiet for 25 seconds (a reply never waits behind it), reads at most 20 new lines,
+    # and if it fails it skips those lines instead of trying again with an even longer text.
     if not summary_busy.acquire(blocking=False):
         return
+    import time
     try:
+        while time.time() - last_reply_at[0] < 25:
+            time.sleep(2)
         new = day_log[summary_done[0]:]
         if not new:
             return
+        skipped = max(0, len(new) - SUMMARY_MAX_LINES)
+        new = new[-SUMMARY_MAX_LINES:]
         chat = "\n".join(message_text(m) for m in new)
         prompt = ("Old summary of today:\n" + (day_summary[0] or "(nothing yet)") +
                   "\n\nNew chat lines:\n" + chat +
@@ -266,21 +276,24 @@ def update_summary():
             "model": OLLAMA_MODEL,
             "messages": [{"role": "system", "content": "You keep a short, factual memory summary of a chat."},
                          {"role": "user", "content": prompt}],
-            "stream": False, "think": False,
-            "options": {"temperature": 0.2, "num_ctx": 8192}
+            "stream": False, "think": False, "keep_alive": KEEP_ALIVE,
+            "options": {"temperature": 0.2, "num_ctx": 4096, "num_predict": 300}
         }, {"Content-Type": "application/json"})
         text = (data.get("message") or {}).get("content", "").strip()
+        summary_done[0] += skipped + len(new)
         if text:
             day_summary[0] = text
-            summary_done[0] += len(new)
-            write_file(memory_file("_summary.txt"), "#done=%d\n%s" % (summary_done[0], text))
+        write_file(memory_file("_summary.txt"), "#done=%d\n%s" % (summary_done[0], day_summary[0]))
     except Exception as error:
-        print("Day summary could not be updated:", error)
+        summary_done[0] = len(day_log)      # skip these lines, do not retry with a longer text
+        print("Day summary could not be updated (skipped):", error)
     finally:
         summary_busy.release()
 
 
 def save_day_memory(new_messages):
+    import time
+    last_reply_at[0] = time.time()
     day_log.extend(new_messages)
     try:
         write_file(memory_file(), json.dumps(day_log, ensure_ascii=False, indent=1))
@@ -351,10 +364,12 @@ def ask_ollama(user_text, reminder=None):
         "format": RESPONSE_SCHEMA,
         "stream": False,
         "think": False,
+        "keep_alive": KEEP_ALIVE,
         "options": {
             "temperature": 0.7,
             "repeat_penalty": 1.15,
-            "num_ctx": 8192
+            "num_ctx": 4096,
+            "num_predict": 300
         }
     }
 
