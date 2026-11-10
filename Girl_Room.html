@@ -2628,6 +2628,11 @@ MOOD.plain = { tone: renderer.toneMapping, exp: renderer.toneMappingExposure, wa
   const pot2 = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.09, 0.16, 12), mat(0xfecdd3)); pot2.position.set(-6.68, 2.4, 2.4); E.add(pot2);
   for (let i = 0; i < 7; i++) { const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), mat(0x4ade80)); leaf.position.set(-6.6 + Math.sin(i) * 0.08, 2.48 - i * 0.07, 2.4 + Math.cos(i * 1.7) * 0.1); E.add(leaf); }
 }
+// one light bulb on the camera: a soft warm key light that always shines where you look, so her face is lit
+const CAMLIGHT = new THREE.SpotLight(0xfff1e0, 0.6, 22, 0.55, 0.9, 1.2);
+CAMLIGHT.castShadow = false; CAMLIGHT.position.set(0, 0.25, 0); camera.add(CAMLIGHT); camera.add(CAMLIGHT.target); CAMLIGHT.target.position.set(0, -0.3, -5);
+scene.add(camera);   // the camera must be in the scene for a light attached to it to work
+window.AIWorld.cameraLight = (on, strength) => { CAMLIGHT.visible = on !== false; if (strength !== undefined) CAMLIGHT.intensity = strength; };
 function applyMood(cozy) {
   const P = MOOD.plain;
   MOOD.extra.visible = cozy;
