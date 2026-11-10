@@ -1229,14 +1229,23 @@ function mocapTick(t, dt) {
   else if (turning) { want = 'walking'; speed = 0.85; }            // small steps while she turns on the spot
   else if (act.waving > 0) want = 'waving';
   else if (FX.talkW > 0.3) want = 'talking';          // stays on through the short pauses between sentences
+  if (want !== 'talking') MOCAP.talkOn = false;
   for (const k in MOCAP.layers) {
     const L = MOCAP.layers[k];
     if (k === want) {
-      if (L.w < 0.01) L.t = k === 'talking' ? Math.random() * 10 : 0;   // talking: start somewhere new in the clip, so the hands do not repeat the same move
-      L.speed = k === 'talking' ? 0.8 + 0.15 * (0.5 + 0.5 * Math.sin(t * 0.13)) : speed;
+      if (k === 'talking') {
+        if (!MOCAP.talkOn) {               // a NEW reply: random start point, speed and strength, so no two replies move the same
+          MOCAP.talkOn = true;
+          L.t = Math.random() * (MOCAP.clips.talking.frames / 30);
+          MOCAP.talkSpeed = 0.75 + Math.random() * 0.3;
+          MOCAP.talkAmt = 0.4 + Math.random() * 0.25;
+        }
+      } else if (L.w < 0.01) L.t = 0;
+      L.speed = k === 'talking' ? MOCAP.talkSpeed * (0.92 + 0.08 * Math.sin(t * 0.37)) : speed;
     }
-    // talking: the clip moves her only 55% (the rest stays relaxed idle), so the hands are calmer, like a real chat
-    const goal = want === 'talking' ? (k === 'talking' ? 0.55 : k === 'idle' ? 0.45 : 0) : (k === want ? 1 : 0);
+    // talking: the clip moves her only part of the way (the rest stays relaxed idle), so the hands are calmer, like a real chat
+    const tA = MOCAP.talkAmt || 0.55;
+    const goal = want === 'talking' ? (k === 'talking' ? tA : k === 'idle' ? 1 - tA : 0) : (k === want ? 1 : 0);
     L.w += (goal - L.w) * Math.min(1, dt * (k === 'walking' || k === 'running' ? 9 : k === 'talking' || want === 'talking' ? 2.2 : 5));
     if (L.w > 0.001) L.t += dt * L.speed;
   }
@@ -1719,8 +1728,23 @@ const GESTURE_ALIAS = { two_hand_question: 'question2', one_hand_question: 'ques
 const gestureName = (n) => { n = String(n || '').toLowerCase().replace(/[\s-]+/g, '_'); return GESTURES[n] ? n : GESTURE_ALIAS[n] || null; };
 const GEST = { name: null, left: 0, w: 0, t: 0, phone: null };
 const GEST_BONES = ['spine003', 'spine006', 'upper_armR', 'forearmR', 'handR', 'upper_armL', 'forearmL', 'handL'];   // parents first
+// While she talks, small random hand moves are added every few seconds (random gesture, random hand,
+// random size and length), so her talking never loops the same way. A gesture from the brain always wins.
+const TALK_ACCENTS = ['conversation', 'question', 'question2', 'conversation', 'question'];
+function talkAccents(dt) {
+  const busy = act.walking || (act.cur && act.cur._kind) || act.pointing > 0 || act.waving > 0;
+  if (FX.talkW < 0.5 || busy) { GEST.nextAuto = 0.8 + Math.random() * 1.5; return; }
+  if (GEST.name && GEST.left > 0) return;
+  GEST.nextAuto = (GEST.nextAuto ?? 1) - dt;
+  if (GEST.nextAuto > 0) return;
+  let n; do { n = TALK_ACCENTS[Math.floor(Math.random() * TALK_ACCENTS.length)]; } while (n === GEST.lastAuto && Math.random() < 0.8);
+  GEST.lastAuto = n; GEST.name = n; GEST.left = 1.6 + Math.random() * 1.8; GEST.t = Math.random() * 6;
+  GEST.amp = 0.45 + Math.random() * 0.35; GEST.mirror = Math.random() < 0.5; GEST.auto = true;
+  GEST.nextAuto = 0.6 + Math.random() * 2.2;
+}
 function startBody(name, secs) {
   const n = gestureName(name); if (!n) { console.warn('AIWorld: unknown body gesture "' + name + '". Known: ' + Object.keys(GESTURES).join(', ')); return false; }
+  GEST.amp = 1; GEST.mirror = false; GEST.auto = false;
   GEST.name = n; GEST.left = +secs || (n.startsWith('phone') ? 6 : 4); GEST.t = 0; return true;
 }
 function phoneProp(show) {                     // a small phone in her right hand for the phone gestures (placed in the room each frame)
@@ -1741,6 +1765,7 @@ function phoneProp(show) {                     // a small phone in her right han
 const _gq = new THREE.Quaternion(), _ge = new THREE.Euler();
 function gestureTick(t, dt) {
   if (!loaded) return;
+  talkAccents(dt);
   const clumsy = act.cur && act.cur._kind;
   const pacing = GEST.name === 'phone_pacing';
   const on = GEST.name && GEST.left > 0 && !clumsy && (pacing || !act.walking) && !(act.pointing > 0);
@@ -1749,14 +1774,15 @@ function gestureTick(t, dt) {
   if (GEST.w < 0.005) { if (GEST.left <= 0) GEST.name = null; phoneProp(false); return; }
   // her file names the arms the other way round (like her fingers): find her real right arm (she faces +Z, so her right is -X)
   if (GEST.R === undefined) GEST.R = girl.worldToLocal(bones.upper_armR.getWorldPosition(new THREE.Vector3())).x < 0 ? 'R' : 'L';
-  const R = GEST.R, L = R === 'R' ? 'L' : 'R';
+  const R = GEST.mirror ? (GEST.R === 'R' ? 'L' : 'R') : GEST.R, L = R === 'R' ? 'L' : 'R';   // mirror = same move with the other hand
   const off = {}; const put = (n) => (x = 0, y = 0, z = 0) => { off[n] = [x, y, z]; };
   const s = { chest: put('spine003'), head: put('spine006'), armR: put('upper_arm' + R), armL: put('upper_arm' + L),
     elbowR: (x) => put('forearm' + R)(x), elbowL: (x) => put('forearm' + L)(x), handR: put('hand' + R), handL: put('hand' + L) };
   GESTURES[GEST.name](s, GEST.t);
   for (const n of GEST_BONES) {
     const b = bones[n], o = off[n]; if (!b || !o) continue;
-    _gq.setFromEuler(_ge.set(o[0] * GEST.w, o[1] * GEST.w, o[2] * GEST.w));   // fade in / out
+    const k = GEST.w * (GEST.amp ?? 1), m = GEST.mirror ? -1 : 1;   // fade in / out, size, mirror (turn and sideways flip)
+    _gq.setFromEuler(_ge.set(o[0] * k, o[1] * k * m, o[2] * k * m));
     const G = _gq.multiply(gl(b));                            // turn it in her body frame
     b.quaternion.copy(gl(b.parent).invert().multiply(G));
     b.updateMatrixWorld(true);
@@ -3201,6 +3227,40 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
+</script>
+<div id="brainDot" title="Brain" style="position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;align-items:center;gap:7px;padding:5px 12px;border-radius:999px;background:rgba(0,0,0,.55);color:#fff;font:600 13px system-ui,sans-serif;pointer-events:none">
+  <span id="brainDotLight" style="width:12px;height:12px;border-radius:50%;background:#ef4444;box-shadow:0 0 8px #ef4444"></span>
+  <span id="brainDotText">Brain: off</span>
+</div>
+<script>
+// Brain dot: asks the brain every 5 s. Green = connected, red = not connected.
+(function () {
+  const light = document.getElementById('brainDotLight'), txt = document.getElementById('brainDotText');
+  const ask = (url) => fetch(url, { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null);
+  async function check() {
+    let j = await ask('brain/health'), url = 'brain';
+    if (!j || !j.brain) { j = await ask('http://localhost:5005/health'); url = 'http://localhost:5005/brain'; }
+    const on = !!(j && j.brain);
+    light.style.background = on ? '#22c55e' : '#ef4444';
+    light.style.boxShadow = '0 0 8px ' + (on ? '#22c55e' : '#ef4444');
+    txt.textContent = on ? 'Brain: on (' + (j.provider || j.brain) + ')' : 'Brain: off';
+    // brain started after the page loaded: connect it now (no reload needed)
+    if (on && window.AIWorld && !window.AIWorld.brainUrl && typeof window.AIWorld.onUnmatched !== 'function') window.AIWorld.brainUrl = url;
+  }
+  check(); setInterval(check, 5000);
+})();
+</script>
+<script id="subtitleFix">
+// Subtitle fix: keep the text bubble 14 px above the top of the command bar, whatever its height.
+(function () {
+  const bar = document.getElementById('bar'), bub = document.getElementById('bubble');
+  if (!bar || !bub) return;
+  bub.style.fontSize = '14px'; bub.style.padding = '6px 12px'; bub.style.borderRadius = '14px'; bub.style.maxWidth = 'min(60vw, 520px)';   // smaller subtitle
+  function place() { bub.style.bottom = (window.innerHeight - bar.getBoundingClientRect().top + 10) + 'px'; bub.style.zIndex = 11; }
+  place(); window.addEventListener('resize', place);
+  if (window.ResizeObserver) new ResizeObserver(place).observe(bar);
+  setInterval(place, 1000);
+})();
 </script>
 </body>
 </html>
