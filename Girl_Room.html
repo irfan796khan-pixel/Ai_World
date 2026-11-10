@@ -1332,9 +1332,7 @@ function findQuick(text) {
 }
 function pickSay(e) {
   const opts = e.say || []; if (!opts.length) return '';
-  let i = Math.floor(Math.random() * opts.length);
-  if (opts.length > 1 && opts[i] === QUICK.lastSay[e.match[0]]) i = (i + 1) % opts.length;
-  QUICK.lastSay[e.match[0]] = opts[i]; return opts[i];
+  const line = freshPick(opts); QUICK.lastSay[e.match[0]] = line; return line;   // no repeats this session
 }
 const bubbleEl = document.getElementById('bubble'); let bubbleTimer = 0;
 function showBubble(text, seconds) {
@@ -1927,7 +1925,25 @@ Object.assign(window.AIWorld, { hear, learn, say, record, quick: QUICK, brainUrl
 const STATS = { energy: 80, mood: 60, focus: 80, annoy: 10, now: 0, lastInput: -100, nextAuto: 6, cmdTimes: [], walkTimes: [],
   lastCmd: '', lastCmdT: -100, hostage: null, stubCool: -100, stub: false, auto: true, sass: 1, wild: false };   // wild: true = old big tantrums (off: she acts grown-up)
 const clampS = (v) => Math.max(0, Math.min(100, v));
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+// no repeats in one session: every line she picks is remembered until the page is closed.
+// She takes a line she has not said yet; only when every option is used up does she reuse the one said longest ago.
+const SAID = new Map();   // line -> time last said
+try { const old = JSON.parse(sessionStorage.getItem('aiw_said') || '[]'); for (const [k, v] of old) SAID.set(k, v); } catch (e) {}
+let saidSaveT = 0, saidCount = Math.max(0, ...SAID.values());
+function rememberSaid(line) {
+  if (typeof line !== 'string' || !line) return;
+  SAID.delete(line); SAID.set(line, ++saidCount); clearTimeout(saidSaveT);
+  saidSaveT = setTimeout(() => { try { sessionStorage.setItem('aiw_said', JSON.stringify([...SAID].slice(-500))); } catch (e) {} }, 500);
+}
+function freshPick(arr) {
+  if (!arr || !arr.length) return undefined;
+  if (typeof arr[0] !== 'string') return arr[Math.floor(Math.random() * arr.length)];
+  const unused = arr.filter(x => !SAID.has(x));
+  const choice = unused.length ? unused[Math.floor(Math.random() * unused.length)]
+    : arr.reduce((a, b) => (SAID.get(a) <= SAID.get(b) ? a : b));   // all used: the one said longest ago
+  rememberSaid(choice); return choice;
+}
+const pick = (arr) => freshPick(arr);
 const SASS_KINDS = new Set(['tantrum', 'hostage', 'cross', 'tap', 'throwglass', 'stub']);
 const isSass = (x) => x && (SASS_KINDS.has(x._kind) || x.tantrum !== undefined || x.hostage !== undefined || x.rebel !== undefined);
 function inTantrum() { return !!((act.cur && (act.cur._kind === 'tantrum' || act.cur.tantrum !== undefined || act.cur._kind === 'stub')) || act.queue.some(q => q._kind === 'tantrum' || q.tantrum !== undefined)); }
@@ -2907,7 +2923,7 @@ window.AIWorld.onFrame.push((t, dt) => {
 controls.addEventListener('start', () => { CAMG.goal = null; CAMG.save = null; CAMG.back = 0; CAMG.ending = false; });   // you grab the camera: it is yours
 
 // ---------------------------------------------------------------- 7c. hologram teacher
-const HOLO = { panel: null, cv: null, tex: null, beam: null, model: null, modelName: '', on: false, k: 0, title: '', steps: [], step: -1, run: 0, pos: V3(0, 0, 0) };
+const HOLO = { slide: 0, ripples: [], spinBoost: 0, grow: 1, growTo: 1, glowStep: 0, panel: null, cv: null, tex: null, beam: null, model: null, modelName: '', on: false, k: 0, title: '', steps: [], step: -1, run: 0, pos: V3(0, 0, 0) };
 {
   HOLO.cv = document.createElement('canvas'); HOLO.cv.width = 1024; HOLO.cv.height = 640;
   HOLO.tex = new THREE.CanvasTexture(HOLO.cv);
@@ -2926,7 +2942,11 @@ function drawHolo(t) {
   c.fillText(wrapLines(c, HOLO.title, W - 100, 1)[0] || '', 50, 42);
   c.fillStyle = '#22d3ee'; c.fillRect(50, 110, W - 100, 3);
   const s = HOLO.steps[HOLO.step];
-  if (s) { c.fillStyle = '#ecfeff'; c.font = '40px Segoe UI, Arial'; wrapLines(c, s, W - 110, 8).forEach((l, i) => c.fillText(l, 54, 140 + i * 52)); }
+  if (s) { c.save(); c.globalAlpha = 1 - Math.min(1, Math.abs(HOLO.slide) * 1.6); c.translate(HOLO.slide * W * 0.6, 0);   // page slides when she swipes
+    c.fillStyle = '#ecfeff'; c.font = '40px Segoe UI, Arial'; wrapLines(c, s, W - 110, 8).forEach((l, i) => c.fillText(l, 54, 140 + i * 52)); c.restore(); }
+  for (const r of HOLO.ripples) { const a = 1 - r.age / 0.9; if (a <= 0) continue;   // ripples where her finger touched
+    c.strokeStyle = 'rgba(240,171,252,' + a + ')'; c.lineWidth = 6; c.beginPath(); c.arc(r.x * W, r.y * H, 20 + r.age * 160, 0, 6.3); c.stroke();
+    c.fillStyle = 'rgba(255,255,255,' + a * 0.8 + ')'; c.beginPath(); c.arc(r.x * W, r.y * H, 10 * a, 0, 6.3); c.fill(); }
   c.shadowBlur = 0;
   HOLO.steps.forEach((_, i) => { c.fillStyle = i === HOLO.step ? '#f0abfc' : 'rgba(165,243,252,.35)'; c.beginPath(); c.arc(W / 2 - (HOLO.steps.length - 1) * 18 + i * 36, H - 48, i === HOLO.step ? 10 : 7, 0, 6.3); c.fill(); });
   c.fillStyle = 'rgba(165,243,252,0.06)'; for (let y = (t * 80) % 8; y < H; y += 8) c.fillRect(10, y, W - 20, 2);   // scan lines
@@ -3017,6 +3037,7 @@ window.AIWorld.onFrame.push((t, dt) => {
   HOLO.panel.position.lerpVectors(wristP, HOLO.pos, ease(HOLO.k)); HOLO.panel.position.y += 0.03 * Math.sin(t * 1.5) * HOLO.k;
   HOLO.panel.lookAt(camera.position.x, HOLO.panel.position.y, camera.position.z);
   HOLO.panel.scale.set(1, Math.max(0.01, ease(HOLO.k)), 1); HOLO.panel.material.opacity = flick * (0.85 + 0.15 * Math.sin(t * 13));
+  for (const r of HOLO.ripples) r.age += dt; HOLO.ripples = HOLO.ripples.filter(r => r.age < 0.9);
   drawHolo(t);
   // beam from her left wrist to the screen
   const wrist = bones.handL ? bones.handL.getWorldPosition(V3(0, 0, 0)) : girl.position.clone().setY(1.1);
@@ -3029,6 +3050,8 @@ window.AIWorld.onFrame.push((t, dt) => {
     b.scale.setScalar(Math.max(0.01, ease(clamp01(age * 1.2)) * (HOLO.on ? 1 : HOLO.k)));
     b.position.y = HOLO.modelPos.y + 0.02 * Math.sin(t * 2);
     if (HOLO.model.userData.tick) HOLO.model.userData.tick(t, age);
+    HOLO.spinBoost *= Math.exp(-dt * 1.2); HOLO.model.rotation.y += HOLO.spinBoost * dt;   // she spun it
+    HOLO.grow += (HOLO.growTo - HOLO.grow) * (1 - Math.exp(-dt * 4)); HOLO.model.scale.setScalar(HOLO.grow);
   }
 });
 // built-in lessons when no brain is connected (short, simple, true)
@@ -3072,14 +3095,17 @@ async function holoExplain(topic, given) {
   if (!steps || !steps.length) steps = lessonFor(topic);
   if (!steps) steps = ["I don't have a lesson for this yet.", 'Connect my brain and I can explain anything.', 'Start me with run_girl_room.bat.'];
   if (my !== HOLO.run) return;
-  HOLO.steps = steps;
+  HOLO.steps = steps; HOLO.step = 0;
+  window.AIWorld.act([{ _kind: 'holotouch', _target: 'panel', _x: 0.0, _y: 0.05, _dur: 1.2 }]);   // tap the screen to start
+  await waitS(1.0);
   for (let i = 0; i < steps.length; i++) {
     if (my !== HOLO.run) return;
-    HOLO.step = i;
-    window.AIWorld.act([{ point: { x: HOLO.pos.x, y: HOLO.pos.y, z: HOLO.pos.z }, time: 1.6 }]);
-    if (i === 1 && HOLO.modelBase) window.AIWorld.act([{ point: { x: HOLO.modelPos.x, y: HOLO.modelPos.y, z: HOLO.modelPos.z }, time: 1.4 }]);
+    if (i > 0) { window.AIWorld.act([{ _kind: 'holoswipe', _target: 'panel', _next: i, _dur: 1.1 }]); await waitS(0.7); }
+    if (i === 1 && HOLO.modelBase) window.AIWorld.act([{ _kind: 'holospin', _target: 'model', _dur: 2.6 }]);   // grab the 3D model and turn it
+    else window.AIWorld.act([{ _kind: 'holotouch', _target: 'panel', _x: -0.35 + 0.25 * (i % 3), _y: 0.1 - 0.12 * (i % 2), _dur: 1.3 }, { point: { x: HOLO.pos.x, y: HOLO.pos.y, z: HOLO.pos.z }, time: 1.2 }]);
     await sayMain(steps[i]); await waitS(0.5);
   }
+  if (my === HOLO.run && HOLO.modelBase) window.AIWorld.act([{ _kind: 'holospin', _target: 'model', _dur: 2.0 }]);   // one last spin
   if (my !== HOLO.run) return;
   await sayMain(pick(['Got it?', 'Easy, right?', "That's it. Ask me another one."]));
   await waitS(4);
@@ -3119,7 +3145,7 @@ function answerCard(question, answer) {
   CARD.q = String(question).trim().replace(/\s+/g, ' ').slice(0, 120); CARD.a = String(answer).trim().replace(/\s+/g, ' ').slice(0, 320);
   CARD.on = true; CARD.start = performance.now(); CARD.until = performance.now() + Math.max(6000, CARD.a.split(' ').length * 420 + 3500);
   CARD.mesh.visible = true; CARD.beam.visible = true; sfxSafe('pop');
-  if (!act.cur && !act.queue.length && !act.walking) window.AIWorld.act([{ _kind: 'holotap', _dur: 0.9 }]);
+  if (!act.cur && !act.queue.length && !act.walking) window.AIWorld.act([{ _kind: 'holotap', _dur: 0.9 }, { _kind: 'holotouch', _target: 'card', _x: 0.3, _y: 0.0, _dur: 1.1 }]);
 }
 window.AIWorld.onFrame.push((t, dt) => {
   if (!CARD.mesh.visible) return;
@@ -3135,6 +3161,7 @@ window.AIWorld.onFrame.push((t, dt) => {
   CARD.mesh.position.lerpVectors(wrist, CARD.pos, e); CARD.mesh.position.y += 0.02 * Math.sin(t * 2) * e;
   CARD.mesh.scale.setScalar(Math.max(0.02, e)); CARD.mesh.lookAt(camera.position);
   CARD.mesh.material.opacity = (CARD.k < 1 && Math.random() < 0.2 ? 0.4 : 1) * (0.9 + 0.1 * Math.sin(t * 11));
+  if (CARD.flash) { CARD.flash = Math.max(0, CARD.flash - dt * 2.5); CARD.mesh.scale.multiplyScalar(1 + 0.06 * CARD.flash); }
   drawCard(t);
   const len = wrist.distanceTo(CARD.mesh.position);
   CARD.beam.position.copy(wrist).lerp(CARD.mesh.position, 0.5); CARD.beam.scale.set(0.6 * e, Math.max(0.01, len), 0.4 * e);
@@ -3142,11 +3169,57 @@ window.AIWorld.onFrame.push((t, dt) => {
 });
 window.AIWorld.answerCard = answerCard;
 
+// ---------------------------------------------------------------- 7c3. her hands on the hologram
+// holotouch: reach out and tap the screen (or the answer card), a ripple spreads where her finger lands
+// holoswipe: sweep her hand across the screen, the page slides away and the next one slides in
+// holospin:  reach into the 3D model, turn it with her hand, it grows bigger while she holds it
+function reachArm(world, w, side) {   // aim the arm on the target's side (or the side given) at a world point
+  const p = world.clone().sub(girl.position); p.applyQuaternion(girl.quaternion.clone().invert()); p.y -= 1.35;
+  const left = side ? side === 'L' : (p.x * SIDE_L > 0);
+  const d = p.normalize(), up = left ? bones.upper_armL : bones.upper_armR, fo = left ? bones.forearmL : bones.forearmR, ha = left ? bones.handL : bones.handR;
+  if (!up || !fo || !ha) return null;
+  aimLocal(up, fo, V3(d.x, d.y, d.z), w); aimLocal(fo, ha, V3(d.x, d.y + 0.05, d.z), w);
+  return left ? 'L' : 'R';
+}
+function holoTarget(a) {
+  if (a._target === 'card') return CARD.mesh.visible ? CARD.mesh : null;
+  if (a._target === 'model') return HOLO.modelBase || null;
+  return HOLO.panel.visible ? HOLO.panel : null;
+}
+function holoHands(a, T, k, t) {
+  const obj = holoTarget(a); if (!obj) return;
+  const D = a._dur, w = ease(k(0, 0.3)) * (1 - ease(k(D - 0.3, D)));
+  obj.updateMatrixWorld(true);
+  if (a._kind === 'holotouch') {
+    const lx = a._x !== undefined ? a._x : 0.15, ly = a._y !== undefined ? a._y : -0.05;
+    const push = Math.max(0, Math.sin(clamp01((T - 0.35) / 0.4) * Math.PI)) * 0.06;
+    const pt = obj.localToWorld(V3(lx, ly, -push));
+    reachArm(pt, w);
+    if (T > 0.5 && !a._hit) { a._hit = true; sfxSafe('pop');
+      if (obj === HOLO.panel) HOLO.ripples.push({ x: lx / 1.7 + 0.5, y: 0.5 - ly / 1.06, age: 0 });
+      else if (obj === CARD.mesh) CARD.flash = 1; }
+  } else if (a._kind === 'holoswipe') {   // sweep from the far edge toward her, the page follows the hand
+    const u = ease(k(0.25, D - 0.3));
+    const pt = obj.localToWorld(V3(0.55 - 1.1 * u, -0.05 + 0.08 * Math.sin(u * Math.PI), 0.04));
+    reachArm(pt, w);
+    HOLO.slide = u < 0.5 ? -u * 2 : (1 - u) * 2;   // old page slides out, new one slides in
+    if (u >= 0.5 && a._next !== undefined) { HOLO.step = a._next; a._next = undefined; sfxSafe('pop'); }
+    if (T >= D - 0.05) HOLO.slide = 0;
+  } else if (a._kind === 'holospin') {   // hand in the model, turning it, the model grows while held
+    const u = k(0.3, D - 0.35), ang = u * Math.PI * 1.5;
+    const c = obj.getWorldPosition(V3(0, 0, 0)), pt = c.clone().add(V3(Math.cos(ang) * 0.18, 0.05 + Math.sin(ang) * 0.06, 0.12));
+    reachArm(pt, w);
+    HOLO.growTo = T < D - 0.4 ? 1.45 : 1; if (T > 0.3 && T < D - 0.35) HOLO.spinBoost = Math.max(HOLO.spinBoost, 5);
+    face({ mouthSmileLeft: 0.4, mouthSmileRight: 0.4 });
+  }
+}
+
 // ---------------------------------------------------------------- 7d. her wrist tap + book pull moves
 window.AIWorld.onFrame.push((t, dt) => {
   const a = act.cur; if (!loaded || !a) return;
   const T = act.t, k = (s, e) => clamp01((T - s) / (e - s));
-  if (a._kind === 'holotap') {   // left forearm up in front, right index taps the wrist twice
+  if (a._kind === 'holoswipe' || a._kind === 'holotouch' || a._kind === 'holospin') { holoHands(a, T, k, t); }
+  else if (a._kind === 'holotap') {   // left forearm up in front, right index taps the wrist twice
     const u = ease(k(0, 0.35)) * (1 - ease(k(a._dur - 0.25, a._dur)));
     aimLocal(bones.upper_armL, bones.forearmL, V3(SIDE_L * 0.25, -0.75, 0.55), u); aimLocal(bones.forearmL, bones.handL, V3(SIDE_L * -0.55, 0.35, 0.75), u);
     const tap = 0.12 * Math.max(0, Math.sin(Math.max(0, T - 0.4) * 14)) * (T > 0.4 && T < 1.3 ? 1 : 0);
