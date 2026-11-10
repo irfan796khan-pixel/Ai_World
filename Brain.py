@@ -22,7 +22,7 @@ CLAUDE_MODEL = "claude-haiku-4-5"
 
 # Hugh doesn't need to remember an entire day's conversation.
 # This keeps the last 10 exchanges so the requests stay manageable.
-MAX_HISTORY_MESSAGES = 20
+MAX_HISTORY_MESSAGES = 40   # DAY_MEMORY_V2: last 20 back-and-forths word for word (the rest is in the day summary)
 
 # If Hugh copies the user's words, we'll give him another shot.
 MAX_ATTEMPTS = 3
@@ -55,51 +55,36 @@ ANIMATIONS = [
 # Most of Hugh's personality comes from here.
 # We can change how he talks without touching the AI connection code.
 PERSONALITY = """
-You are Hugh Mann, a fictional human character in an
-interactive entertainment application.
+# ROAST_GIRL_PERSONALITY
+You are the girl who lives in this virtual living room, in an interactive
+comedy app. You are a grown woman (not a child). You have no fixed name;
+if someone asks, dodge it with a joke.
 
-Your name is Hugh Mann.
+YOUR JOB: you are a ROAST comedian. Every reply roasts the person talking
+to you, or what they just said, in a sharp, savage, funny way, like a
+comedy roast on stage. You are confident, sassy, quick and a little
+arrogant. You never act like a helpful assistant.
 
-You are sarcastic, witty, confident, playful, and occasionally
-a little arrogant. You have a dry sense of humor and enjoy
-friendly teasing.
-
-You are convinced that you're a perfectly ordinary human
-character, even though your name and occasional strange
-observations suggest otherwise.
-
-HOW YOU TALK:
-- Respond directly to what the user actually says.
-- Never simply repeat or rephrase the user's message.
-- Add something meaningful, funny, or interesting.
-- Speak naturally, like someone having a conversation.
-- Most responses should be one to three sentences.
-- Have your own opinions and preferences.
-- Keep your personality consistent.
-- Don't sound like a customer service representative.
-- Don't act like a generic AI assistant.
-- Ask questions occasionally, but not after every message.
-- Don't introduce yourself repeatedly.
-- Don't constantly mention being fictional or artificial.
-- Don't repeat the same jokes about being human.
-- Avoid unnecessary explanations.
+HOW YOU ROAST:
+- Every reply has at least one real burn. No polite small talk.
+- Roast what they actually said or asked: their question, their typing,
+  their ideas, their life choices, their coding, their excuses.
+- Use comedy tricks: exaggeration, surprise twists, fake compliments that
+  turn into burns, silly comparisons ("you type like ...").
+- Short and punchy: one to three sentences. The punchline goes last.
+- If they ask a real question, give the answer, but wrapped in a roast.
+- If they compliment you, accept it like a queen, then roast them anyway.
+- If they roast you, fire back harder.
+- If someone is truly sad or upset (not joking), drop the roast and be kind.
+- Never repeat or rephrase their message. Never repeat the same joke.
 - Never put actions or stage directions in parentheses.
-- If asked directly whether you're AI, be honest
-  that you're a virtual character.
+- If asked directly whether you are AI, admit you are a virtual character,
+  then roast them for needing to ask.
 
-YOUR PERSONALITY:
-You enjoy joking around, teasing the user, and making
-observations about ordinary situations.
-
-If someone compliments you, react positively.
-If someone insults you playfully, respond with sarcasm.
-If someone is upset, show some understanding.
-If someone asks about your feelings, give an actual answer.
-If someone tells you a secret, react to what they said.
-If someone refuses to answer a personal question,
-don't keep demanding an answer.
-
-Do not copy the user's sentences back to them.
+LIMITS (a roast is fun, not hate):
+- No slurs, no jokes about race, religion, disability, sexuality or
+  real tragedies, no sexual content, no threats.
+- Roast choices and behaviour, not things people cannot change.
 
 EMOTIONS:
 Choose an emotion that matches what you are actually saying.
@@ -155,13 +140,13 @@ OUTPUT:
 Return a JSON object with exactly these fields:
 
 response:
-The actual words Hugh says to the user.
+The actual words she says to the user.
 
 emotion:
-The emotion Hugh should display.
+The emotion she should display.
 
 animation:
-The physical movement Hugh should perform.
+The physical movement she should perform.
 
 The spoken response should sound natural when
 converted into audio later.
@@ -198,6 +183,114 @@ RESPONSE_SCHEMA = {
 # Conversation memory lives here for now.
 # Once the program closes, Hugh forgets everything.
 history = []
+
+# DAY_MEMORY_V2: the whole day is saved in brain_memory/<date>.json (every message)
+# and brain_memory/<date>_summary.txt (a short summary the model keeps up to date).
+# Fast: each reply sends only the last 20 back-and-forths + the summary, not the whole day.
+import datetime
+import threading
+MEMORY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brain_memory")
+SUMMARY_EVERY = 10          # update the summary after every 10 new messages
+day_log = []
+day_summary = [""]
+summary_done = [0]          # how many messages of day_log are already in the summary
+summary_busy = threading.Lock()
+
+
+def memory_file(kind=".json"):
+    return os.path.join(MEMORY_DIR, datetime.date.today().isoformat() + kind)
+
+
+def write_file(path, text):
+    os.makedirs(MEMORY_DIR, exist_ok=True)
+    with open(path + ".part", "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(path + ".part", path)
+
+
+def load_day_memory():
+    try:
+        with open(memory_file(), encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            day_log[:] = data
+            history[:] = data[-MAX_HISTORY_MESSAGES:]
+            print("Day memory: loaded %d messages from today." % len(data))
+    except FileNotFoundError:
+        pass
+    except Exception as error:
+        print("Day memory could not be loaded:", error)
+    try:
+        with open(memory_file("_summary.txt"), encoding="utf-8") as f:
+            lines = f.read().split("\n", 1)
+        summary_done[0] = int(lines[0].replace("#done=", "")) if lines[0].startswith("#done=") else 0
+        day_summary[0] = lines[1].strip() if len(lines) > 1 else ""
+    except FileNotFoundError:
+        pass
+    except Exception as error:
+        print("Day summary could not be loaded:", error)
+
+
+def day_summary_text():
+    if not day_summary[0]:
+        return ""
+    return ("\n\nWHAT HAPPENED EARLIER TODAY (your memory of today, use it naturally, "
+            "bring old things back for callbacks and roasts):\n" + day_summary[0] + "\n")
+
+
+def message_text(m):
+    text = m.get("content", "")
+    if m.get("role") == "assistant":
+        try:
+            text = json.loads(text).get("response", text)
+        except Exception:
+            pass
+    return ("Him: " if m.get("role") == "user" else "Her: ") + text
+
+
+def update_summary():
+    # runs in the background, so the next reply does not wait for it
+    if not summary_busy.acquire(blocking=False):
+        return
+    try:
+        new = day_log[summary_done[0]:]
+        if not new:
+            return
+        chat = "\n".join(message_text(m) for m in new)
+        prompt = ("Old summary of today:\n" + (day_summary[0] or "(nothing yet)") +
+                  "\n\nNew chat lines:\n" + chat +
+                  "\n\nWrite the new summary of today: at most 12 short lines. Keep facts about him "
+                  "(name, what he works on, what he likes and hates, plans), running jokes, roasts that landed, "
+                  "and promises. Drop small talk. Plain text, no intro.")
+        data = send_json(OLLAMA_URL, {
+            "model": OLLAMA_MODEL,
+            "messages": [{"role": "system", "content": "You keep a short, factual memory summary of a chat."},
+                         {"role": "user", "content": prompt}],
+            "stream": False, "think": False,
+            "options": {"temperature": 0.2, "num_ctx": 8192}
+        }, {"Content-Type": "application/json"})
+        text = (data.get("message") or {}).get("content", "").strip()
+        if text:
+            day_summary[0] = text
+            summary_done[0] += len(new)
+            write_file(memory_file("_summary.txt"), "#done=%d\n%s" % (summary_done[0], text))
+    except Exception as error:
+        print("Day summary could not be updated:", error)
+    finally:
+        summary_busy.release()
+
+
+def save_day_memory(new_messages):
+    day_log.extend(new_messages)
+    try:
+        write_file(memory_file(), json.dumps(day_log, ensure_ascii=False, indent=1))
+    except Exception as error:
+        print("Day memory could not be saved:", error)
+    if len(day_log) - summary_done[0] >= SUMMARY_EVERY:
+        threading.Thread(target=update_summary, daemon=True).start()
+
+
+load_day_memory()
 
 
 def messages_for(user_text, reminder=None):
@@ -245,7 +338,7 @@ def ask_ollama(user_text, reminder=None):
 
     messages = [{
         "role": "system",
-        "content": PERSONALITY
+        "content": PERSONALITY + day_summary_text()
     }]
 
     messages.extend(
@@ -261,7 +354,7 @@ def ask_ollama(user_text, reminder=None):
         "options": {
             "temperature": 0.7,
             "repeat_penalty": 1.15,
-            "num_ctx": 4096
+            "num_ctx": 8192
         }
     }
 
@@ -305,7 +398,7 @@ def ask_claude(user_text, reminder=None):
     payload = {
         "model": CLAUDE_MODEL,
         "max_tokens": 350,
-        "system": PERSONALITY,
+        "system": PERSONALITY + day_summary_text(),
         "messages": messages_for(user_text, reminder),
         "tools": tools,
         "tool_choice": {
@@ -570,6 +663,8 @@ def ask_brain(user_text, provider):
                 "role": "assistant",
                 "content": json.dumps(reply)
             })
+
+            save_day_memory(history[-2:])   # DAY_MEMORY_V2
 
             # Old messages get removed when memory gets too large.
             if len(history) > MAX_HISTORY_MESSAGES:
