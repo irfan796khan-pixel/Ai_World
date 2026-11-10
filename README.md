@@ -42,11 +42,20 @@ Opening the html file directly (file:///) does not work: the browser blocks load
 - `page_server.py` — serves the room on 8081 and passes `/v1/audio/...` to VoiceStudio (saves every made line in `voice_cache/`).
 - `wait_for.py` — small helper the start file uses to wait until VoiceStudio / the brain answers.
 - `brain_server.py` — serves the page and connects it to `Brain.py` (`/brain`, `/brain/health`).
-- `Brain.py` — the brain (Ollama or Claude). Its character prompt is still the placeholder "Hugh Mann".
+- `Brain.py` — the brain (Ollama or Claude). She is a roast comedian (grown woman, no fixed name) and remembers the whole day: last 20 back-and-forths word for word + a short day summary updated in the background every 10 messages, saved in `brain_memory/<date>.json` and `<date>_summary.txt` (loaded again after a restart).
+- `start_brain.bat` — starts Ollama (if needed) and the brain on port 5005 on its own.
 - `BrainWithScript.py` — the same brain plus a `script` command that reads a fixed intro text.
 - `roast_script.json` — the show for the **Presentation** button: she performs the lines in order (voice, one-sentence subtitles, moves). Edit the text/actions freely; `sayAs` fixes how the voice reads words like Brain.py. Press Presentation again to stop. `AIWorld.show.run('other.json')` plays another script.
 - `VOICESTUDIO.md` — her voice: free local VoiceStudio (built into the page), with the browser voice as backup.
 - `tools/` — the Python scripts that rebuilt the face (cut the lips open, added teeth/tongue/mouth, new face shapes). Run `python build_face.py out.glb` with the old model saved as `orig.glb` (paths inside the script point to /home/claude/work).
+
+## Local fixes (Nov 9) and their patch scripts
+Each fix is also a small patch script in `tools/` that is safe to run twice, so a fresh GitHub copy can get them back:
+- `tools/talkmix_patch.py Girl_Room.html` — her talking moves change every reply: random start, speed and strength of the talking clip + random hand accents (talk, one-hand question, two-hand question, left or right hand). A gesture from the brain always wins.
+- `tools/braindot_patch.py Girl_Room.html` — a dot at the top: green "Brain: on", red "Brain: off" (checks every 5 s, connects the brain if it starts after the page).
+- `tools/subtitle_patch.py Girl_Room.html` — smaller subtitle (14 px) that always sits above the buttons bar.
+- `tools/roast_brain_patch.py Brain.py` — replaces "Hugh Mann" with her roast personality.
+- `tools/day_memory_patch.py Brain.py` — the whole-day memory described above.
 
 ## The action door (for the brain)
 Everything goes through `window.AIWorld` in the page.
