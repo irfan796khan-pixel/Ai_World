@@ -2567,8 +2567,8 @@ room.add(COZY.group);
   // neon sign "AI World" with a heart, back wall above the lamp
   const sc = document.createElement('canvas'); sc.width = 512; sc.height = 160; const s2 = sc.getContext('2d');
   s2.font = 'italic bold 84px "Segoe Script", "Brush Script MT", cursive'; s2.textAlign = 'center'; s2.textBaseline = 'middle';
-  s2.shadowColor = '#f472b6'; s2.shadowBlur = 24; s2.fillStyle = '#fdf2f8'; for (let i = 0; i < 3; i++) s2.fillText('AI World ♥', 256, 84);
-  const sign = add(new THREE.Mesh(new THREE.PlaneGeometry(2.2, 0.69), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(sc), transparent: true, depthWrite: false })), 4.6, 3.75, -5.88);
+  s2.shadowColor = '#ff2d95'; for (const [b, n] of [[40, 3], [16, 2], [4, 1]]) { s2.shadowBlur = b; s2.fillStyle = '#ffe4f1'; for (let i = 0; i < n; i++) s2.fillText('AI World ♥', 256, 84); }
+  const sign = add(new THREE.Mesh(new THREE.PlaneGeometry(1.9, 0.6), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(sc), transparent: true, depthWrite: false, toneMapped: false })), 4.15, 3.05, -5.86);
   sign.castShadow = false; COZY.sign = sign;
   // stacked books + mug on the coffee table
   [[0xf472b6, 0], [0x60a5fa, 0.3], [0xfbbf24, -0.2]].forEach(([c, r], i) => add(new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.05, 0.25), mat(c)), 2.75, 0.445 + i * 0.05, -2.95, r));
@@ -2615,13 +2615,13 @@ MOOD.plain = { tone: renderer.toneMapping, exp: renderer.toneMappingExposure, wa
   const shade = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.32, 0.36, 20, 1, true), new THREE.MeshStandardMaterial({ color: 0xfff1d6, emissive: 0xffc46b, emissiveIntensity: 0.9, side: THREE.DoubleSide }));
   shade.position.set(5.4, 1.86, -5.3); E.add(shade);
   const lampHalo = haloSprite(0xffb85c, 1.1, 0.35); lampHalo.position.set(5.4, 1.85, -5.25); E.add(lampHalo);
-  MOOD.neonLight = new THREE.PointLight(0xff5fae, 1.1, 4.5, 2); MOOD.neonLight.position.set(4.6, 3.75, -5.4); E.add(MOOD.neonLight);
-  const neonHalo = haloSprite(0xff5fae, 2.6, 0.22); neonHalo.position.set(4.6, 3.75, -5.8); E.add(neonHalo); MOOD.neonHalo = neonHalo;
+  MOOD.neonLight = new THREE.PointLight(0xff5fae, 1.1, 4.5, 2); MOOD.neonLight.position.set(4.15, 3.05, -5.4); E.add(MOOD.neonLight);
+  const neonHalo = haloSprite(0xff5fae, 2.6, 0.22); neonHalo.position.set(4.15, 3.05, -5.8); E.add(neonHalo); MOOD.neonHalo = neonHalo;
   MOOD.fill = new THREE.PointLight(0xffb27a, 0.5, 14, 2); MOOD.fill.position.set(0, 3.6, 2.5); E.add(MOOD.fill);   // warm fill on her face
   for (const b of COZY.glow) { const hs = haloSprite(b.userData.base.getHex(), 0.2, 0.5); hs.position.copy(b.position); E.add(hs); MOOD.halos.push([hs, b]); }
   // little framed pictures and a hanging plant, like in the pictures
   const frameCol = [0xfbcfe8, 0xbfdbfe, 0xfde68a, 0xc4b5fd, 0xa7f3d0];
-  [[3.4, 2.75, 0.5, 0.6], [4.05, 2.55, 0.42, 0.42], [3.55, 2.05, 0.4, 0.5], [4.15, 2.0, 0.34, 0.3]].forEach(([x, y, w, hh], i) => {
+  [[3.45, 2.35, 0.46, 0.52], [4.05, 2.4, 0.4, 0.4], [4.6, 2.3, 0.36, 0.46], [4.05, 1.9, 0.34, 0.28]].forEach(([x, y, w, hh], i) => {
     const f = new THREE.Mesh(new THREE.BoxGeometry(w, hh, 0.03), mat(0xffffff)); f.position.set(x, y, -5.88); E.add(f);
     const p = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.8, hh * 0.8), mat(frameCol[i])); p.position.set(x, y, -5.86); E.add(p); });
   const pot2 = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.09, 0.16, 12), mat(0xfecdd3)); pot2.position.set(-6.68, 2.4, 2.4); E.add(pot2);
