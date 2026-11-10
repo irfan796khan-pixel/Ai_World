@@ -1591,13 +1591,14 @@ async function hear(text) {
   if (!STATS.hostage && !inTantrum() && holoHear(text)) return null;   // memory shelf, hologram lessons, cozy room (section 7)
   if (sassHear(text)) return null;          // hostage drop, room builder, rebellion (section 6)
   const e = findQuick(text);
-  if (e) return runQuick(e);
+  if (e) { const r = runQuick(e); if (isQuestion(text) && r && r.say) answerCard(text, r.say); return r; }
   if (typeof window.AIWorld.onUnmatched === 'function') { window.AIWorld.onUnmatched(text); return null; }
   if (window.AIWorld.brainUrl) {
     showBubble('…', 20);
     try {
       const r = await fetch(window.AIWorld.brainUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
       const j = await r.json();
+      if (j && j.response && !j.error && isQuestion(text)) answerCard(text, j.response);
       if (j && j.response && !j.audio) { const acts = j.actions; j.actions = undefined; if (Array.isArray(acts)) window.AIWorld.act(acts); handleReply(j); talkWhenStill(j.response); j.actions = acts; }
       else await handleReply(j);
       if (j && j.learn !== false && j.response && !j.error) learn({ match: [norm(text)], say: [j.response], mood: j.emotion || 'neutral', actions: j.actions, gesture: j.animation === 'nod' ? 'nod' : j.animation === 'shake_head' ? 'shake' : undefined });
@@ -2659,7 +2660,7 @@ const SPARK = { pts: null, life: [], vel: [], n: 80, next: 0 };
   SPARK.pts = new THREE.Points(g, new THREE.PointsMaterial({ map: halo, color: 0xffb3e6, size: 0.12, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
   SPARK.pts.frustumCulled = false; scene.add(SPARK.pts); for (let i = 0; i < SPARK.n; i++) { SPARK.life.push(0); SPARK.vel.push(V3(0, 0, 0)); } }
 window.AIWorld.onFrame.push((t, dt) => {
-  const showWrist = (act.cur && act.cur._kind === 'holotap') || (typeof HOLO !== 'undefined' && HOLO.on);
+  const showWrist = (act.cur && act.cur._kind === 'holotap') || (typeof HOLO !== 'undefined' && HOLO.on) || (typeof CARD !== 'undefined' && CARD.mesh.visible);
   WRIST.visible = !!(showWrist && bones.handL);
   if (WRIST.visible) { bones.handL.getWorldPosition(WRIST.position); WRIST.lookAt(camera.position); WRIST.children[1].material.opacity = 0.6 + 0.3 * Math.sin(t * 8); }
   const pos = SPARK.pts.geometry.attributes.position;
@@ -2950,7 +2951,8 @@ window.AIWorld.onFrame.push((t, dt) => {
   if (!HOLO.panel.visible) return;
   HOLO.k = clamp01(HOLO.k + (HOLO.on ? dt * 2.5 : -dt * 3));
   const flick = HOLO.k < 1 ? (Math.random() < 0.3 ? 0.3 : 1) : 1;
-  HOLO.panel.position.copy(HOLO.pos); HOLO.panel.position.y += 0.03 * Math.sin(t * 1.5);
+  const wristP = bones.handL ? bones.handL.getWorldPosition(V3(0, 0, 0)) : HOLO.pos;
+  HOLO.panel.position.lerpVectors(wristP, HOLO.pos, ease(HOLO.k)); HOLO.panel.position.y += 0.03 * Math.sin(t * 1.5) * HOLO.k;
   HOLO.panel.lookAt(camera.position.x, HOLO.panel.position.y, camera.position.z);
   HOLO.panel.scale.set(1, Math.max(0.01, ease(HOLO.k)), 1); HOLO.panel.material.opacity = flick * (0.85 + 0.15 * Math.sin(t * 13));
   drawHolo(t);
@@ -3021,6 +3023,62 @@ async function holoExplain(topic, given) {
   await waitS(4);
   if (my === HOLO.run) holoClose();
 }
+
+// ---------------------------------------------------------------- 7c2. neon answer card from her wrist
+// Ask her a question ("what's the capital of France?", "why is the sky blue") and while she answers,
+// a small neon card shoots out of her wrist and floats beside her head with your question and her answer.
+// It slides back into her wrist when she is done. AIWorld.answerCard("question", "answer") shows one by hand.
+const QWORDS = /^(what|whats|what's|why|how|who|whos|who's|when|where|which|can|could|is|are|do|does|did|will|would|should|tell me|explain)\b/;
+function isQuestion(text) { const t = String(text || '').trim().toLowerCase(); return /\?\s*$/.test(t) || QWORDS.test(t.replace(/^((hey|hi|ok|okay|so|please|mia)[, ]+)+/, '')); }
+const CARD = { mesh: null, cv: null, tex: null, k: 0, on: false, until: 0, q: '', a: '', pos: V3(0, 0, 0), run: 0 };
+{
+  CARD.cv = document.createElement('canvas'); CARD.cv.width = 768; CARD.cv.height = 480; CARD.tex = new THREE.CanvasTexture(CARD.cv);
+  CARD.mesh = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.875), new THREE.MeshBasicMaterial({ map: CARD.tex, transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }));
+  CARD.mesh.visible = false; CARD.mesh.renderOrder = 11; scene.add(CARD.mesh);
+  CARD.beam = new THREE.Mesh(new THREE.ConeGeometry(0.35, 1, 20, 1, true), new THREE.MeshBasicMaterial({ color: 0xff4fb0, transparent: true, opacity: 0.12, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
+  CARD.beam.visible = false; scene.add(CARD.beam);
+}
+function drawCard(t) {
+  const c = CARD.cv.getContext('2d'), W = 768, H = 480;
+  c.clearRect(0, 0, W, H);
+  c.fillStyle = 'rgba(30,8,40,0.86)'; c.beginPath(); c.roundRect ? c.roundRect(10, 10, W - 20, H - 20, 26) : c.rect(10, 10, W - 20, H - 20); c.fill();
+  c.shadowColor = '#ff4fb0'; c.shadowBlur = 20; c.strokeStyle = '#ff7ac8'; c.lineWidth = 5; c.stroke();
+  c.shadowColor = '#22d3ee'; c.shadowBlur = 12; c.fillStyle = '#a5f3fc'; c.font = 'bold 30px Segoe UI, Arial'; c.textBaseline = 'top';
+  const q = wrapLines(c, 'Q: ' + CARD.q, W - 80, 2); q.forEach((l, i) => c.fillText(l, 40, 36 + i * 36));
+  const y0 = 46 + q.length * 36; c.fillStyle = '#ff7ac8'; c.shadowBlur = 0; c.fillRect(40, y0, W - 80, 3);
+  c.shadowColor = '#ff4fb0'; c.shadowBlur = 8; c.fillStyle = '#fff1f8'; c.font = '30px Segoe UI, Arial';
+  const shown = CARD.a.slice(0, Math.floor(Math.max(0, (performance.now() - CARD.start) / 1000) * 45));   // types itself out
+  wrapLines(c, shown, W - 80, Math.floor((H - y0 - 40) / 38)).forEach((l, i) => c.fillText(l, 40, y0 + 18 + i * 38));
+  c.shadowBlur = 0; c.fillStyle = 'rgba(255,122,200,0.07)'; for (let y = (t * 60) % 6; y < H; y += 6) c.fillRect(10, y, W - 20, 2);
+  CARD.tex.needsUpdate = true;
+}
+function answerCard(question, answer) {
+  if (HOLO.on) return;   // the big hologram lesson is already up
+  CARD.q = String(question).trim().replace(/\s+/g, ' ').slice(0, 120); CARD.a = String(answer).trim().replace(/\s+/g, ' ').slice(0, 320);
+  CARD.on = true; CARD.start = performance.now(); CARD.until = performance.now() + Math.max(6000, CARD.a.split(' ').length * 420 + 3500);
+  CARD.mesh.visible = true; CARD.beam.visible = true; sfxSafe('pop');
+  if (!act.cur && !act.queue.length && !act.walking) window.AIWorld.act([{ _kind: 'holotap', _dur: 0.9 }]);
+}
+window.AIWorld.onFrame.push((t, dt) => {
+  if (!CARD.mesh.visible) return;
+  if (CARD.on && performance.now() > CARD.until && !FX.talking && !TALK.main) CARD.on = false;
+  CARD.k = clamp01(CARD.k + (CARD.on ? dt * 2.2 : -dt * 2.6));
+  if (!CARD.on && CARD.k <= 0) { CARD.mesh.visible = false; CARD.beam.visible = false; return; }
+  girl.updateMatrixWorld(true);
+  const toCam = V3(camera.position.x - girl.position.x, 0, camera.position.z - girl.position.z).normalize(), right = V3(toCam.z, 0, -toCam.x);
+  const head = bones.spine006 ? bones.spine006.getWorldPosition(V3(0, 0, 0)) : girl.position.clone().setY(1.6);
+  CARD.pos.copy(head).addScaledVector(right, 0.85).addScaledVector(toCam, 0.2); CARD.pos.y += 0.05;
+  const wrist = bones.handL ? bones.handL.getWorldPosition(V3(0, 0, 0)) : girl.position.clone().setY(1.0);
+  const e = ease(CARD.k);
+  CARD.mesh.position.lerpVectors(wrist, CARD.pos, e); CARD.mesh.position.y += 0.02 * Math.sin(t * 2) * e;
+  CARD.mesh.scale.setScalar(Math.max(0.02, e)); CARD.mesh.lookAt(camera.position);
+  CARD.mesh.material.opacity = (CARD.k < 1 && Math.random() < 0.2 ? 0.4 : 1) * (0.9 + 0.1 * Math.sin(t * 11));
+  drawCard(t);
+  const len = wrist.distanceTo(CARD.mesh.position);
+  CARD.beam.position.copy(wrist).lerp(CARD.mesh.position, 0.5); CARD.beam.scale.set(0.6 * e, Math.max(0.01, len), 0.4 * e);
+  CARD.beam.quaternion.setFromUnitVectors(V3(0, -1, 0), CARD.mesh.position.clone().sub(wrist).normalize()); CARD.beam.material.opacity = 0.1 * e;
+});
+window.AIWorld.answerCard = answerCard;
 
 // ---------------------------------------------------------------- 7d. her wrist tap + book pull moves
 window.AIWorld.onFrame.push((t, dt) => {

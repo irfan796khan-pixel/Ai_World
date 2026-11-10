@@ -38,6 +38,7 @@ Opening the html file directly (file:///) does not work: the browser blocks load
   - `open the picture of the beach`, `show me my shopping list note`, `pull out a random picture` -> she walks to the shelf, pulls the book out, it flies to the TV and opens there.
   - `what's on your shelf` -> the list of books on the TV.
 - **Hologram teacher:** `explain how rainbows work`, `teach me about atoms`, `how does the internet work` -> she taps her wrist, a neon screen pops up beside her, a glowing 3D model is built next to it (atom, solar system, globe, DNA, wave, gears, chart, network, heart, rocket, or a spinning shape), and she explains step by step while pointing at the screen. The steps come from the brain; with no brain only a few built-in topics work (atoms, solar system, gravity, internet, rainbows, DNA, heart). `close the hologram` hides it.
+- **Neon answer card:** ask her any question ("why is the sky blue?", "what's your name") and while she answers, a pink neon card shoots out of her wrist and floats beside her head with your question and her answer typing itself out, then slides back into her wrist. `AIWorld.answerCard("question", "answer")` shows one by hand.
 - Actions for the brain: `{book:"beach"}`, `{book:"random"}`, `{shelf:"list"}`, `{holo:"how magnets work"}`, `{holo:{title:"Magnets", steps:["...","..."], build:"wave"}}`, `{holo:false}`.
 - Server: `shelf.py` adds `GET /api/books` (the list) and `POST /api/books?name=file.jpg` (save a file) to `page_server.py` and `brain_server.py`.
 
