@@ -1498,7 +1498,7 @@ const voiceSel = document.getElementById('voicesel');
 function voiceBtnText() {
   if (!voiceSel) return;
   voiceSel.value = VS.mode;
-  voiceSel.options[0].textContent = VS.ok === false ? 'Voice: Her voice (not running)' : 'Voice: Her voice (teen girl)';
+  voiceSel.options[0].textContent = VS.ok === false ? 'Voice: Her voice (not running)' : 'Voice: Her voice';
 }
 if (voiceSel) voiceSel.addEventListener('change', () => {
   VS.mode = voiceSel.value;

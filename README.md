@@ -133,9 +133,9 @@ AIWorld.onSay = (text) => { /* another voice: make the audio, then AIWorld.speak
 ```
 Answers from the brain through `brainUrl` are saved as new quick replies automatically, so the second time is instant.
 
-## Her voice (teen girl, Piper)
+## Her voice (Piper hfc_female, plain)
 Her voice is made on the laptop by `girl_voice.py` with **Piper** (free, offline, the same engine as the Adam Voice phone app v3). VoiceStudio is no longer needed for her voice.
-- Voice: Piper `en_US-hfc_female-medium` (the highest of the 5 US female Piper voices we measured: 235 Hz), lifted about 2 semitones for a teen sound (`LIFT = 1.12` in `girl_voice.py`; 1.0 = normal).
+- Voice: Piper `en_US-hfc_female-medium` (the highest of the 5 US female Piper voices we measured: 235 Hz), at its normal pitch (`LIFT = 1.0` in `girl_voice.py`, chosen by Imran 9 Nov; 1.12 = about 2 semitones higher, teen).
 - `run_girl_room.bat` runs `python girl_voice.py --setup` first: the first time it installs `piper-tts` and downloads the voice (about 63 MB, into `voices/`).
 - `page_server.py` answers `/v1/audio/speech` with Piper (a line takes about 0.3 s) and keeps every line in `voice_cache/`. If Piper is not ready it still forwards to VoiceStudio.
 - Long answers are cut into pieces: the first sentence alone, the rest in pieces of up to about 150 letters. She starts talking as soon as the first piece is ready, and the next pieces are made in the background while she talks. Test: a 16.7 s answer took 1.75 s to make in one go; the first piece took 0.19 s.
