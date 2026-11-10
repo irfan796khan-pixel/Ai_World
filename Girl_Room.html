@@ -2523,7 +2523,7 @@ room.add(COZY.group);
   const mat = (c, o) => new THREE.MeshStandardMaterial(Object.assign({ color: c, roughness: 0.85 }, o || {}));
   const add = (mesh, x, y, z, ry) => { mesh.position.set(x, y, z); if (ry) mesh.rotation.y = ry; mesh.castShadow = true; G.add(mesh); return mesh; };
   // pastel round rug on top of the old one + a small heart-pink one by the shelf
-  const rugTop = add(new THREE.Mesh(new THREE.CylinderGeometry(2.3, 2.3, 0.025, 48), mat(0xfbcfe8, { roughness: 1 })), 0, 0.025, 0);
+  const rugTop = add(new THREE.Mesh(new THREE.CylinderGeometry(2.3, 2.3, 0.025, 48), mat(0xf4a6c6, { roughness: 1 })), 0, 0.025, 0);
   rugTop.castShadow = false; rugTop.receiveShadow = true;
   const rugRing = add(new THREE.Mesh(new THREE.TorusGeometry(2.1, 0.05, 8, 64), mat(0xf9a8d4)), 0, 0.04, 0); rugRing.rotation.x = Math.PI / 2; rugRing.castShadow = false;
   const rug2 = add(new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.02, 32), mat(0xc4b5fd, { roughness: 1 })), -5.6, 0.02, 3.0); rug2.castShadow = false;
@@ -2577,10 +2577,102 @@ room.add(COZY.group);
 window.AIWorld.onFrame.push((t) => {
   if (!COZY.group.visible) return;
   for (const m of COZY.glow) { const k = 0.55 + 0.45 * Math.sin(t * 2.2 + m.userData.ph); m.material.color.copy(m.userData.base).multiplyScalar(0.55 + 0.6 * k); }
-  for (let i = 0; i < COZY.lights.length; i++) COZY.lights[i].intensity = 0.45 + 0.12 * Math.sin(t * 1.3 + i * 2);
   if (COZY.sign) COZY.sign.material.opacity = 0.88 + 0.12 * (Math.sin(t * 9) > 0.97 ? 0 : 1);
 });
-scene.background = new THREE.Color(0xfde8f0);
+
+// ---------------------------------------------------------------- 7a2. warm evening lighting (ideas from the concept pictures)
+// blush walls, warm wood floor, sunset window with peach curtains and a soft light shaft, glowing fairy-light halos,
+// floor lamp on, pink neon glow on the wall, filmic tone mapping so bright parts don't wash out.
+const halo = (() => { const cv = document.createElement('canvas'); cv.width = cv.height = 64; const c = cv.getContext('2d');
+  const g = c.createRadialGradient(32, 32, 0, 32, 32, 32); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.25, 'rgba(255,255,255,.55)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  c.fillStyle = g; c.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(cv); })();
+function haloSprite(color, size, opacity) { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: halo, color, transparent: true, opacity: opacity || 0.8, blending: THREE.AdditiveBlending, depthWrite: false })); sp.scale.setScalar(size); return sp; }
+const MOOD = { plain: null, cozy: null, extra: new THREE.Group(), halos: [] };
+room.add(MOOD.extra);
+MOOD.plain = { tone: renderer.toneMapping, exp: renderer.toneMappingExposure, wall: wallMat.color.getHex(), floor: floor.material.color.getHex(), rug: rug.material.color.getHex(),
+  hemiSky: hemi.color.getHex(), hemiGround: hemi.groundColor.getHex(), hemiI: hemi.intensity, dirC: dirLight.color.getHex(), dirI: dirLight.intensity, dirP: dirLight.position.clone(),
+  glass: winGlass.material.color.getHex(), bg: 0xdbeafe, sofa: sofaMat.color.getHex() };
+{
+  const E = MOOD.extra, mat = (c, o) => new THREE.MeshStandardMaterial(Object.assign({ color: c, roughness: 0.9 }, o || {}));
+  MOOD.leftWallMat = new THREE.MeshStandardMaterial({ color: 0xcdbbe6, roughness: 0.9 });   // lavender wall by the shelf
+  // peach curtains + rod on both sides of the window
+  const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 4.4, 8), mat(0xd6b48c)); rod.rotation.z = Math.PI / 2; rod.position.set(-3, 4.45, -5.78); E.add(rod);
+  for (const side of [-1, 1]) {
+    const cur = new THREE.Group();
+    for (let i = 0; i < 5; i++) { const f = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.09, 3.3, 10, 1, true), mat(0xfbc4a8, { side: THREE.DoubleSide })); f.position.set(i * 0.12, 0, 0); cur.add(f); }
+    cur.position.set(-3 + side * 1.85 - 0.24, 2.8, -5.72); E.add(cur);
+  }
+  // sunset light shaft from the window down to the floor
+  const shaftGeo = new THREE.PlaneGeometry(2.6, 5.2), shaftMat = new THREE.MeshBasicMaterial({ map: halo, color: 0xffb38a, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  const shaft = new THREE.Mesh(shaftGeo, shaftMat); shaft.position.set(-3, 2.0, -4.2); shaft.rotation.x = -0.55; E.add(shaft); MOOD.shaft = shaft;
+  const sunPatch = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 1.8), new THREE.MeshBasicMaterial({ map: halo, color: 0xffc29a, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }));
+  sunPatch.rotation.x = -Math.PI / 2; sunPatch.position.set(-2.6, 0.03, -2.6); E.add(sunPatch);
+  // window glass: sunset sky
+  const sky = document.createElement('canvas'); sky.width = 8; sky.height = 64; const sc = sky.getContext('2d'); const sg = sc.createLinearGradient(0, 0, 0, 64);
+  sg.addColorStop(0, '#f9a8d4'); sg.addColorStop(0.55, '#fdba8c'); sg.addColorStop(1, '#fde68a'); sc.fillStyle = sg; sc.fillRect(0, 0, 8, 64);
+  MOOD.skyTex = new THREE.CanvasTexture(sky);
+  // lamp shade + halo, neon glow light, fairy bulb halos
+  const shade = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.32, 0.36, 20, 1, true), new THREE.MeshStandardMaterial({ color: 0xfff1d6, emissive: 0xffc46b, emissiveIntensity: 0.9, side: THREE.DoubleSide }));
+  shade.position.set(5.4, 1.86, -5.3); E.add(shade);
+  const lampHalo = haloSprite(0xffb85c, 1.1, 0.35); lampHalo.position.set(5.4, 1.85, -5.25); E.add(lampHalo);
+  MOOD.neonLight = new THREE.PointLight(0xff5fae, 1.1, 4.5, 2); MOOD.neonLight.position.set(4.6, 3.75, -5.4); E.add(MOOD.neonLight);
+  const neonHalo = haloSprite(0xff5fae, 2.6, 0.22); neonHalo.position.set(4.6, 3.75, -5.8); E.add(neonHalo); MOOD.neonHalo = neonHalo;
+  MOOD.fill = new THREE.PointLight(0xffb27a, 0.5, 14, 2); MOOD.fill.position.set(0, 3.6, 2.5); E.add(MOOD.fill);   // warm fill on her face
+  for (const b of COZY.glow) { const hs = haloSprite(b.userData.base.getHex(), 0.2, 0.5); hs.position.copy(b.position); E.add(hs); MOOD.halos.push([hs, b]); }
+  // little framed pictures and a hanging plant, like in the pictures
+  const frameCol = [0xfbcfe8, 0xbfdbfe, 0xfde68a, 0xc4b5fd, 0xa7f3d0];
+  [[3.4, 2.75, 0.5, 0.6], [4.05, 2.55, 0.42, 0.42], [3.55, 2.05, 0.4, 0.5], [4.15, 2.0, 0.34, 0.3]].forEach(([x, y, w, hh], i) => {
+    const f = new THREE.Mesh(new THREE.BoxGeometry(w, hh, 0.03), mat(0xffffff)); f.position.set(x, y, -5.88); E.add(f);
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.8, hh * 0.8), mat(frameCol[i])); p.position.set(x, y, -5.86); E.add(p); });
+  const pot2 = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.09, 0.16, 12), mat(0xfecdd3)); pot2.position.set(-6.68, 2.4, 2.4); E.add(pot2);
+  for (let i = 0; i < 7; i++) { const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), mat(0x4ade80)); leaf.position.set(-6.6 + Math.sin(i) * 0.08, 2.48 - i * 0.07, 2.4 + Math.cos(i * 1.7) * 0.1); E.add(leaf); }
+}
+function applyMood(cozy) {
+  const P = MOOD.plain;
+  MOOD.extra.visible = cozy;
+  renderer.toneMapping = cozy ? THREE.ACESFilmicToneMapping : P.tone; renderer.toneMappingExposure = cozy ? 0.9 : P.exp;
+  wallMat.color.setHex(cozy ? 0xeab9c4 : P.wall); leftWall.material = cozy ? MOOD.leftWallMat : wallMat;
+  floor.material.color.setHex(cozy ? 0xa86a45 : P.floor); rug.material.color.setHex(cozy ? 0xe9d5df : P.rug);
+  sofaMat.color.setHex(cozy ? 0x8b8f9c : P.sofa);
+  hemi.color.setHex(cozy ? 0xffe4cc : P.hemiSky); hemi.groundColor.setHex(cozy ? 0x8f6b86 : P.hemiGround); hemi.intensity = cozy ? 0.42 : P.hemiI;
+  dirLight.color.setHex(cozy ? 0xffb98a : P.dirC); dirLight.intensity = cozy ? 0.6 : P.dirI;
+  if (cozy) dirLight.position.set(-4.5, 7, -9); else dirLight.position.copy(P.dirP);
+  Object.assign(dirLight.shadow.camera, { left: -9, right: 9, top: 9, bottom: -9 }); dirLight.shadow.camera.updateProjectionMatrix();
+  winGlass.material.color.setHex(cozy ? 0xffffff : P.glass); winGlass.material.map = cozy ? MOOD.skyTex : null; winGlass.material.needsUpdate = true;
+  scene.background = new THREE.Color(cozy ? 0x5b3b52 : P.bg);
+  if (cozy) { lampLight.intensity = 1.6; lampBulb.material.emissiveIntensity = 1.2; }
+  for (const l of COZY.lights) { l.intensity = cozy ? 0.9 : 0; l.distance = 8; }
+  for (const m of [renderer]) m.shadowMap.needsUpdate = true;
+  scene.traverse(o => { if (o.material && !Array.isArray(o.material)) o.material.needsUpdate = true; });
+}
+window.AIWorld.onFrame.push((t) => {
+  if (!MOOD.extra.visible) return;
+  for (const [hs, b] of MOOD.halos) hs.material.opacity = 0.15 + 0.35 * (b.material.color.r + b.material.color.g) / 2;
+  MOOD.neonLight.intensity = 1.0 + 0.15 * Math.sin(t * 3); MOOD.shaft.material.opacity = 0.13 + 0.03 * Math.sin(t * 0.7);
+  for (let i = 0; i < COZY.lights.length; i++) COZY.lights[i].intensity = 0.8 + 0.15 * Math.sin(t * 1.3 + i * 2);
+});
+// wrist glow band (shows while she taps her wrist and while a hologram is open) + book sparkle trail
+const WRIST = new THREE.Group();
+{ WRIST.add(new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.012, 8, 24), new THREE.MeshBasicMaterial({ color: 0x67e8f9 }))); WRIST.add(haloSprite(0x22d3ee, 0.35, 0.9)); WRIST.visible = false; scene.add(WRIST); }
+const SPARK = { pts: null, life: [], vel: [], n: 80, next: 0 };
+{ const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(SPARK.n * 3).fill(-99), 3));
+  SPARK.pts = new THREE.Points(g, new THREE.PointsMaterial({ map: halo, color: 0xffb3e6, size: 0.12, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+  SPARK.pts.frustumCulled = false; scene.add(SPARK.pts); for (let i = 0; i < SPARK.n; i++) { SPARK.life.push(0); SPARK.vel.push(V3(0, 0, 0)); } }
+window.AIWorld.onFrame.push((t, dt) => {
+  const showWrist = (act.cur && act.cur._kind === 'holotap') || (typeof HOLO !== 'undefined' && HOLO.on);
+  WRIST.visible = !!(showWrist && bones.handL);
+  if (WRIST.visible) { bones.handL.getWorldPosition(WRIST.position); WRIST.lookAt(camera.position); WRIST.children[1].material.opacity = 0.6 + 0.3 * Math.sin(t * 8); }
+  const pos = SPARK.pts.geometry.attributes.position;
+  if (typeof BOOKFX !== 'undefined' && BOOKFX.m && BOOKFX.t < 2.0) for (let k = 0; k < 3; k++) {
+    const i = SPARK.next = (SPARK.next + 1) % SPARK.n, p = BOOKFX.m.getWorldPosition(V3(0, 0, 0));
+    pos.setXYZ(i, p.x + (Math.random() - 0.5) * 0.15, p.y + (Math.random() - 0.5) * 0.15, p.z + (Math.random() - 0.5) * 0.15);
+    SPARK.life[i] = 1; SPARK.vel[i].set((Math.random() - 0.5) * 0.3, 0.2 + Math.random() * 0.3, (Math.random() - 0.5) * 0.3);
+  }
+  for (let i = 0; i < SPARK.n; i++) { if (SPARK.life[i] <= 0) continue; SPARK.life[i] -= dt * 1.2;
+    if (SPARK.life[i] <= 0) { pos.setXYZ(i, 0, -99, 0); continue; }
+    pos.setXYZ(i, pos.getX(i) + SPARK.vel[i].x * dt, pos.getY(i) + SPARK.vel[i].y * dt, pos.getZ(i) + SPARK.vel[i].z * dt); }
+  pos.needsUpdate = true;
+});
 
 // ---------------------------------------------------------------- 7b. the memory bookshelf
 const SHELF = { group: new THREE.Group(), books: [], meshes: [], decor: [], pulling: null, uploads: [] };
@@ -2973,8 +3065,8 @@ function holoHear(text) {
   const q = norm(text);
   let m;
   if (/^(close|hide|turn off|stop|kill) (the )?(hologram|holo|screen|lesson)/.test(q)) { holoClose(); sayMain('Screen off.'); return true; }
-  if (/^(make|set|turn) (the )?room (cozy|cosy|cute|comfy)|^cozy mode( on)?$|^(more )?cozy$/.test(q)) { COZY.group.visible = true; sayMain('Cozy mode. Fairy lights on.'); return true; }
-  if (/^(cozy mode off|plain room|normal room|turn off (the )?fairy lights)$/.test(q)) { COZY.group.visible = false; sayMain('Back to plain.'); return true; }
+  if (/^(make|set|turn) (the )?room (cozy|cosy|cute|comfy)|^cozy mode( on)?$|^(more )?cozy$/.test(q)) { COZY.group.visible = true; applyMood(true); sayMain('Cozy mode. Fairy lights on.'); return true; }
+  if (/^(cozy mode off|plain room|normal room|turn off (the )?fairy lights)$/.test(q)) { COZY.group.visible = false; applyMood(false); sayMain('Back to plain.'); return true; }
   if (/(what('s| is) on (your|the|my) shelf|show (me )?(your|the|my) (memory )?shelf|list (the |my |your )?(books|memories|pictures)|what (books|memories|pictures) do you have)/.test(q)) {
     window.AIWorld.stop(); camShot('shelf', 12); sayMain(SHELF.books.length ? 'Here is everything on my shelf.' : 'My shelf is empty right now.');
     window.AIWorld.act([{ walk: 'shelf' }, { point: 'shelf', time: 1.2 }, { point: 'tv', time: 1.2 }, { shelf: 'list' }, { face: 'camera' }]); return true;
@@ -2987,7 +3079,8 @@ function holoHear(text) {
 }
 window.AIWorld.shelf = { books: () => SHELF.books.slice(), reload: reloadShelf, add: addToShelf, open: openBook, list: () => window.AIWorld.act([{ walk: 'tv' }, { shelf: 'list' }]) };
 window.AIWorld.holo = { explain: (topic) => holoExplain(topic), show: (o) => holoExplain((o && o.title) || '', o || {}), hide: holoClose, builds: () => Object.keys(HOLO_BUILDS) };
-window.AIWorld.cozy = (on) => { COZY.group.visible = on !== false; };
+window.AIWorld.cozy = (on) => { COZY.group.visible = on !== false; applyMood(on !== false); };
+applyMood(true);
 window.AIWorld.hearHolo = holoHear;
 // "Add to shelf" button in the talk bar (pictures and notes, from your computer or phone)
 {
