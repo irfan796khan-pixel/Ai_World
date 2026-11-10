@@ -2628,11 +2628,29 @@ MOOD.plain = { tone: renderer.toneMapping, exp: renderer.toneMappingExposure, wa
   const pot2 = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.09, 0.16, 12), mat(0xfecdd3)); pot2.position.set(-6.68, 2.4, 2.4); E.add(pot2);
   for (let i = 0; i < 7; i++) { const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), mat(0x4ade80)); leaf.position.set(-6.6 + Math.sin(i) * 0.08, 2.48 - i * 0.07, 2.4 + Math.cos(i * 1.7) * 0.1); E.add(leaf); }
 }
-// one light bulb on the camera: a soft warm key light that always shines where you look, so her face is lit
-const CAMLIGHT = new THREE.SpotLight(0xfff1e0, 0.6, 22, 0.55, 0.9, 1.2);
-CAMLIGHT.castShadow = false; CAMLIGHT.position.set(0, 0.25, 0); camera.add(CAMLIGHT); camera.add(CAMLIGHT.target); CAMLIGHT.target.position.set(0, -0.3, -5);
-scene.add(camera);   // the camera must be in the scene for a light attached to it to work
-window.AIWorld.cameraLight = (on, strength) => { CAMLIGHT.visible = on !== false; if (strength !== undefined) CAMLIGHT.intensity = strength; };
+// three-point lighting (podcast / interview style), always arranged around her and the camera:
+//   KEY   soft light 45 degrees to the camera's right, a little above her eyes (the main light)
+//   FILL  opposite side, at eye level, half as bright as the key (2:1 ratio, so the face keeps some shape)
+//   EDGE  behind her and above, opposite the key, a thin bright rim on hair and shoulders so she pops from the wall
+//   PRACTICALS  the lamp, fairy lights and neon sign that are visible in the room
+// All warm white, so the colors match. AIWorld.lights({key:1, fill:0.5, edge:1.2}) changes them, AIWorld.lights(false) turns the rig off.
+const RIG = { on: true, key: 1.0, fill: 0.5, edge: 1.3 };
+RIG.keyL = new THREE.SpotLight(0xffe9d6, 0, 9, 0.6, 1.0, 1.0); RIG.fillL = new THREE.SpotLight(0xffe2cc, 0, 9, 0.8, 1.0, 1.0); RIG.edgeL = new THREE.SpotLight(0xfff1e6, 0, 7, 0.45, 0.8, 1.0);
+for (const L of [RIG.keyL, RIG.fillL, RIG.edgeL]) { L.castShadow = false; scene.add(L); scene.add(L.target); }
+window.AIWorld.lights = (o) => { if (o === false) RIG.on = false; else { RIG.on = true; if (o && typeof o === 'object') Object.assign(RIG, o); } };
+window.AIWorld.cameraLight = (on, strength) => window.AIWorld.lights(on === false ? false : (strength !== undefined ? { key: strength } : true));
+window.AIWorld.onFrame.push(() => {
+  if (!loaded) return;
+  const head = bones.spine006 ? bones.spine006.getWorldPosition(V3(0, 0, 0)) : girl.position.clone().setY(1.5);
+  const toCam = V3(camera.position.x - head.x, 0, camera.position.z - head.z); if (toCam.lengthSq() < 1e-4) toCam.set(0, 0, 1); toCam.normalize();
+  const right = V3(toCam.z, 0, -toCam.x), c = Math.SQRT1_2;
+  const keyDir = toCam.clone().multiplyScalar(c).addScaledVector(right, c), fillDir = toCam.clone().multiplyScalar(c).addScaledVector(right, -c);
+  RIG.keyL.position.copy(head).addScaledVector(keyDir, 2.4); RIG.keyL.position.y += 0.55; RIG.keyL.target.position.copy(head);
+  RIG.fillL.position.copy(head).addScaledVector(fillDir, 2.4); RIG.fillL.position.y += 0.1; RIG.fillL.target.position.copy(head);
+  RIG.edgeL.position.copy(head).addScaledVector(toCam, -1.6).addScaledVector(right, -0.9); RIG.edgeL.position.y += 1.3; RIG.edgeL.target.position.copy(head).setY(head.y - 0.25);
+  const k = RIG.on ? 1 : 0;
+  RIG.keyL.intensity = 0.75 * RIG.key * k; RIG.fillL.intensity = 0.75 * RIG.fill * k; RIG.edgeL.intensity = 1.4 * RIG.edge * k;
+});
 function applyMood(cozy) {
   const P = MOOD.plain;
   MOOD.extra.visible = cozy;
