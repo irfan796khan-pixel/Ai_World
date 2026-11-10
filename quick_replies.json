@@ -194,10 +194,7 @@
   "mood": "happy",
   "actions": [
    {
-    "walk": "ball"
-   },
-   {
-    "face": "camera"
+    "kick": "ball"
    }
   ],
   "tag": "move"

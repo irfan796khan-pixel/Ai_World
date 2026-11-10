@@ -1599,9 +1599,14 @@ function runQuick(e) {
 async function hear(text) {
   if (!STATS.hostage && !inTantrum() && holoHear(text)) return null;   // memory shelf, hologram lessons, cozy room (section 7)
   if (sassHear(text)) return null;          // hostage drop, room builder, rebellion (section 6)
-  const cmd = ROOM_CMD(text);                 // plain orders: kick the ball, lights off, TV on, sit, go to ... (section 7d2)
+  const cmd = BRAIN.ok ? null : ROOM_CMD(text);   // brain off: plain orders still work (kick the ball, lights off, ...). Brain on: it decides.
   if (cmd) { window.AIWorld.stop(); sayMain(pick(cmd.say)); window.AIWorld.act(cmd.acts); return { say: cmd.say[0], actions: cmd.acts }; }
-  const e = findQuick(text);
+  let e = findQuick(text);
+  if (e && BRAIN.ok && window.AIWorld.brainUrl) {   // brain on: a ready-made reply only answers when it covers most of the sentence
+    const q = norm(text), words = q.split(' ').length;
+    const hit = Math.max(0, ...e.match.map(m => norm(m)).filter(p => p && (' ' + q + ' ').includes(' ' + p + ' ')).map(p => p.split(' ').length));
+    if (words > 3 && hit / words < 0.5) e = null;
+  }
   if (e) { const r = runQuick(e); if (isQuestion(text) && r && r.say) answerCard(text, r.say); return r; }
   if (typeof window.AIWorld.onUnmatched === 'function') { window.AIWorld.onUnmatched(text); return null; }
   if (window.AIWorld.brainUrl) {
@@ -1610,7 +1615,12 @@ async function hear(text) {
       const r = await fetch(window.AIWorld.brainUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
       const j = await r.json();
       if (j && j.response && !j.error && isQuestion(text)) answerCard(text, j.response);
-      if (j && j.response && !j.error && !Array.isArray(j.actions)) { const said = ROOM_CMD(j.response, true); if (said) { j.actions = said.acts; j.animation = undefined; } }   // she said she'd do it: do it
+      if (j && Array.isArray(j.actions)) { j.actions = brainActs(j.actions); if (!j.actions.length) j.actions = undefined; }   // the brain chose her moves
+      if (j && j.response && !j.error && !Array.isArray(j.actions)) {   // brain gave no moves: if she or you clearly said a room action, do it anyway
+        const said = ROOM_CMD(j.response, true) || ROOM_CMD(text);
+        if (said) { j.actions = said.acts; j.animation = undefined; }
+      }
+      if (j && Array.isArray(j.actions) && j.actions.length) window.AIWorld.stop();
       if (j && j.response && !j.audio) { const acts = j.actions; j.actions = undefined; if (Array.isArray(acts)) window.AIWorld.act(acts); handleReply(j); talkWhenStill(j.response); j.actions = acts; }
       else await handleReply(j);
       if (j && j.learn !== false && j.response && !j.error) learn({ match: [norm(text)], say: [j.response], mood: j.emotion || 'neutral', actions: j.actions, gesture: j.animation === 'nod' ? 'nod' : j.animation === 'shake_head' ? 'shake' : undefined });
@@ -3211,6 +3221,36 @@ function ROOM_CMD(text, firstPerson) {
   return null;
 }
 window.AIWorld.command = ROOM_CMD;
+// the brain picks her room actions itself (Brain.py ROOM_ACTIONS): [{do:"kick", target:"ball", text:""}, ...]
+// this turns them into body moves, so a new sentence needs no new code
+function brainActs(list) {
+  const out = [], spots = ['sofa', 'window', 'plant', 'tv', 'table', 'ball', 'shelf', 'center', 'front'];
+  for (const a of list || []) {
+    if (!a || typeof a !== 'object') continue;
+    if (!a.do) { out.push(a); continue; }   // already a body action
+    const tg = String(a.target || '').toLowerCase().replace(/^the /, ''), tx = String(a.text || '').trim();
+    switch (a.do) {
+      case 'walk': if (spots.includes(tg)) out.push({ walk: tg }); break;
+      case 'kick': out.push({ kick: 'ball' }); break;
+      case 'sit': out.push(tg === 'miss' ? { sit: 'miss' } : { sit: 'sofa', time: 4 }); break;
+      case 'lamp_on': case 'lamp_off': out.push({ walk: { x: 4.6, z: -4.4 } }, { point: { x: 5.4, y: 1.8, z: -5.3 }, time: 0.8 }, { lamp: a.do === 'lamp_on' }); break;
+      case 'tv_on': case 'tv_off': out.push({ face: 'tv' }, { point: 'tv', time: 1 }, { tv: a.do === 'tv_on' }); break;
+      case 'tv_text': out.push({ face: 'tv' }, { point: 'tv', time: 1 }, { tv: tx.slice(0, 60) || ' ' }); break;
+      case 'write_board': out.push({ walk: 'table' }, { board: tx.slice(0, 60) }, { point: { x: 1.2, y: 2.6, z: -5.9 }, time: 1.2 }); break;
+      case 'knock_glass': out.push({ knock: 'glass' }); break;
+      case 'point': if (POINT_AT[tg] || ROOM_SPOTS[tg] || tg === 'camera') out.push({ point: tg, time: 2 }); break;
+      case 'wave': out.push({ face: 'camera' }, { wave: 2 }); break;
+      case 'face_me': out.push({ face: 'camera' }); break;
+      case 'trip': out.push({ trip: true }); break;
+      case 'clean_up': out.push({ reset: true }); break;
+      case 'explain': if (tx) out.push({ holo: tx }); break;
+      case 'open_memory': out.push({ book: tx || 'random' }); break;
+    }
+  }
+  if (out.length && !out.some(x => x.holo !== undefined || x.book !== undefined || x.sit !== undefined || x.trip !== undefined)) out.push({ face: 'camera' });
+  return out;
+}
+window.AIWorld.brainActs = brainActs;
 
 // ---------------------------------------------------------------- 7e. new actions + words
 const _startAction7 = startAction;

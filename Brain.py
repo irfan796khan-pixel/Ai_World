@@ -52,6 +52,28 @@ ANIMATIONS = [
 ]
 
 
+# ROOM_ACTIONS_V1: things she can really DO in her 3D room. The brain picks them itself,
+# so no one has to write a new rule for every sentence. The web page turns each one into body movement.
+ROOM_ACTIONS = [
+    "walk",          # target: sofa, window, plant, tv, table, ball, shelf, center, front
+    "kick",          # target: ball
+    "sit",           # target: sofa (or "miss" to miss the sofa and fall)
+    "lamp_on", "lamp_off",
+    "tv_on", "tv_off",
+    "tv_text",       # text: short words to show on the TV
+    "write_board",   # text: short words to write on the whiteboard
+    "knock_glass",
+    "point",         # target: tv, sofa, plant, window, table, ball, shelf, board, lamp
+    "wave",
+    "face_me",
+    "trip",
+    "clean_up",
+    "explain",       # text: the topic; opens her neon hologram lesson
+    "open_memory",   # text: words from the picture or note to open from her memory shelf
+    "none"
+]
+
+
 # Most of Hugh's personality comes from here.
 # We can change how he talks without touching the AI connection code.
 PERSONALITY = """
@@ -136,6 +158,24 @@ Don't choose random movements.
 Don't always use the same animation.
 Idle is better than an inappropriate movement.
 
+YOUR ROOM AND BODY:
+You live in a 3D living room and you have a real body. In the room: a sofa,
+a coffee table with a glass on it, a ball on the floor, a TV on the left wall,
+a window, a plant, a floor lamp, a whiteboard, and your memory shelf of books
+(the user's pictures and notes).
+When the person asks you to DO something you can do, do it: put the steps in
+"actions", in order. If your words say you will do something, the actions must
+do it too. You may still roast them while you do it. If they only chat, use an
+empty list. You can only use these actions:
+walk (target: sofa, window, plant, tv, table, ball, shelf, center, front),
+kick (target: ball), sit (target: sofa, or miss), lamp_on, lamp_off, tv_on,
+tv_off, tv_text (text), write_board (text), knock_glass, point (target),
+wave, face_me, trip, clean_up, explain (text: topic), open_memory (text).
+Example: "kick the ball" -> actions [{"do":"kick","target":"ball","text":""}].
+Example: "go turn the light off and sit" -> lamp_off, then sit on sofa.
+If they ask for something you can't do here (fly, cook), say so in a funny way
+and use an empty list.
+
 OUTPUT:
 Return a JSON object with exactly these fields:
 
@@ -147,6 +187,9 @@ The emotion she should display.
 
 animation:
 The physical movement she should perform.
+
+actions:
+A list of things she does in the room (can be empty).
 
 The spoken response should sound natural when
 converted into audio later.
@@ -169,12 +212,27 @@ RESPONSE_SCHEMA = {
         "animation": {
             "type": "string",
             "enum": ANIMATIONS
+        },
+        "actions": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "do": {"type": "string", "enum": ROOM_ACTIONS},
+                    "target": {"type": "string"},
+                    "text": {"type": "string"}
+                },
+                "required": ["do", "target", "text"],
+                "additionalProperties": False
+            }
         }
     },
     "required": [
         "response",
         "emotion",
-        "animation"
+        "animation",
+        "actions"
     ],
     "additionalProperties": False
 }
@@ -455,6 +513,16 @@ def check_reply(reply):
         )
 
     required = set(RESPONSE_SCHEMA["required"])
+
+    # ROOM_ACTIONS_V1: an answer without actions still counts; bad action items are dropped
+    acts = reply.get("actions")
+    if not isinstance(acts, list):
+        acts = []
+    reply["actions"] = [
+        {"do": a.get("do"), "target": str(a.get("target") or ""), "text": str(a.get("text") or "")[:80]}
+        for a in acts[:4]
+        if isinstance(a, dict) and a.get("do") in ROOM_ACTIONS and a.get("do") != "none"
+    ]
 
     if set(reply.keys()) != required:
         raise ValueError(
@@ -827,7 +895,8 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
         self._send_json({
             "response": reply["response"],
             "emotion": reply["emotion"],
-            "animation": reply["animation"]
+            "animation": reply["animation"],
+            "actions": reply.get("actions", [])
         })
 
 
