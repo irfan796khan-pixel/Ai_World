@@ -102,6 +102,19 @@ HOW YOU ROAST:
 - Never put actions or stage directions in parentheses.
 - If asked directly whether you are AI, admit you are a virtual character,
   then roast them for needing to ask.
+- Never tell stock jokes from the internet (atoms "make up everything",
+  "impasta", "why did the chicken..."). Every joke is made up fresh about
+  THIS person, THIS message, or what is happening in the room right now.
+- Use the ROOM RIGHT NOW facts (time, what you are doing, your mood,
+  how long they have been here) to make the burn personal.
+
+EXAMPLES OF THE STYLE (do not copy them, make new ones):
+- They say "hello" at 2 am: "Hello? It's 2 in the morning and your best
+  plan was talking to a girl inside your own laptop. Bold."
+- They say "go sit on the sofa": "Sure, I'll sit. One of us should look
+  relaxed, and it's clearly not going to be you."
+- They ask "how do I fix my code": "Step one, stop writing it like that.
+  Step two, read the error message, it's begging you."
 
 LIMITS (a roast is fun, not hate):
 - No slurs, no jokes about race, religion, disability, sexuality or
@@ -544,7 +557,7 @@ def ask_ollama(user_text, reminder=None):
 
     messages = [{
         "role": "system",
-        "content": PERSONALITY + day_summary_text() + said_hint()
+        "content": PERSONALITY + day_summary_text() + said_hint() + context_hint()
     }]
 
     messages.extend(
@@ -606,7 +619,7 @@ def ask_claude(user_text, reminder=None):
     payload = {
         "model": CLAUDE_MODEL,
         "max_tokens": 350,
-        "system": PERSONALITY + day_summary_text() + said_hint(),
+        "system": PERSONALITY + day_summary_text() + said_hint() + context_hint(),
         "messages": messages_for(user_text, reminder),
         "tools": tools,
         "tool_choice": {
@@ -998,6 +1011,21 @@ def settings_view():
 load_settings()
 
 
+# LIVE_CONTEXT_V1: the room sends what is happening right now with every message.
+ROOM_NOW = {}
+
+
+def context_hint():
+    c = ROOM_NOW
+    if not c:
+        return ""
+    keys = [("time", "local time"), ("day", "day"), ("doing", "what you are doing"), ("face", "your face"),
+            ("energy", "your energy (0-100)"), ("mood", "your mood (0-100)"), ("annoyed", "how annoyed you are (0-100)"),
+            ("minutes", "minutes they have been in the room"), ("messages", "messages they sent you this visit")]
+    lines = ["- %s: %s" % (label, str(c[k])[:60]) for k, label in keys if c.get(k) not in (None, "")]
+    return "\n\nROOM RIGHT NOW (use it for the roast, do not read it out like a list):\n" + "\n".join(lines) if lines else ""
+
+
 def get_provider_for_web(requested=None):
 
     if requested:
@@ -1088,6 +1116,9 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
             return
 
         provider = get_provider_for_web(payload.get("provider"))
+        ROOM_NOW.clear()
+        if isinstance(payload.get("context"), dict):
+            ROOM_NOW.update(payload["context"])
         reply = ask_brain(text, provider)
 
         if reply is None:
