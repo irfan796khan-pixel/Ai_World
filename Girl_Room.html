@@ -1458,7 +1458,7 @@ async function browserVoice(text) {           // returns a promise: done when sh
   }
   if (my === VS.seq) { FX.talking = false; window.AIWorld.speakLevel(null); }
 }
-function stopVoices() { VS.seq++; stopSpeaking(); if (window.speechSynthesis) speechSynthesis.cancel(); if (TTS.utter) { TTS.utter = null; TTS.plan = null; } FX.talking = false; window.AIWorld.speakLevel(null); }
+function stopVoices() { VQ.gen++; VS.seq++; stopSpeaking(); if (window.speechSynthesis) speechSynthesis.cancel(); if (TTS.utter) { TTS.utter = null; TTS.plan = null; } FX.talking = false; window.AIWorld.speakLevel(null); }
 const readTime = (t) => new Promise(r => setTimeout(r, Math.max(1500, String(t).split(/\s+/).length / 2.6 * 1000)));
 // MAIN lines (your quick replies, brain answers, the Roast script) cannot be cut by her own side lines
 // (bored, yawn, ouch, tantrum ...). While a main line plays, side lines are skipped and she does not wander.
@@ -1466,11 +1466,22 @@ const TALK = { main: 0, show: false };
 function sayMain(text, spoken) { TALK.main++; return Promise.resolve(sayNow(text, spoken)).finally(() => { TALK.main = Math.max(0, TALK.main - 1); }); }
 function say(text, spoken) { if (TALK.main > 0 || TALK.show) return Promise.resolve(); return sayNow(text, spoken); }
 const busyTalking = () => TALK.main > 0 || TALK.show;
-async function sayNow(text, spoken) {           // bubble shows text, the voice says spoken (or text); resolves when she is done talking
-  if (!text) return; showBubble(text, spoken === undefined ? undefined : 30); spoken = spoken || text;
+// LINE_QUEUE_V1: a new line WAITS until she finishes the line she is saying (like normal talk), it does not cut it.
+// Only a real stop (Stop, voice change, you talking over her in Live chat) cuts her and drops the waiting lines.
+const VQ = { tail: Promise.resolve(), gen: 0 };
+function sayNow(text, spoken) {
+  if (!text) return Promise.resolve();
+  const g = VQ.gen;
+  const before = Promise.race([VQ.tail, new Promise(r => setTimeout(r, 90000))]);          // safety: never wait more than 90 s for a stuck line
+  const run = before.then(() => (g === VQ.gen ? sayLine(text, spoken) : undefined));
+  VQ.tail = run.catch(() => {});
+  return run;
+}
+async function sayLine(text, spoken) {          // bubble shows text, the voice says spoken (or text); resolves when she is done talking
+  showBubble(text, spoken === undefined ? undefined : 30); spoken = spoken || text;
   if (typeof window.AIWorld.onSay === 'function') { try { window.AIWorld.onSay(spoken); } catch (e) { console.warn('onSay failed', e); } return readTime(spoken); }
   if (VS.mode === 'off') return readTime(spoken);
-  stopVoices(); const my = VS.seq;
+  VS.seq++; const my = VS.seq;                   // the line before is already finished: nothing to cut
   if (VS.mode === 'studio' && VS.ok === false && Date.now() > (VS.retryAt || 0)) VS.ok = null;   // VoiceStudio may be open now: try again
   if (VS.mode === 'studio' && VS.ok !== false) {
     const pv = voicePieces(spoken); let i = 0;
