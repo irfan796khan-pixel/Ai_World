@@ -1617,6 +1617,20 @@ function runQuick(e) {
   talkWhenStill(text);
   return { entry: e, say: text };
 }
+// LIVE_CONTEXT_V1: what is happening right now, sent to the brain with each message so her roasts get personal
+const CTX = { t0: Date.now(), count: 0 };
+function roomNow() {
+  CTX.count++;
+  const d = new Date();
+  let doing = 'standing around';
+  try {
+    if (isWalking()) doing = 'walking around the room';
+    else if (act.cur) doing = String(act.cur._kind || Object.keys(act.cur).find(k => !k.startsWith('_')) || doing);
+  } catch (e) {}
+  return { time: d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), day: d.toLocaleDateString([], { weekday: 'long' }),
+    doing, face: FX.mood || 'neutral', energy: Math.round(STATS.energy), mood: Math.round(STATS.mood), annoyed: Math.round(STATS.annoy),
+    minutes: Math.round((Date.now() - CTX.t0) / 60000), messages: CTX.count };
+}
 async function hear(text) {
   if (!STATS.hostage && !inTantrum() && holoHear(text)) return null;   // memory shelf, hologram lessons, cozy room (section 7)
   if (sassHear(text)) return null;          // hostage drop, room builder, rebellion (section 6)
@@ -1634,7 +1648,7 @@ async function hear(text) {
   if (window.AIWorld.brainUrl) {
     showBubble('…', 20);
     try {
-      const r = await fetch(window.AIWorld.brainUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+      const r = await fetch(window.AIWorld.brainUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, context: roomNow() }) });   // LIVE_CONTEXT_V1
       const j = await r.json();
       if (j && j.response && !j.error && isQuestion(text)) answerCard(text, j.response);
       if (j && Array.isArray(j.actions)) { j.actions = brainActs(j.actions); if (!j.actions.length) j.actions = undefined; }   // the brain chose her moves
