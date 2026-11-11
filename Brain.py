@@ -13,11 +13,11 @@ from urllib.parse import urlparse
 # Ollama is our default while we're building the project.
 # It runs on the computer, so testing doesn't use API credits.
 OLLAMA_URL = "http://localhost:11434/api/chat"
-OLLAMA_MODEL = "qwen3:4b"
+OLLAMA_MODEL = os.getenv("AIWORLD_MODEL", "").strip() or "qwen3:4b"   # old big brain (Imran, 11 Nov)
 
 # Claude is ready to use later. We'll just need an API key.
 # Keeping it separate also lets us compare models.
-CLAUDE_URL = ""
+CLAUDE_URL = "https://api.anthropic.com/v1/messages"
 CLAUDE_MODEL = "claude-haiku-4-5"
 
 # Hugh doesn't need to remember an entire day's conversation.
@@ -364,6 +364,141 @@ def save_day_memory(new_messages):
 load_day_memory()
 
 
+# NO_REPEAT_V1: she never says the same line twice in this session or the last 3 days.
+# Every sentence she says is kept in brain_memory/said_lines.json (3 days, newest 800).
+# A new reply loses any sentence that is the same or almost the same as an old one; if too much is lost, she is asked again.
+import difflib
+import time as _time
+SAID_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brain_memory", "said_lines.json")
+SAID_DAYS = 3
+SAID_MAX = 800
+said_lines = []
+
+
+def _said_norm(text):
+    return " ".join(re.findall(r"[a-z0-9']+", str(text).lower()))
+
+
+def _said_load():
+    global said_lines
+    try:
+        with open(SAID_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        cut = _time.time() - SAID_DAYS * 86400
+        said_lines = [d for d in data if d.get("t", 0) >= cut and d.get("n")][-SAID_MAX:]
+    except Exception:
+        said_lines = []
+    if not said_lines:              # first start: learn her old lines from the day-memory files of the last 3 days
+        try:
+            import glob
+            cut = _time.time() - SAID_DAYS * 86400
+            for f in sorted(glob.glob(os.path.join(os.path.dirname(SAID_FILE), "????-??-??.json"))):
+                if os.path.getmtime(f) < cut:
+                    continue
+                with open(f, encoding="utf-8") as fh:
+                    for m in json.load(fh):
+                        if m.get("role") != "assistant":
+                            continue
+                        try:
+                            text = json.loads(m.get("content", "{}")).get("response", "")
+                        except Exception:
+                            text = m.get("content", "")
+                        for sent in split_sentences(text):
+                            n = _said_norm(sent)
+                            if len(n.split()) >= 2:
+                                said_lines.append({"t": os.path.getmtime(f), "s": sent, "n": n})
+            del said_lines[:-SAID_MAX]
+        except Exception as error:
+            print("Old lines could not be read:", error)
+
+
+def _said_save():
+    try:
+        os.makedirs(os.path.dirname(SAID_FILE), exist_ok=True)
+        tmp = SAID_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(said_lines, f, ensure_ascii=False)
+        os.replace(tmp, SAID_FILE)
+    except Exception as error:
+        print("Said-lines memory could not be saved:", error)
+
+
+def split_sentences(text):
+    parts = re.split(r"(?<=[.!?])\s+", str(text).strip())
+    return [p.strip() for p in parts if p.strip()]
+
+
+def already_said(sentence):
+    n = _said_norm(sentence)
+    if len(n.split()) < 2:          # one-word lines ("Okay." "Wow.") may come again
+        return False
+    for d in said_lines:
+        o = d["n"]
+        if o == n:
+            return True
+        if abs(len(o) - len(n)) < 40 and difflib.SequenceMatcher(None, o, n).ratio() >= 0.78:
+            return True
+    return False
+
+
+def remove_repeats(reply):
+    """Drops sentences she already said. Returns (reply, dropped sentences)."""
+    kept, dropped = [], []
+    for sent in split_sentences(reply.get("response", "")):
+        if already_said(sent) or any(_said_norm(sent) == _said_norm(k) for k in kept):
+            dropped.append(sent)
+        else:
+            kept.append(sent)
+    reply["response"] = " ".join(kept)
+    return reply, dropped
+
+
+def remember_said(text):
+    now = _time.time()
+    for sent in split_sentences(text):
+        n = _said_norm(sent)
+        if len(n.split()) >= 2:
+            said_lines.append({"t": now, "s": sent, "n": n})
+    del said_lines[:-SAID_MAX]
+    _said_save()
+
+
+def said_hint():
+    if not said_lines:
+        return ""
+    recent = [d["s"] for d in said_lines[-30:]]
+    return ("\n\nLINES YOU ALREADY SAID (this session or the last few days). Never say any of these again, "
+            "not even with small changes, and do not reuse their jokes or endings. Say something new:\n- "
+            + "\n- ".join(recent))
+
+
+
+def clean_history_repeats():
+    """Old chat that the brain reads back: a sentence she used in 2 or more replies is taken out, so she stops copying it."""
+    seen = {}
+    for m in history:
+        if m.get("role") == "assistant":
+            try:
+                for sent in split_sentences(json.loads(m["content"]).get("response", "")):
+                    seen[_said_norm(sent)] = seen.get(_said_norm(sent), 0) + 1
+            except Exception:
+                pass
+    for m in history:
+        if m.get("role") != "assistant":
+            continue
+        try:
+            d = json.loads(m["content"])
+            kept = [x for x in split_sentences(d.get("response", "")) if seen.get(_said_norm(x), 0) < 2]
+            d["response"] = " ".join(kept) or "..."
+            m["content"] = json.dumps(d)
+        except Exception:
+            pass
+
+
+_said_load()
+clean_history_repeats()
+
+
 def messages_for(user_text, reminder=None):
 
     messages = history.copy()
@@ -409,7 +544,7 @@ def ask_ollama(user_text, reminder=None):
 
     messages = [{
         "role": "system",
-        "content": PERSONALITY + day_summary_text()
+        "content": PERSONALITY + day_summary_text() + said_hint()
     }]
 
     messages.extend(
@@ -471,7 +606,7 @@ def ask_claude(user_text, reminder=None):
     payload = {
         "model": CLAUDE_MODEL,
         "max_tokens": 350,
-        "system": PERSONALITY + day_summary_text(),
+        "system": PERSONALITY + day_summary_text() + said_hint(),
         "messages": messages_for(user_text, reminder),
         "tools": tools,
         "tool_choice": {
@@ -712,6 +847,16 @@ def ask_brain(user_text, provider):
                     "No dialogue remained after cleanup."
                 )
 
+            reply, dropped = remove_repeats(reply)   # NO_REPEAT_V1
+            if dropped and (not reply["response"] or len(reply["response"].split()) < 4):
+                print("She repeated an old line. Retrying...")
+                reminder = ("You already said these lines before: " + " | ".join(dropped)
+                            + " . Answer my last message again with completely new words and a new joke. Never repeat old lines.")
+                if attempt < MAX_ATTEMPTS - 1:
+                    continue
+                if not reply["response"]:
+                    raise ValueError("Only old lines were left.")
+
             if repeated_response(user_text, reply):
 
                 # Instead of showing a copied message, ask again.
@@ -748,6 +893,7 @@ def ask_brain(user_text, provider):
             })
 
             save_day_memory(history[-2:])   # DAY_MEMORY_V2
+            remember_said(reply["response"])   # NO_REPEAT_V1
 
             # Old messages get removed when memory gets too large.
             if len(history) > MAX_HISTORY_MESSAGES:
@@ -813,6 +959,45 @@ def choose_provider():
     return "ollama"
 
 
+# API_KEY_V1: the API key and brain choice typed in the room (button "API key") are kept in
+# brain_settings.json next to this file. That file is in .gitignore, so the key never goes to GitHub.
+SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brain_settings.json")
+
+
+def load_settings():
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        data = {}
+    if data.get("anthropic_api_key"):
+        os.environ["ANTHROPIC_API_KEY"] = data["anthropic_api_key"]
+    if data.get("provider"):
+        os.environ["BRAIN_PROVIDER"] = data["provider"]
+    return data
+
+
+def save_settings(data):
+    tmp = SETTINGS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=1)
+    os.replace(tmp, SETTINGS_FILE)
+
+
+def settings_view():
+    key = os.getenv("ANTHROPIC_API_KEY", "")
+    return {
+        "provider": os.getenv("BRAIN_PROVIDER", "ollama").lower(),
+        "ollama_model": OLLAMA_MODEL,
+        "claude_model": CLAUDE_MODEL,
+        "key_set": bool(key),
+        "key": key,
+    }
+
+
+load_settings()
+
+
 def get_provider_for_web(requested=None):
 
     if requested:
@@ -854,12 +1039,33 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         if path in ("/", "/health"):
-            self._send_json({"status": "ok", "brain": "Hugh Mann"})
+            self._send_json({"status": "ok", "brain": "Hugh Mann", "provider": os.getenv("BRAIN_PROVIDER", "ollama").lower()})
+        elif path == "/settings":
+            self._send_json(settings_view())
         else:
             self._send_json({"error": "Not found"}, 404)
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if path == "/settings":            # API_KEY_V1: save key / brain choice from the room
+            try:
+                payload = self._read_json()
+            except ValueError as error:
+                self._send_json({"error": str(error)}, 400)
+                return
+            data = load_settings()
+            if "api_key" in payload:
+                data["anthropic_api_key"] = str(payload.get("api_key") or "").strip()
+                if data["anthropic_api_key"]:
+                    os.environ["ANTHROPIC_API_KEY"] = data["anthropic_api_key"]
+                else:
+                    os.environ.pop("ANTHROPIC_API_KEY", None)
+            if payload.get("provider") in ("ollama", "claude"):
+                data["provider"] = payload["provider"]
+                os.environ["BRAIN_PROVIDER"] = payload["provider"]
+            save_settings(data)
+            self._send_json(settings_view())
+            return
         if path != "/brain":
             self._send_json({"error": "Not found"}, 404)
             return

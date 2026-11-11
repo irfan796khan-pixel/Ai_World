@@ -21,6 +21,10 @@ import wave
 VOICE = "en_US-hfc_female-medium"
 VOICE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/hfc_female/medium/" + VOICE
 LIFT = 1.0                      # 1.0 = normal pitch (Imran chose "1 hfc female plain", 9 Nov). 1.12 = about 2 semitones higher (teen)
+# VOICE_FIX_V1 (11 Nov): a little slower and clearer, a little more natural ups and downs, and no reading of symbols.
+SPEED = 1.06                    # 1.0 = Piper normal speed. 1.06 = 6% slower, easier to follow
+NOISE = 0.75                    # Piper default 0.667. A bit more = less flat, less robotic
+NOISE_W = 0.9                   # Piper default 0.8. A bit more = less even, more human rhythm
 HERE = os.path.dirname(os.path.abspath(__file__))
 VOICE_DIR = os.path.join(HERE, "voices")
 MODEL = os.path.join(VOICE_DIR, VOICE + ".onnx")
@@ -80,6 +84,19 @@ def _load():
     return _voice
 
 
+def clean_for_voice(text):
+    """Removes things a voice should not read out: *stage words*, (laughs), emojis, links, ... and repeated !!!"""
+    import re
+    t = str(text)
+    t = re.sub(r"\*[^*]{0,60}\*", " ", t)            # *rolls eyes*
+    t = re.sub(r"\([^)]{0,40}\)", " ", t)            # (laughs)
+    t = re.sub(r"https?://\S+", " link ", t)
+    t = re.sub(r"[^\w\s.,!?'\-:;]", " ", t)          # emojis and symbols
+    t = re.sub(r"\.{2,}", ", ", t)                   # "..." -> short pause
+    t = re.sub(r"([!?])[!?]+", r"\1", t)             # "!!!" -> "!"
+    return re.sub(r"\s+", " ", t).strip() or "Hmm."
+
+
 def speak(text):
     """Text -> WAV bytes in her teen voice."""
     from piper import SynthesisConfig
@@ -87,7 +104,7 @@ def speak(text):
         v = _load()
         raw = io.BytesIO()
         with wave.open(raw, "wb") as w:
-            v.synthesize_wav(str(text), w, syn_config=SynthesisConfig(length_scale=LIFT))
+            v.synthesize_wav(clean_for_voice(text), w, syn_config=SynthesisConfig(length_scale=LIFT * SPEED, noise_scale=NOISE, noise_w_scale=NOISE_W))
         raw.seek(0)
         r = wave.open(raw)
         rate, frames = r.getframerate(), r.readframes(r.getnframes())
