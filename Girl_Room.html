@@ -31,7 +31,7 @@
 <body>
 <div id="status">loading the girl…</div>
 <div id="bubble"></div>
-<div id="bar"><input id="say" placeholder="say something: sit, wave, trip, go to the window, tell me a joke…" autocomplete="off"><button id="send">Send</button><button id="live" title="hands-free live chat: just speak (click again to stop)">Live chat</button><button id="roastbtn" title="she performs the class presentation, roast_script.json (press again to stop)">Presentation</button><select id="voicesel" title="her voice"><option value="studio">Voice: Her voice</option><option value="browser">Voice: Browser</option><option value="off">Voice: Off</option></select><button id="clip" class="rec" title="record a 15 s vertical clip (9:16) for TikTok">Clip 15s</button></div>
+<div id="bar"><input id="say" placeholder="say something: sit, wave, trip, go to the window, tell me a joke…" autocomplete="off"><button id="send">Send</button><button id="live" title="hands-free live chat: just speak (click again to stop)">Live chat</button><button id="roastbtn" title="she performs the class presentation, roast_script.json (press again to stop)">Presentation</button><select id="voicesel" title="her voice"><option value="studio">Voice: Her voice</option><option value="vstudio">Voice: VoiceStudio</option><option value="browser">Voice: Browser</option><option value="off">Voice: Off</option></select><button id="clip" class="rec" title="record a 15 s vertical clip (9:16) for TikTok">Clip 15s</button></div>
 <script>
 // ============================================================================
 // AI World — ONLY the girl and the room.
@@ -1330,9 +1330,18 @@ function findQuick(text) {
   }
   return best;
 }
+// NO_REPEAT_V1: every line she says is kept 3 days in this browser; old lines are skipped
+const SAID3 = { map: {}, key: 'aiworld_said_v1', days: 3,
+  n(t) { return String(t || '').toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim(); },
+  load() { try { this.map = JSON.parse(localStorage.getItem(this.key) || '{}') || {}; } catch (e) { this.map = {}; } const cut = Date.now() - this.days * 864e5; for (const k in this.map) if (this.map[k] < cut) delete this.map[k]; },
+  has(t) { const k = this.n(t); return k.split(' ').length >= 3 && !!this.map[k]; },
+  add(t) { const k = this.n(t); if (k.split(' ').length < 3) return; this.map[k] = Date.now(); const keys = Object.keys(this.map); if (keys.length > 2000) keys.sort((a, b) => this.map[a] - this.map[b]).slice(0, keys.length - 2000).forEach(x => delete this.map[x]); try { localStorage.setItem(this.key, JSON.stringify(this.map)); } catch (e) {} }
+};
+SAID3.load();
 function pickSay(e) {
   const opts = e.say || []; if (!opts.length) return '';
-  const line = freshPick(opts); QUICK.lastSay[e.match[0]] = line; return line;   // no repeats this session
+  const fresh = opts.filter(o => !SAID3.has(o));
+  const line = freshPick(fresh.length ? fresh : opts); QUICK.lastSay[e.match[0]] = line; SAID3.add(line); return line;   // no repeats this session or the last 3 days
 }
 const bubbleEl = document.getElementById('bubble'); let bubbleTimer = 0;
 function showBubble(text, seconds) {
@@ -1347,7 +1356,7 @@ function showBubble(text, seconds) {
 // her ONE voice: the VoiceStudio profile "AI World Girl" (female, young adult, moderate pitch, american accent, seed 42).
 // A saved profile keeps the same voice on every line; 'alloy' made a different voice each time.
 const GIRL_VOICE = 'AI World Girl';
-const VS = { mode: 'studio', url: 'http://localhost:3900/v1/audio/speech', name: GIRL_VOICE, ok: null, seq: 0 };
+const VS = { mode: 'studio', engine: 'piper', url: 'http://localhost:3900/v1/audio/speech', name: GIRL_VOICE, ok: null, seq: 0 };   // VOICE_SWITCH_V1: engine 'piper' (her voice) or 'voicestudio'
 // page_server.py (run_girl_room.bat) passes /v1/audio/... through to VoiceStudio, so the browser does not block it.
 // The page checks that once; if this page's own server does not pass voice through, it calls VoiceStudio on port 3900 directly.
 const VS_LOCAL = 'v1/audio/speech';
@@ -1355,16 +1364,16 @@ if (location.protocol.startsWith('http')) fetch('v1/audio/voices').then(r => {
   if (r.ok && /json/.test(r.headers.get('content-type') || '')) { VS.url = VS_LOCAL; if (VS.ok === false) VS.ok = null; voiceBtnText(); console.log('voice: VoiceStudio through this page server'); warmShow(); }
   else if (r.status === 502) console.warn('voice: page server is ready, but VoiceStudio is closed. Open the VoiceStudio app.');
 }).catch(() => {});
-try { const m = localStorage.getItem('aiworld_voice_mode'); if (m) VS.mode = m; const n = localStorage.getItem('aiworld_voice_name'); if (n && n !== 'alloy') VS.name = n; } catch (e) {}
+try { const m = localStorage.getItem('aiworld_voice_mode'); if (m === 'vstudio') { VS.mode = 'studio'; VS.engine = 'voicestudio'; } else if (m) VS.mode = m; const n = localStorage.getItem('aiworld_voice_name'); if (n && n !== 'alloy') VS.name = n; } catch (e) {}
 // VoiceStudio on this laptop runs on the CPU: one line takes 10-30 s to make. So the page
 //   1. keeps every line it got (VCACHE) and asks only once per line,
 //   2. makes the NEXT lines of the Roast script while she says the current one,
 //   3. gets the Roast lines ready in the background after the page opens (page_server.py also saves them in voice_cache/, so next time they play at once).
 const VCACHE = new Map();
 function studioVoice(text) {
-  const k = VS.name + '|' + text;
+  const k = VS.engine + '|' + VS.name + '|' + text;
   if (VCACHE.has(k)) return VCACHE.get(k);
-  const p = fetch(VS.url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer local' },
+  const p = fetch(VS.url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer local', 'X-Voice-Engine': VS.engine },
     body: JSON.stringify({ model: 'tts-1', voice: VS.name, input: text }) })
     .then(res => { if (!res.ok) throw new Error('VoiceStudio error ' + res.status); return res.blob(); });
   VCACHE.set(k, p);
@@ -1495,15 +1504,18 @@ window.AIWorld.onFrame.push((t, dt) => {   // browser voice: no sound data, so t
 const voiceSel = document.getElementById('voicesel');
 function voiceBtnText() {
   if (!voiceSel) return;
-  voiceSel.value = VS.mode;
-  voiceSel.options[0].textContent = VS.ok === false ? 'Voice: Her voice (not running)' : 'Voice: Her voice';
+  voiceSel.value = VS.mode === 'studio' && VS.engine === 'voicestudio' ? 'vstudio' : VS.mode;
+  const down = VS.ok === false ? ' (not running)' : '';
+  voiceSel.options[0].textContent = 'Voice: Her voice' + (VS.engine === 'piper' ? down : '');
+  voiceSel.options[1].textContent = 'Voice: VoiceStudio' + (VS.engine === 'voicestudio' ? down : '');
 }
 if (voiceSel) voiceSel.addEventListener('change', () => {
-  VS.mode = voiceSel.value;
-  if (VS.mode === 'studio') VS.ok = null;                 // try VoiceStudio again
+  const v = voiceSel.value;
+  VS.mode = v === 'vstudio' ? 'studio' : v; VS.engine = v === 'vstudio' ? 'voicestudio' : 'piper';
+  if (VS.mode === 'studio') VS.ok = null;                 // try the voice server again
   stopVoices(); voiceBtnText();
-  try { localStorage.setItem('aiworld_voice_mode', VS.mode); } catch (e) {}
-  if (VS.mode !== 'off') sayMain(VS.mode === 'studio' ? 'Voice studio on.' : 'Browser voice on.');
+  try { localStorage.setItem('aiworld_voice_mode', v); } catch (e) {}
+  if (VS.mode !== 'off') sayMain(v === 'vstudio' ? 'VoiceStudio voice on.' : v === 'studio' ? 'My own voice is on.' : 'Browser voice on.');
 });
 voiceBtnText();
 window.AIWorld.voice = VS;
@@ -1605,6 +1617,7 @@ async function hear(text) {
     const hit = Math.max(0, ...e.match.map(m => norm(m)).filter(p => p && (' ' + q + ' ').includes(' ' + p + ' ')).map(p => p.split(' ').length));
     if (words > 3 && hit / words < 0.5) e = null;
   }
+  if (e && BRAIN.ok && window.AIWorld.brainUrl && (e.say || []).every(o => SAID3.has(o))) e = null;   // NO_REPEAT_V1: all its lines are old, the brain says something new
   if (e) { const r = runQuick(e); if (isQuestion(text) && r && r.say) answerCard(text, r.say); return r; }
   if (typeof window.AIWorld.onUnmatched === 'function') { window.AIWorld.onUnmatched(text); return null; }
   if (window.AIWorld.brainUrl) {
@@ -1621,6 +1634,7 @@ async function hear(text) {
       if (j && Array.isArray(j.actions) && j.actions.length) window.AIWorld.stop();
       if (j && j.response && !j.audio) { const acts = j.actions; j.actions = undefined; if (Array.isArray(acts)) window.AIWorld.act(acts); handleReply(j); talkWhenStill(j.response); j.actions = acts; }
       else await handleReply(j);
+      if (j && j.response && !j.error) SAID3.add(j.response);   // NO_REPEAT_V1
       if (j && j.learn !== false && j.response && !j.error) learn({ match: [norm(text)], say: [j.response], mood: j.emotion || 'neutral', actions: j.actions, gesture: j.animation === 'nod' ? 'nod' : j.animation === 'shake_head' ? 'shake' : undefined });
     } catch (err) { console.warn('brain door failed', err); sayMain("The brain is not answering. Try one of my quick ones."); }
     return null;
@@ -1639,6 +1653,8 @@ function brainOn5005() {   // no brain on this page's own server: try Brain.py o
     console.log('brain connected on port 5005: ' + BRAIN.provider);
   }).catch(() => console.log('no brain server: quick replies only'));
 }
+// BRAIN_RETRY_V1: the room often opens before the brain (qwen3:4b) is ready, so keep checking every 3 s until it answers
+setInterval(() => { if (!BRAIN.ok) brainOn5005(); }, 3000);
 fetch('brain/health').then(r => r.ok ? r.json() : null).then(j => {
   if (!j || !j.brain) { brainOn5005(); return; }
   BRAIN.ok = true; BRAIN.provider = j.provider;
@@ -3382,6 +3398,108 @@ window.AIWorld.hearHolo = holoHear;
   window.addEventListener('drop', async (e) => { e.preventDefault(); for (const f of e.dataTransfer.files) await addToShelf(f); });
 }
 
+// ---------------------------------------------------------------- 7z. CINEMA CAMERA (YouTuber style)  CINEMA_V1
+// The camera picks a new shot every few seconds: wide, medium, close-up, 3/4 sides, low hero, high.
+// Shorter, closer shots while she talks; wider, slower shots when she walks or is quiet.
+// Grab the camera with the mouse and it is yours for 15 s. Button "Cinema" or key C turns it on/off.
+const CINE = { on: true, shot: null, last: '', t0: 0, dur: 0, userUntil: 0, base: null, yaw: 0, cut: true, blend: 1 };
+const CINE_SHOTS = {
+  //            angle(deg)  dist from -> to   cam height    look at        talk  walk  idle (weights)
+  wide:     { a: 0,   d: [4.6, 3.9], h: [2.1, 1.9], look: 'chest', w: [1, 3, 3] },
+  medium:   { a: 8,   d: [2.5, 2.2], h: [1.5, 1.5], look: 'chest', w: [3, 1, 2], orbit: 10 },
+  close:    { a: 0,   d: [1.15, 0.95], h: [1.6, 1.6], look: 'head', w: [4, 0, 1] },
+  left34:   { a: 40,  d: [1.9, 1.7], h: [1.55, 1.5], look: 'head', w: [3, 1, 2] },
+  right34:  { a: -40, d: [1.9, 1.7], h: [1.55, 1.5], look: 'head', w: [3, 1, 2] },
+  lowHero:  { a: 15,  d: [2.1, 1.9], h: [0.55, 0.6], look: 'head', w: [1, 1, 1] },
+  high:     { a: -20, d: [2.8, 2.6], h: [3.2, 3.0], look: 'chest', w: [1, 1, 1] },
+  orbitMed: { a: -25, d: [2.4, 2.4], h: [1.6, 1.7], look: 'chest', w: [1, 2, 2], orbit: 35 }
+};
+function cineHead() { const p = V3(0, 0, 0); if (bones.spine006) bones.spine006.getWorldPosition(p); else p.set(girl.position.x, girl.position.y + 1.5, girl.position.z); return p; }
+function cineClamp(p) { p.x = THREE.MathUtils.clamp(p.x, -6.5, 6.5); p.z = THREE.MathUtils.clamp(p.z, -6.5, 6.5); p.y = THREE.MathUtils.clamp(p.y, 0.35, 5.4); return p; }
+function cineMode() {
+  if (typeof sheTalks === 'function' && sheTalks()) return 0;
+  if (CINE.prev && CINE.prev.distanceTo(girl.position) > 0.004) return 1;
+  return 2;
+}
+function cinePick(mode) {
+  const names = Object.keys(CINE_SHOTS).filter(n => n !== CINE.last && CINE_SHOTS[n].w[mode] > 0);
+  let sum = 0; for (const n of names) sum += CINE_SHOTS[n].w[mode];
+  let r = Math.random() * sum; for (const n of names) { r -= CINE_SHOTS[n].w[mode]; if (r <= 0) return n; }
+  return names[0];
+}
+function cineNewShot(t) {
+  const mode = cineMode(), name = cinePick(mode);
+  CINE.shot = name; CINE.last = name; CINE.t0 = t;
+  CINE.dur = mode === 0 ? 3.5 + Math.random() * 2.5 : mode === 1 ? 5 + Math.random() * 3 : 7 + Math.random() * 4;
+  CINE.base = girl.position.clone();
+  CINE.yaw = girl.rotation.y;                       // fixed for the shot, so the camera does not swing when she turns
+  CINE.cut = Math.random() < 0.7;                   // 70% hard cut like real editing, 30% smooth move
+  CINE.blend = CINE.cut ? 1 : 0;
+  CINE.side = Math.random() < 0.5 ? 1 : -1;
+}
+function cineAim(t, out, look) {
+  const s = CINE_SHOTS[CINE.shot], k = THREE.MathUtils.smoothstep(Math.min(1, (t - CINE.t0) / CINE.dur), 0, 1);
+  CINE.base.lerp(girl.position, 0.04);              // follow her softly when she walks
+  const ang = CINE.yaw + THREE.MathUtils.degToRad(s.a + (s.orbit || 0) * CINE.side * (k - 0.5));
+  const d = s.d[0] + (s.d[1] - s.d[0]) * k, h = s.h[0] + (s.h[1] - s.h[0]) * k;
+  out.set(CINE.base.x + Math.sin(ang) * d, girl.position.y + h, CINE.base.z + Math.cos(ang) * d);
+  cineClamp(out);
+  const head = cineHead();
+  if (s.look === 'head') look.copy(head); else look.set(head.x, head.y - 0.35, head.z);
+}
+window.AIWorld.onFrame.push((t, dt) => {
+  const busy = !CINE.on || !loaded || CAMG.goal || performance.now() < CINE.userUntil || (typeof FXS !== 'undefined' && FXS.camSave);
+  if (busy) { CINE.prev = girl.position.clone(); return; }
+  if (!CINE.shot || t - CINE.t0 > CINE.dur) cineNewShot(t);
+  else if (cineMode() === 0 && t - CINE.t0 > 2.5 && CINE_SHOTS[CINE.shot].w[0] === 0) cineNewShot(t);   // she started talking during a far shot: cut in
+  const pos = V3(0, 0, 0), look = V3(0, 0, 0);
+  cineAim(t, pos, look);
+  if (CINE.blend >= 1) { camera.position.copy(pos); controls.target.copy(look); }
+  else { CINE.blend = Math.min(1, CINE.blend + dt / 1.2); const k = 1 - Math.exp(-dt * 3); camera.position.lerp(pos, k); controls.target.lerp(look, k); }
+  CINE.prev = girl.position.clone();
+});
+controls.addEventListener('start', () => { CINE.userUntil = performance.now() + 15000; CINE.shot = null; });
+{
+  const btn = document.createElement('button'); btn.id = 'cinebtn'; btn.title = 'cinematic camera: changes angle every few seconds (key C)';
+  const show = () => { btn.textContent = CINE.on ? 'Cinema: On' : 'Cinema: Off'; };
+  btn.onclick = () => { CINE.on = !CINE.on; CINE.shot = null; CINE.userUntil = 0; show(); };
+  show(); document.getElementById('bar').insertBefore(btn, document.getElementById('clip'));
+  window.addEventListener('keydown', (e) => { if ((e.key === 'c' || e.key === 'C') && document.activeElement !== sayEl) btn.onclick(); });
+  window.AIWorld.cinema = (on) => { CINE.on = on !== false; CINE.shot = null; show(); };
+}
+
+
+// ---------------------------------------------------------------- API_KEY_V1: "API key" button
+// Type an API key (Claude / Anthropic) and pick the brain. Brain.py keeps it in brain_settings.json (not on GitHub).
+{
+  const BRAIN_SET = 'http://localhost:5005/settings';
+  const btn = document.createElement('button'); btn.id = 'apikeybtn'; btn.textContent = 'API key'; btn.title = 'API key and brain choice';
+  document.getElementById('bar').insertBefore(btn, document.getElementById('clip'));
+  const box = document.createElement('div'); box.id = 'apikeybox';
+  box.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:50;background:#1d2230;color:#fff;padding:16px 18px;border-radius:12px;font:14px system-ui;width:min(420px,90vw);box-shadow:0 8px 30px #0008;display:none';
+  box.innerHTML = '<b>Brain + API key</b><div style="margin:10px 0 4px">Brain</div>'
+    + '<select id="ak_prov" style="width:100%;padding:6px"><option value="ollama">Ollama on this laptop (qwen3:4b, free)</option><option value="claude">Claude (needs API key)</option></select>'
+    + '<div style="margin:10px 0 4px">Anthropic API key</div>'
+    + '<div style="display:flex;gap:6px"><input id="ak_key" type="password" autocomplete="off" placeholder="sk-ant-..." style="flex:1;padding:6px"><button id="ak_show">Show</button></div>'
+    + '<div id="ak_msg" style="margin:8px 0;opacity:.8;font-size:12px"></div>'
+    + '<div style="display:flex;gap:8px;justify-content:flex-end"><button id="ak_close">Close</button><button id="ak_save">Save</button></div>';
+  document.body.appendChild(box);
+  const $ = (id) => document.getElementById(id), msg = (t) => { $('ak_msg').textContent = t; };
+  ['keydown', 'keyup', 'keypress'].forEach(ev => box.addEventListener(ev, e => e.stopPropagation()));   // typing here does not move her or the camera
+  function fill(j) { $('ak_prov').value = j.provider === 'claude' ? 'claude' : 'ollama'; $('ak_key').value = j.key || ''; msg(j.key_set ? 'Key saved: ...' + String(j.key).slice(-4) + '  |  brain now: ' + j.provider : 'No key saved yet  |  brain now: ' + j.provider); }
+  btn.onclick = () => {
+    box.style.display = box.style.display === 'none' ? 'block' : 'none';
+    if (box.style.display === 'block') fetch(BRAIN_SET).then(r => r.json()).then(fill).catch(() => msg('The brain is not running, so the key cannot be read or saved. Start the brain first.'));
+  };
+  $('ak_show').onclick = () => { const k = $('ak_key'); k.type = k.type === 'password' ? 'text' : 'password'; $('ak_show').textContent = k.type === 'password' ? 'Show' : 'Hide'; };
+  $('ak_close').onclick = () => { box.style.display = 'none'; };
+  $('ak_save').onclick = () => {
+    const provider = $('ak_prov').value, api_key = $('ak_key').value.trim();
+    if (provider === 'claude' && !api_key) { msg('Claude needs an API key.'); return; }
+    fetch(BRAIN_SET, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, api_key }) })
+      .then(r => r.json()).then(j => { fill(j); msg('Saved. ' + $('ak_msg').textContent); }).catch(() => msg('Could not save: the brain is not running.'));
+  };
+}
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;

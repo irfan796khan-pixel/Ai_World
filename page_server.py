@@ -50,6 +50,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if method == "POST":
             body = self.rfile.read(int(self.headers.get("Content-Length", "0") or 0))
         piper = girl_voice is not None and girl_voice.ready()
+        if self.headers.get("X-Voice-Engine", "").lower() == "voicestudio":   # VOICE_SWITCH_V1: menu "Voice: VoiceStudio"
+            piper = False
         if piper and method == "GET" and self.path.startswith("/v1/audio/voices"):
             data = json.dumps({"data": [{"id": "AI World Girl", "name": "AI World Girl (Piper teen)"}]}).encode()
             return self._send(200, "application/json", data)
@@ -66,7 +68,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 text = ""
             if not text.strip():
                 return self._send(400, "text/plain", b"no text")
-            key = os.path.join(CACHE, "piper-" + hashlib.sha1((girl_voice.VOICE + "|%s|" % girl_voice.LIFT + text).encode()).hexdigest() + ".wav")
+            key = os.path.join(CACHE, "piper-" + hashlib.sha1((girl_voice.VOICE + "|%s|%s|%s|" % (girl_voice.LIFT, getattr(girl_voice, "SPEED", 1), getattr(girl_voice, "NOISE", 0)) + text).encode()).hexdigest() + ".wav")
             if os.path.exists(key):
                 with open(key, "rb") as f:
                     return self._send(200, "audio/wav", f.read(), "hit")

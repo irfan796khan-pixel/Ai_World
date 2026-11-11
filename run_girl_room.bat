@@ -25,7 +25,10 @@ rem VoiceStudio is no longer needed for her voice. If it is running, Live chat u
 rem ---- 3. brain (Steven's Brain.py) in its own window, unless it is already running
 "%PY%" wait_for.py http://127.0.0.1:5005/health 0
 if errorlevel 1 (
-  start "AI World - brain" "%PY%" "Brain.py" --serve --port 5005
+  rem BRAIN_START_V1: start_brain.bat also starts Ollama and stays open with the error if the brain stops
+  start "AI World - brain" cmd /c start_brain.bat
+  echo Waiting for the brain to wake up ^(up to 60 s^)...
+  "%PY%" wait_for.py http://127.0.0.1:5005/health 60
 ) else (
   echo Brain is already running.
 )
