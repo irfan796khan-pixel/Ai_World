@@ -541,7 +541,7 @@ def messages_for(user_text, reminder=None):
     return messages
 
 
-def send_json(url, payload, headers):
+def send_json(url, payload, headers, timeout=120):
 
     # Ollama and Claude both accept HTTP requests.
     # This handles the connection so we don't duplicate it.
@@ -554,7 +554,7 @@ def send_json(url, payload, headers):
 
     with urllib.request.urlopen(
         request,
-        timeout=120
+        timeout=timeout
     ) as response:
 
         return json.loads(
@@ -684,7 +684,7 @@ def ask_venice(user_text, reminder=None):
         "temperature": 0.9,
         "max_tokens": 700,
         "response_format": {"type": "json_object"},
-        "venice_parameters": {"include_venice_system_prompt": False},   # only her personality, not Venice's own
+        "venice_parameters": {"include_venice_system_prompt": False, "disable_thinking": True},   # only her personality, not Venice's own
     }
     headers = {"Content-Type": "application/json", "Authorization": "Bearer " + api_key}
     try:
@@ -1217,7 +1217,7 @@ def context_hint():
     return "\n\nROOM RIGHT NOW (use it for the roast, do not read it out like a list):\n" + "\n".join(lines) if lines else ""
 
 
-# STORY_V1: her_story.txt = how she was built. She reads it when a message asks about it,
+# STORY_V1 + PRESENT_V2: her_story.txt = how she was built. She reads it when a message asks about it,
 # and POST /present turns it (or any long text you paste) into a presentation show.
 STORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "her_story.txt")
 STORY_WORDS = re.compile(r"\b(built|build|made|make you|created?|creator|story|team|project|presentation|present|who are you|where (do|did) you come|how (were|was|did) you)\b", re.I)
@@ -1242,20 +1242,20 @@ def story_hint():
 SHOW_ACTIONS = ["idle", "wave", "talk", "walk", "walk_to_bed", "sit", "cross", "thumbs", "point_camera"]
 
 
-def model_text(provider, system, user, max_tokens=1800):
+def model_text(provider, system, user, max_tokens=4000):
     """One plain call to the chosen brain; returns its text. Used for writing presentation shows."""
     if provider == "venice":
         payload = {"model": os.getenv("VENICE_MODEL", "").strip() or VENICE_MODELS[0], "temperature": 0.9, "max_tokens": max_tokens,
                    "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                   "response_format": {"type": "json_object"}, "venice_parameters": {"include_venice_system_prompt": False}}
+                   "response_format": {"type": "json_object"}, "venice_parameters": {"include_venice_system_prompt": False, "disable_thinking": True}}
         headers = {"Content-Type": "application/json", "Authorization": "Bearer " + (os.getenv("VENICE_API_KEY") or "")}
         try:
-            data = send_json(VENICE_URL, payload, headers)
+            data = send_json(VENICE_URL, payload, headers, 300)
         except urllib.error.HTTPError as error:
             if error.code != 400:
                 raise
             payload.pop("response_format", None); payload.pop("venice_parameters", None)
-            data = send_json(VENICE_URL, payload, headers)
+            data = send_json(VENICE_URL, payload, headers, 300)
         return data["choices"][0]["message"].get("content") or ""
     if provider in ("gemini", "vertex"):
         key = os.getenv("VERTEX_API_KEY" if provider == "vertex" else "GEMINI_API_KEY") or ""
@@ -1264,45 +1264,52 @@ def model_text(provider, system, user, max_tokens=1800):
                    "generationConfig": {"temperature": 1.0, "responseMimeType": "application/json", "thinkingConfig": {"thinkingLevel": "minimal"}}}
         headers = {"Content-Type": "application/json", "x-goog-api-key": key}
         try:
-            data = send_json(url, payload, headers)
+            data = send_json(url, payload, headers, 300)
         except urllib.error.HTTPError as error:
             if error.code != 400:
                 raise
             payload["generationConfig"].pop("thinkingConfig", None)
-            data = send_json(url, payload, headers)
+            data = send_json(url, payload, headers, 300)
         return "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"] if not p.get("thought"))
     if provider == "claude":
         data = send_json(CLAUDE_URL, {"model": CLAUDE_MODEL, "max_tokens": max_tokens, "system": system,
                                       "messages": [{"role": "user", "content": user}]},
-                         {"Content-Type": "application/json", "x-api-key": os.getenv("ANTHROPIC_API_KEY") or "", "anthropic-version": "2023-06-01"})
+                         {"Content-Type": "application/json", "x-api-key": os.getenv("ANTHROPIC_API_KEY") or "", "anthropic-version": "2023-06-01"}, 300)
         return "".join(b.get("text", "") for b in data.get("content", []))
     data = send_json(OLLAMA_URL, {"model": OLLAMA_MODEL, "stream": False, "think": False, "format": "json", "keep_alive": KEEP_ALIVE,
                                   "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                                  "options": {"temperature": 0.8, "num_ctx": 8192, "num_predict": max_tokens}}, {"Content-Type": "application/json"})
+                                  "options": {"temperature": 0.8, "num_ctx": 12288, "num_predict": max_tokens}}, {"Content-Type": "application/json"}, 300)
     return data["message"]["content"]
 
 
 def make_show(source_text, provider):
-    """Turns a text (her story, or anything you paste) into a presentation she performs."""
-    system = (PERSONALITY + "\n\nNOW YOU ARE ON STAGE. Turn the text the user gives you into YOUR presentation, "
-              "told by you in the first person, in your sassy roasting stand-up style, to an audience (a class). "
-              "Use only facts from the text; never invent numbers, names or features. Keep every fact, cut nothing important. "
-              "8 to 12 lines. Each line is 2 to 4 short sentences that are easy to say out loud. Start by greeting the room, end with a punchline and an exit. "
+    """PRESENT_V2: she writes her own presentation (2 to 3 minutes) from her story, then performs it. No fixed script."""
+    persona = PERSONALITY.split("EMOTIONS:")[0]          # who she is and how she roasts (not the chat reply format)
+    system = (persona + "\n\nNOW YOU ARE ON STAGE in front of a class. Write YOUR OWN presentation about yourself, "
+              "in the first person (I, me, my), from the true facts in the text below. Never invent numbers, names, tools or features. "
+              "It must last 2 to 3 minutes when spoken: 16 to 22 parts, each part 2 to 4 short sentences that are easy to say out loud, "
+              "about 350 to 500 words in total. Tell it like a stand-up show: greet the room, tell where you came from, how your body, "
+              "face, moves, voice and brain were built, the problems the team fixed, what changed most recently, what is still missing, "
+              "and finish with a punchline and a goodbye. Roast the team and the audience along the way, but keep it fun, not mean. "
               "Return ONLY JSON: {\"lines\": [{\"action\": one of %s, \"mood\": one of %s, \"text\": \"...\"}]}" % (SHOW_ACTIONS, EMOTIONS))
-    text = model_text(provider, system, "Present this:\n\n" + source_text)
+    text = model_text(provider, system, "These are the true facts about you:\n\n" + source_text)
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
     data = json.loads(text[text.find("{"): text.rfind("}") + 1])
+    raw = data.get("lines")
+    if not raw and isinstance(data.get("response"), str):     # the brain answered like a normal chat: cut it into parts
+        sents = split_sentences(data["response"])
+        raw = [{"text": " ".join(sents[i:i + 3])} for i in range(0, len(sents), 3)]
     lines = []
-    for ln in (data.get("lines") or [])[:14]:
-        t = str(ln.get("text") or "").strip()
+    for ln in (raw or [])[:26]:
+        t = str((ln or {}).get("text") or "").strip() if isinstance(ln, dict) else str(ln).strip()
         if not t:
             continue
-        lines.append({"action": ln.get("action") if ln.get("action") in SHOW_ACTIONS else "talk",
-                      "mood": ln.get("mood") if ln.get("mood") in EMOTIONS else "amused", "text": t, "pause": 0.5})
-    if not lines:
-        raise ValueError("The brain wrote no lines.")
+        lines.append({"action": ln.get("action") if isinstance(ln, dict) and ln.get("action") in SHOW_ACTIONS else "talk",
+                      "mood": ln.get("mood") if isinstance(ln, dict) and ln.get("mood") in EMOTIONS else "amused", "text": t, "pause": 0.5})
+    if len(lines) < 3:
+        raise ValueError("The brain wrote only %d parts." % len(lines))
     lines[0]["action"] = "wave"
-    return {"about": "Written by the brain from a text", "sayAs": {"AI World": "A I World", "Ai_World": "A I World", "Brain.py": "Brain dot pie", "API": "A P I", "GitHub": "Git Hub", "qwen3:4b": "Qwen 3, 4 B"}, "lines": lines}
+    return {"about": "Written by her brain just now", "sayAs": {"AI World": "A I World", "Ai_World": "A I World", "Brain.py": "Brain dot pie", "API": "A P I", "GitHub": "Git Hub", "qwen3:4b": "Qwen 3, 4 B", "Hunyuan3D": "Hunyuan 3 D", "Mixamo": "Mix a mo", "BSU": "B S U"}, "lines": lines}
 
 
 def get_provider_for_web(requested=None):
