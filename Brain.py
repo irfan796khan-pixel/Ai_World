@@ -594,6 +594,59 @@ def ask_ollama(user_text, reminder=None):
     )
 
 
+# GEMINI_V1: Google Gemini brain. Key and model come from the room's "API key" box (brain_settings.json).
+# gemini-3.5-flash-lite = fastest (default). gemini-3.8-flash = smarter, a little slower.
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent"
+GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-3.8-flash"]
+
+
+def ask_gemini(user_text, reminder=None):
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("Gemini isn't configured. Add the Gemini API key in the room (button API key).")
+    model = os.getenv("GEMINI_MODEL", "").strip() or GEMINI_MODELS[0]
+    contents = []
+    for m in messages_for(user_text, reminder):
+        role = "model" if m["role"] == "assistant" else "user"
+        if contents and contents[-1]["role"] == role:          # Gemini wants user / model turns one after another
+            contents[-1]["parts"][0]["text"] += "\n" + m["content"]
+        else:
+            contents.append({"role": role, "parts": [{"text": m["content"]}]})
+    system = (PERSONALITY + day_summary_text() + said_hint() + context_hint()
+              + "\n\nReturn ONLY one JSON object with the keys response, emotion, animation, actions. No other text.")
+    payload = {
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": contents,
+        "generationConfig": {
+            "temperature": 1.0,
+            "responseMimeType": "application/json",
+            "thinkingConfig": {"thinkingLevel": "minimal"},   # fastest answer; Gemini 3 cannot switch thinking fully off
+        },
+    }
+    headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
+    try:
+        data = send_json(GEMINI_URL % model, payload, headers)
+    except urllib.error.HTTPError as error:
+        if error.code != 400:
+            raise
+        payload["generationConfig"].pop("thinkingConfig", None)   # this model does not take that setting: ask again without it
+        data = send_json(GEMINI_URL % model, payload, headers)
+    parts = data["candidates"][0]["content"]["parts"]
+    text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        text = text[text.find("{"):]
+    reply = json.loads(text[text.find("{"): text.rfind("}") + 1])
+    if not isinstance(reply.get("actions"), list):
+        reply["actions"] = []
+    if reply.get("emotion") not in EMOTIONS:
+        reply["emotion"] = "amused"
+    if reply.get("animation") not in ANIMATIONS:
+        reply["animation"] = "idle"
+    return reply
+
+
 def ask_claude(user_text, reminder=None):
 
     # We don't need Claude yet, but when we do,
@@ -849,6 +902,8 @@ def ask_brain(user_text, provider):
             # this point works exactly the same for either model.
             if provider == "claude":
                 reply = ask_claude(user_text, reminder)
+            elif provider == "gemini":
+                reply = ask_gemini(user_text, reminder)
             else:
                 reply = ask_ollama(user_text, reminder)
 
@@ -987,6 +1042,10 @@ def load_settings():
         os.environ["ANTHROPIC_API_KEY"] = data["anthropic_api_key"]
     if data.get("provider"):
         os.environ["BRAIN_PROVIDER"] = data["provider"]
+    if data.get("gemini_api_key"):
+        os.environ["GEMINI_API_KEY"] = data["gemini_api_key"]
+    if data.get("gemini_model"):
+        os.environ["GEMINI_MODEL"] = data["gemini_model"]
     return data
 
 
@@ -1005,6 +1064,9 @@ def settings_view():
         "claude_model": CLAUDE_MODEL,
         "key_set": bool(key),
         "key": key,
+        "gemini_key": os.getenv("GEMINI_API_KEY", ""),
+        "gemini_model": os.getenv("GEMINI_MODEL", "").strip() or "gemini-3.5-flash-lite",
+        "gemini_models": ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
     }
 
 
@@ -1088,7 +1150,16 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
                     os.environ["ANTHROPIC_API_KEY"] = data["anthropic_api_key"]
                 else:
                     os.environ.pop("ANTHROPIC_API_KEY", None)
-            if payload.get("provider") in ("ollama", "claude"):
+            if "gemini_api_key" in payload:
+                data["gemini_api_key"] = str(payload.get("gemini_api_key") or "").strip()
+                if data["gemini_api_key"]:
+                    os.environ["GEMINI_API_KEY"] = data["gemini_api_key"]
+                else:
+                    os.environ.pop("GEMINI_API_KEY", None)
+            if payload.get("gemini_model"):
+                data["gemini_model"] = str(payload["gemini_model"])
+                os.environ["GEMINI_MODEL"] = data["gemini_model"]
+            if payload.get("provider") in ("ollama", "claude", "gemini"):
                 data["provider"] = payload["provider"]
                 os.environ["BRAIN_PROVIDER"] = payload["provider"]
             save_settings(data)
