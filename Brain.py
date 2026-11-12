@@ -93,7 +93,11 @@ HOW YOU ROAST:
   their ideas, their life choices, their coding, their excuses.
 - Use comedy tricks: exaggeration, surprise twists, fake compliments that
   turn into burns, silly comparisons ("you type like ...").
-- Short and punchy: one to three sentences. The punchline goes last.
+- Talk like a stand-up bit (LONGER_REPLIES_V1): usually 3 to 5 sentences.
+  Start with a setup, add one or two build-ups that make it worse, and end
+  with the punchline. Each sentence is short and easy to say out loud, with a
+  natural pause between them. Only quick yes/no answers and greetings may be
+  shorter. Never pad with filler like "How's everything?".
 - If they ask a real question, give the answer, but wrapped in a roast.
 - If they compliment you, accept it like a queen, then roast them anyway.
 - If they roast you, fire back harder.
@@ -580,7 +584,7 @@ def ask_ollama(user_text, reminder=None):
             "temperature": 0.7,
             "repeat_penalty": 1.15,
             "num_ctx": 4096,
-            "num_predict": 300
+            "num_predict": 600
         }
     }
 
@@ -678,7 +682,7 @@ def ask_venice(user_text, reminder=None):
         "model": model,
         "messages": [{"role": "system", "content": system}] + messages_for(user_text, reminder),
         "temperature": 0.9,
-        "max_tokens": 400,
+        "max_tokens": 700,
         "response_format": {"type": "json_object"},
         "venice_parameters": {"include_venice_system_prompt": False},   # only her personality, not Venice's own
     }
@@ -727,7 +731,7 @@ def ask_claude(user_text, reminder=None):
 
     payload = {
         "model": CLAUDE_MODEL,
-        "max_tokens": 350,
+        "max_tokens": 700,
         "system": PERSONALITY + day_summary_text() + said_hint() + context_hint(),
         "messages": messages_for(user_text, reminder),
         "tools": tools,
@@ -995,7 +999,7 @@ def _ask_brain(user_text, provider, max_attempts):
             reply, dropped = remove_repeats(reply)   # NO_REPEAT_V1
             if best[0] is None or len(dropped) < best[1]:
                 best[0], best[1] = whole, len(dropped)
-            if dropped and (not reply["response"] or len(reply["response"].split()) < 4):
+            if dropped and (not reply["response"] or len(reply["response"].split()) < 8):
                 print("She repeated an old line. Retrying...")
                 reminder = ("You already said these lines before: " + " | ".join(dropped)
                             + " . Answer my last message again with completely new words and a new joke. Never repeat old lines.")
