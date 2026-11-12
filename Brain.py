@@ -705,6 +705,52 @@ def ask_venice(user_text, reminder=None):
     return reply
 
 
+# OPENROUTER_V1: OpenRouter (OpenAI-style chat API). Key + model from the room's "API key" box.
+# "openrouter/free" picks a free model by itself, so it costs nothing (Imran's key has a 0 credit limit).
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MODELS = ["openrouter/free"]
+
+
+def openrouter_send(payload, timeout=None):
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        raise ValueError("OpenRouter isn't configured. Add the OpenRouter API key in the room (button API key).")
+    headers = {"Content-Type": "application/json", "Authorization": "Bearer " + api_key,
+               "HTTP-Referer": "http://localhost:8081", "X-Title": "AI World"}
+    args = (OPENROUTER_URL, payload, headers) + ((timeout,) if timeout else ())
+    try:
+        return send_json(*args)
+    except urllib.error.HTTPError as error:
+        if error.code != 400 or "response_format" not in payload:
+            raise
+        payload.pop("response_format", None)          # this free model does not take JSON mode: ask again without it
+        return send_json(*args)
+
+
+def ask_openrouter(user_text, reminder=None):
+    model = os.getenv("OPENROUTER_MODEL", "").strip() or OPENROUTER_MODELS[0]
+    system = (PERSONALITY + day_summary_text() + said_hint() + context_hint() + story_hint()
+              + "\n\nReturn ONLY one JSON object with the keys response, emotion, animation, actions. No other text.")
+    payload = {
+        "model": model,
+        "messages": [{"role": "system", "content": system}] + messages_for(user_text, reminder),
+        "temperature": 0.9,
+        "max_tokens": 8000,
+        "response_format": {"type": "json_object"},
+    }
+    data = openrouter_send(payload)
+    text = data["choices"][0]["message"].get("content") or ""
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()   # some models write their thinking first
+    reply = json.loads(text[text.find("{"): text.rfind("}") + 1])
+    if not isinstance(reply.get("actions"), list):
+        reply["actions"] = []
+    if reply.get("emotion") not in EMOTIONS:
+        reply["emotion"] = "amused"
+    if reply.get("animation") not in ANIMATIONS:
+        reply["animation"] = "idle"
+    return reply
+
+
 def ask_claude(user_text, reminder=None):
 
     # We don't need Claude yet, but when we do,
@@ -956,7 +1002,7 @@ CLOUD_FAIL = [None]
 
 def ask_brain(user_text, provider):
     CLOUD_FAIL[0] = None
-    reply = _ask_brain(user_text, provider, 2 if provider in ("gemini", "vertex", "venice", "claude") else MAX_ATTEMPTS)
+    reply = _ask_brain(user_text, provider, 2 if provider in ("gemini", "vertex", "venice", "openrouter", "claude") else MAX_ATTEMPTS)
     if reply is None and provider != "ollama" and CLOUD_FAIL[0]:
         print("%s could not answer (%s). Using the free Ollama brain for this reply." % (provider, CLOUD_FAIL[0]))
         reply = _ask_brain(user_text, "ollama", MAX_ATTEMPTS)
@@ -982,6 +1028,8 @@ def _ask_brain(user_text, provider, max_attempts):
                 reply = ask_vertex(user_text, reminder)
             elif provider == "venice":
                 reply = ask_venice(user_text, reminder)
+            elif provider == "openrouter":
+                reply = ask_openrouter(user_text, reminder)
             else:
                 reply = ask_ollama(user_text, reminder)
 
@@ -1138,7 +1186,7 @@ def load_settings():
             data = json.load(f)
     except Exception:
         data = {}
-    for k in ("anthropic_api_key", "gemini_api_key", "vertex_api_key", "venice_api_key"):
+    for k in ("anthropic_api_key", "gemini_api_key", "vertex_api_key", "venice_api_key", "openrouter_api_key"):
         if data.get(k):
             data[k] = clean_key(data[k])
     if data.get("anthropic_api_key"):
@@ -1155,6 +1203,10 @@ def load_settings():
         os.environ["VENICE_API_KEY"] = data["venice_api_key"]
     if data.get("venice_model"):
         os.environ["VENICE_MODEL"] = data["venice_model"]
+    if data.get("openrouter_api_key"):
+        os.environ["OPENROUTER_API_KEY"] = data["openrouter_api_key"]
+    if data.get("openrouter_model"):
+        os.environ["OPENROUTER_MODEL"] = data["openrouter_model"]
     return data
 
 
@@ -1192,6 +1244,8 @@ def settings_view():
         "vertex_key": os.getenv("VERTEX_API_KEY", ""),
         "venice_key": os.getenv("VENICE_API_KEY", ""),
         "venice_model": os.getenv("VENICE_MODEL", "").strip() or "deepseek-v4-1-flash",
+        "openrouter_key": os.getenv("OPENROUTER_API_KEY", ""),
+        "openrouter_model": os.getenv("OPENROUTER_MODEL", "").strip() or OPENROUTER_MODELS[0],
         "gemini_model": os.getenv("GEMINI_MODEL", "").strip() or "gemini-3.5-flash-lite",
         "gemini_models": ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
     }
@@ -1255,6 +1309,12 @@ def model_text(provider, system, user, max_tokens=4000):
             payload.pop("response_format", None); payload.pop("venice_parameters", None)
             data = send_json(VENICE_URL, payload, headers, 300)
         return data["choices"][0]["message"].get("content") or ""
+    if provider == "openrouter":
+        payload = {"model": os.getenv("OPENROUTER_MODEL", "").strip() or OPENROUTER_MODELS[0], "temperature": 0.9, "max_tokens": max_tokens,
+                   "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                   "response_format": {"type": "json_object"}}
+        data = openrouter_send(payload, 300)
+        return re.sub(r"<think>.*?</think>", "", data["choices"][0]["message"].get("content") or "", flags=re.S).strip()
     if provider in ("gemini", "vertex"):
         key = os.getenv("VERTEX_API_KEY" if provider == "vertex" else "GEMINI_API_KEY") or ""
         url = (VERTEX_URL if provider == "vertex" else GEMINI_URL) % (os.getenv("GEMINI_MODEL", "").strip() or GEMINI_MODELS[0])
@@ -1396,7 +1456,16 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
             if payload.get("venice_model"):
                 data["venice_model"] = str(payload["venice_model"])
                 os.environ["VENICE_MODEL"] = data["venice_model"]
-            if payload.get("provider") in ("ollama", "claude", "gemini", "vertex", "venice"):
+            if "openrouter_api_key" in payload:
+                data["openrouter_api_key"] = clean_key(payload.get("openrouter_api_key"))
+                if data["openrouter_api_key"]:
+                    os.environ["OPENROUTER_API_KEY"] = data["openrouter_api_key"]
+                else:
+                    os.environ.pop("OPENROUTER_API_KEY", None)
+            if payload.get("openrouter_model"):
+                data["openrouter_model"] = str(payload["openrouter_model"]).strip()
+                os.environ["OPENROUTER_MODEL"] = data["openrouter_model"]
+            if payload.get("provider") in ("ollama", "claude", "gemini", "vertex", "venice", "openrouter"):
                 data["provider"] = payload["provider"]
                 os.environ["BRAIN_PROVIDER"] = payload["provider"]
             save_settings(data)
