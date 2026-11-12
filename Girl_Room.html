@@ -1392,7 +1392,8 @@ function showBubble(text, seconds) {
 //   Change live: AIWorld.voice.mode = 'studio' | 'browser' | 'off',  AIWorld.voice.name = 'alloy',  AIWorld.voice.url = '...'
 // her ONE voice: the VoiceStudio profile "AI World Girl" (female, young adult, moderate pitch, american accent, seed 42).
 // A saved profile keeps the same voice on every line; 'alloy' made a different voice each time.
-const GIRL_VOICE = 'AI World Girl';
+const GIRL_VOICE = 'AI World Roast Queen';   // ROAST_QUEEN_V1: VoiceStudio profile (female, young adult, low pitch, american accent, seed 42)
+const VS_SPEED = 0.85;                            // VoiceStudio at 0.85 = about 2.8 words a second, the same pace as her subtitles and Piper
 const VS = { mode: 'studio', engine: 'piper', url: 'http://localhost:3900/v1/audio/speech', name: GIRL_VOICE, ok: null, seq: 0 };   // VOICE_SWITCH_V1: engine 'piper' (her voice) or 'voicestudio'
 // page_server.py (run_girl_room.bat) passes /v1/audio/... through to VoiceStudio, so the browser does not block it.
 // The page checks that once; if this page's own server does not pass voice through, it calls VoiceStudio on port 3900 directly.
@@ -1401,7 +1402,8 @@ if (location.protocol.startsWith('http')) fetch('v1/audio/voices').then(r => {
   if (r.ok && /json/.test(r.headers.get('content-type') || '')) { VS.url = VS_LOCAL; if (VS.ok === false) VS.ok = null; voiceBtnText(); console.log('voice: VoiceStudio through this page server'); warmShow(); }
   else if (r.status === 502) console.warn('voice: page server is ready, but VoiceStudio is closed. Open the VoiceStudio app.');
 }).catch(() => {});
-try { const m = localStorage.getItem('aiworld_voice_mode'); if (m === 'vstudio') { VS.mode = 'studio'; VS.engine = 'voicestudio'; } else if (m) VS.mode = m; const n = localStorage.getItem('aiworld_voice_name'); if (n && n !== 'alloy') VS.name = n; } catch (e) {}
+try { if (localStorage.getItem('aiworld_voice_name') === 'AI World Girl') localStorage.removeItem('aiworld_voice_name');   // old voice: use the new one
+  const m = localStorage.getItem('aiworld_voice_mode'); if (m === 'vstudio') { VS.mode = 'studio'; VS.engine = 'voicestudio'; } else if (m) VS.mode = m; const n = localStorage.getItem('aiworld_voice_name'); if (n && n !== 'alloy') VS.name = n; } catch (e) {}
 // VoiceStudio on this laptop runs on the CPU: one line takes 10-30 s to make. So the page
 //   1. keeps every line it got (VCACHE) and asks only once per line,
 //   2. makes the NEXT lines of the Roast script while she says the current one,
@@ -1409,14 +1411,14 @@ try { const m = localStorage.getItem('aiworld_voice_mode'); if (m === 'vstudio')
 const VCACHE = new Map();
 function voiceFetch(text, engine, extra) {
   return fetch(VS.url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer local', 'X-Voice-Engine': engine },
-    body: JSON.stringify(Object.assign({ model: 'tts-1', voice: VS.name, input: text }, extra || {})) })
+    body: JSON.stringify(Object.assign({ model: 'tts-1', voice: VS.name, input: text }, engine === 'voicestudio' ? { speed: VS_SPEED } : {}, extra || {})) })
     .then(res => { if (!res.ok) throw new Error('VoiceStudio error ' + res.status); return res.blob(); });
 }
 // VS_CHECK_V1: VoiceStudio sometimes makes audio that leaves out part of the text (and the page server keeps that
 // bad audio, so the same line skips every time). Each VoiceStudio piece is measured: VoiceStudio talks about
 // 3.7 words a second, so more than 5 words a second means words are missing. Then it is made again once
 // (as a new request), and if it is still short, her own Piper voice says that piece.
-const VS_MAX_WPS = 5.0;
+const VS_MAX_WPS = 4.3;   // at speed 0.85 she says about 2.8 words a second; over 4.3 means words are missing
 async function blobSeconds(blob) {
   try { const ctx = voiceCtx(); const b = await ctx.decodeAudioData((await blob.arrayBuffer()).slice(0)); return b.duration; } catch (e) { return 0; }
 }
