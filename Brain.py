@@ -1136,6 +1136,9 @@ def load_settings():
             data = json.load(f)
     except Exception:
         data = {}
+    for k in ("anthropic_api_key", "gemini_api_key", "vertex_api_key", "venice_api_key"):
+        if data.get(k):
+            data[k] = clean_key(data[k])
     if data.get("anthropic_api_key"):
         os.environ["ANTHROPIC_API_KEY"] = data["anthropic_api_key"]
     if data.get("provider"):
@@ -1151,6 +1154,21 @@ def load_settings():
     if data.get("venice_model"):
         os.environ["VENICE_MODEL"] = data["venice_model"]
     return data
+
+
+def clean_key(value):
+    """KEY_CLEAN_V1: if a whole command was pasted (curl ... -H "Authorization: Bearer KEY" ...), keep only the key."""
+    v = str(value or "").strip()
+    m = re.search(r"Bearer\s+([^\s'\"\\]+)", v)
+    if m:
+        v = m.group(1)
+    m = re.search(r"[?&]key=([^&\s'\"]+)", v)
+    if m:
+        v = m.group(1)
+    v = v.strip().strip("'\"`").strip()
+    if " " in v or "YOUR_API_KEY" in v:
+        return ""          # not a key
+    return v
 
 
 def save_settings(data):
@@ -1252,13 +1270,13 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
                 return
             data = load_settings()
             if "api_key" in payload:
-                data["anthropic_api_key"] = str(payload.get("api_key") or "").strip()
+                data["anthropic_api_key"] = clean_key(payload.get("api_key"))
                 if data["anthropic_api_key"]:
                     os.environ["ANTHROPIC_API_KEY"] = data["anthropic_api_key"]
                 else:
                     os.environ.pop("ANTHROPIC_API_KEY", None)
             if "gemini_api_key" in payload:
-                data["gemini_api_key"] = str(payload.get("gemini_api_key") or "").strip()
+                data["gemini_api_key"] = clean_key(payload.get("gemini_api_key"))
                 if data["gemini_api_key"]:
                     os.environ["GEMINI_API_KEY"] = data["gemini_api_key"]
                 else:
@@ -1267,13 +1285,13 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
                 data["gemini_model"] = str(payload["gemini_model"])
                 os.environ["GEMINI_MODEL"] = data["gemini_model"]
             if "vertex_api_key" in payload:
-                data["vertex_api_key"] = str(payload.get("vertex_api_key") or "").strip()
+                data["vertex_api_key"] = clean_key(payload.get("vertex_api_key"))
                 if data["vertex_api_key"]:
                     os.environ["VERTEX_API_KEY"] = data["vertex_api_key"]
                 else:
                     os.environ.pop("VERTEX_API_KEY", None)
             if "venice_api_key" in payload:
-                data["venice_api_key"] = str(payload.get("venice_api_key") or "").strip()
+                data["venice_api_key"] = clean_key(payload.get("venice_api_key"))
                 if data["venice_api_key"]:
                     os.environ["VENICE_API_KEY"] = data["venice_api_key"]
                 else:
