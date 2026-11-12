@@ -605,11 +605,21 @@ GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/%s:generat
 GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-3.8-flash"]
 
 
-def ask_gemini(user_text, reminder=None):
-    api_key = os.getenv("GEMINI_API_KEY")
+# VERTEX_V1: the same Gemini models through Google Cloud (Vertex AI). Paid from the Google Cloud billing account,
+# where the monthly Google AI Pro "Gen AI & Cloud credits" are applied. Same request format, other address and key.
+VERTEX_URL = "https://aiplatform.googleapis.com/v1/publishers/google/models/%s:generateContent"
+
+
+def ask_vertex(user_text, reminder=None):
+    return ask_gemini(user_text, reminder, vertex=True)
+
+
+def ask_gemini(user_text, reminder=None, vertex=False):
+    api_key = os.getenv("VERTEX_API_KEY" if vertex else "GEMINI_API_KEY")
     if not api_key:
-        raise ValueError("Gemini isn't configured. Add the Gemini API key in the room (button API key).")
+        raise ValueError("%s isn't configured. Add the key in the room (button API key)." % ("Vertex AI" if vertex else "Gemini"))
     model = os.getenv("GEMINI_MODEL", "").strip() or GEMINI_MODELS[0]
+    url = VERTEX_URL if vertex else GEMINI_URL
     contents = []
     for m in messages_for(user_text, reminder):
         role = "model" if m["role"] == "assistant" else "user"
@@ -630,12 +640,12 @@ def ask_gemini(user_text, reminder=None):
     }
     headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
     try:
-        data = send_json(GEMINI_URL % model, payload, headers)
+        data = send_json(url % model, payload, headers)
     except urllib.error.HTTPError as error:
         if error.code != 400:
             raise
         payload["generationConfig"].pop("thinkingConfig", None)   # this model does not take that setting: ask again without it
-        data = send_json(GEMINI_URL % model, payload, headers)
+        data = send_json(url % model, payload, headers)
     parts = data["candidates"][0]["content"]["parts"]
     text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
     text = text.strip()
@@ -903,7 +913,7 @@ CLOUD_FAIL = [None]
 
 def ask_brain(user_text, provider):
     CLOUD_FAIL[0] = None
-    reply = _ask_brain(user_text, provider, 2 if provider in ("gemini", "claude") else MAX_ATTEMPTS)
+    reply = _ask_brain(user_text, provider, 2 if provider in ("gemini", "vertex", "claude") else MAX_ATTEMPTS)
     if reply is None and provider != "ollama" and CLOUD_FAIL[0]:
         print("%s could not answer (%s). Using the free Ollama brain for this reply." % (provider, CLOUD_FAIL[0]))
         reply = _ask_brain(user_text, "ollama", MAX_ATTEMPTS)
@@ -925,6 +935,8 @@ def _ask_brain(user_text, provider, max_attempts):
                 reply = ask_claude(user_text, reminder)
             elif provider == "gemini":
                 reply = ask_gemini(user_text, reminder)
+            elif provider == "vertex":
+                reply = ask_vertex(user_text, reminder)
             else:
                 reply = ask_ollama(user_text, reminder)
 
@@ -1089,6 +1101,8 @@ def load_settings():
         os.environ["GEMINI_API_KEY"] = data["gemini_api_key"]
     if data.get("gemini_model"):
         os.environ["GEMINI_MODEL"] = data["gemini_model"]
+    if data.get("vertex_api_key"):
+        os.environ["VERTEX_API_KEY"] = data["vertex_api_key"]
     return data
 
 
@@ -1108,6 +1122,7 @@ def settings_view():
         "key_set": bool(key),
         "key": key,
         "gemini_key": os.getenv("GEMINI_API_KEY", ""),
+        "vertex_key": os.getenv("VERTEX_API_KEY", ""),
         "gemini_model": os.getenv("GEMINI_MODEL", "").strip() or "gemini-3.5-flash-lite",
         "gemini_models": ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
     }
@@ -1202,7 +1217,13 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
             if payload.get("gemini_model"):
                 data["gemini_model"] = str(payload["gemini_model"])
                 os.environ["GEMINI_MODEL"] = data["gemini_model"]
-            if payload.get("provider") in ("ollama", "claude", "gemini"):
+            if "vertex_api_key" in payload:
+                data["vertex_api_key"] = str(payload.get("vertex_api_key") or "").strip()
+                if data["vertex_api_key"]:
+                    os.environ["VERTEX_API_KEY"] = data["vertex_api_key"]
+                else:
+                    os.environ.pop("VERTEX_API_KEY", None)
+            if payload.get("provider") in ("ollama", "claude", "gemini", "vertex"):
                 data["provider"] = payload["provider"]
                 os.environ["BRAIN_PROVIDER"] = payload["provider"]
             save_settings(data)
