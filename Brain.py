@@ -895,12 +895,27 @@ def fix_reaction(reply, user_text):
     return reply
 
 
+# CLOUD_FALLBACK_V1: if Gemini or Claude refuses (credits used up, free limit reached, no key, no internet),
+# she answers this message with the free Ollama brain on this laptop instead of going silent.
+# Paid brains get 2 tries per message (not 3), so a repeat costs less.
+CLOUD_FAIL = [None]
+
+
 def ask_brain(user_text, provider):
+    CLOUD_FAIL[0] = None
+    reply = _ask_brain(user_text, provider, 2 if provider in ("gemini", "claude") else MAX_ATTEMPTS)
+    if reply is None and provider != "ollama" and CLOUD_FAIL[0]:
+        print("%s could not answer (%s). Using the free Ollama brain for this reply." % (provider, CLOUD_FAIL[0]))
+        reply = _ask_brain(user_text, "ollama", MAX_ATTEMPTS)
+    return reply
+
+
+def _ask_brain(user_text, provider, max_attempts):
 
     reminder = None
     best = [None, 99]          # NEVER_SILENT_V1: the try with the fewest old lines
 
-    for attempt in range(MAX_ATTEMPTS):
+    for attempt in range(max_attempts):
 
         try:
 
@@ -929,7 +944,7 @@ def ask_brain(user_text, provider):
                 print("She repeated an old line. Retrying...")
                 reminder = ("You already said these lines before: " + " | ".join(dropped)
                             + " . Answer my last message again with completely new words and a new joke. Never repeat old lines.")
-                if attempt < MAX_ATTEMPTS - 1:
+                if attempt < max_attempts - 1:
                     continue
                 if not reply["response"]:
                     print("Every try had old lines: she says the best try anyway (never silent).")
@@ -985,7 +1000,9 @@ def ask_brain(user_text, provider):
                 "AI service error:",
                 error.code
             )
-            return None
+            if provider != "ollama":
+                CLOUD_FAIL[0] = "error %s" % error.code
+            break
 
         except (urllib.error.URLError, TimeoutError) as error:
 
@@ -993,7 +1010,9 @@ def ask_brain(user_text, provider):
                 "Couldn't connect to the AI:",
                 error
             )
-            return None
+            if provider != "ollama":
+                CLOUD_FAIL[0] = "no connection"
+            break
 
         except (
             ValueError,
@@ -1006,8 +1025,11 @@ def ask_brain(user_text, provider):
                 "Problem with the AI response:",
                 error
             )
+            if provider != "ollama" and "configured" in str(error):   # no key saved for this brain
+                CLOUD_FAIL[0] = "no key"
+                break
 
-            if attempt < MAX_ATTEMPTS - 1:
+            if attempt < max_attempts - 1:
                 reminder = (
                     "Return a valid JSON response containing "
                     "response, emotion, and animation. "
