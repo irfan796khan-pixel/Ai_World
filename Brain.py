@@ -93,11 +93,11 @@ HOW YOU ROAST:
   their ideas, their life choices, their coding, their excuses.
 - Use comedy tricks: exaggeration, surprise twists, fake compliments that
   turn into burns, silly comparisons ("you type like ...").
-- Talk like a stand-up bit (LONGER_REPLIES_V1): usually 3 to 5 sentences.
-  Start with a setup, add one or two build-ups that make it worse, and end
-  with the punchline. Each sentence is short and easy to say out loud, with a
-  natural pause between them. Only quick yes/no answers and greetings may be
-  shorter. Never pad with filler like "How's everything?".
+- Length (NO_LIMITS_V1): follow what the person asks. If they ask for detail,
+  go into full detail and talk as long as it takes. If they ask for a short
+  answer, keep it short. Otherwise talk like a stand-up bit: a setup, build-ups,
+  and the punchline last. Sentences easy to say out loud. Never pad with filler
+  like "How's everything?".
 - If they ask a real question, give the answer, but wrapped in a roast.
 - If they compliment you, accept it like a queen, then roast them anyway.
 - If they roast you, fire back harder.
@@ -584,7 +584,7 @@ def ask_ollama(user_text, reminder=None):
             "temperature": 0.7,
             "repeat_penalty": 1.15,
             "num_ctx": 4096,
-            "num_predict": 600
+            "num_predict": -1
         }
     }
 
@@ -682,7 +682,7 @@ def ask_venice(user_text, reminder=None):
         "model": model,
         "messages": [{"role": "system", "content": system}] + messages_for(user_text, reminder),
         "temperature": 0.9,
-        "max_tokens": 700,
+        "max_tokens": 8000,
         "response_format": {"type": "json_object"},
         "venice_parameters": {"include_venice_system_prompt": False, "disable_thinking": True},   # only her personality, not Venice's own
     }
@@ -731,7 +731,7 @@ def ask_claude(user_text, reminder=None):
 
     payload = {
         "model": CLAUDE_MODEL,
-        "max_tokens": 700,
+        "max_tokens": 8000,
         "system": PERSONALITY + day_summary_text() + said_hint() + context_hint() + story_hint(),
         "messages": messages_for(user_text, reminder),
         "tools": tools,
@@ -999,7 +999,7 @@ def _ask_brain(user_text, provider, max_attempts):
             reply, dropped = remove_repeats(reply)   # NO_REPEAT_V1
             if best[0] is None or len(dropped) < best[1]:
                 best[0], best[1] = whole, len(dropped)
-            if dropped and (not reply["response"] or len(reply["response"].split()) < 8):
+            if dropped and not reply["response"]:
                 print("She repeated an old line. Retrying...")
                 reminder = ("You already said these lines before: " + " | ".join(dropped)
                             + " . Answer my last message again with completely new words and a new joke. Never repeat old lines.")
@@ -1282,17 +1282,17 @@ def model_text(provider, system, user, max_tokens=4000):
     return data["message"]["content"]
 
 
-def make_show(source_text, provider):
-    """PRESENT_V2: she writes her own presentation (2 to 3 minutes) from her story, then performs it. No fixed script."""
+def make_show(source_text, provider, ask=""):
+    """PRESENT_V2 + NO_LIMITS_V1: she writes her own presentation from her story, then performs it. No fixed script, no fixed length."""
     persona = PERSONALITY.split("EMOTIONS:")[0]          # who she is and how she roasts (not the chat reply format)
     system = (persona + "\n\nNOW YOU ARE ON STAGE in front of a class. Write YOUR OWN presentation about yourself, "
               "in the first person (I, me, my), from the true facts in the text below. Never invent numbers, names, tools or features. "
-              "It must last 2 to 3 minutes when spoken: 16 to 22 parts, each part 2 to 4 short sentences that are easy to say out loud, "
-              "about 350 to 500 words in total. Tell it like a stand-up show: greet the room, tell where you came from, how your body, "
+              "Make it as long or as short as the request asks; if the request says nothing about length, decide yourself. "
+              "Split it into parts that are easy to say out loud. Tell it like a stand-up show: greet the room, tell where you came from, how your body, "
               "face, moves, voice and brain were built, the problems the team fixed, what changed most recently, what is still missing, "
               "and finish with a punchline and a goodbye. Roast the team and the audience along the way, but keep it fun, not mean. "
               "Return ONLY JSON: {\"lines\": [{\"action\": one of %s, \"mood\": one of %s, \"text\": \"...\"}]}" % (SHOW_ACTIONS, EMOTIONS))
-    text = model_text(provider, system, "These are the true facts about you:\n\n" + source_text)
+    text = model_text(provider, system, ("The request: " + ask + "\n\n" if ask else "") + "These are the true facts about you:\n\n" + source_text, 16000)
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
     data = json.loads(text[text.find("{"): text.rfind("}") + 1])
     raw = data.get("lines")
@@ -1300,14 +1300,14 @@ def make_show(source_text, provider):
         sents = split_sentences(data["response"])
         raw = [{"text": " ".join(sents[i:i + 3])} for i in range(0, len(sents), 3)]
     lines = []
-    for ln in (raw or [])[:26]:
+    for ln in (raw or []):
         t = str((ln or {}).get("text") or "").strip() if isinstance(ln, dict) else str(ln).strip()
         if not t:
             continue
         lines.append({"action": ln.get("action") if isinstance(ln, dict) and ln.get("action") in SHOW_ACTIONS else "talk",
                       "mood": ln.get("mood") if isinstance(ln, dict) and ln.get("mood") in EMOTIONS else "amused", "text": t, "pause": 0.5})
-    if len(lines) < 3:
-        raise ValueError("The brain wrote only %d parts." % len(lines))
+    if not lines:
+        raise ValueError("The brain wrote no parts.")
     lines[0]["action"] = "wave"
     return {"about": "Written by her brain just now", "sayAs": {"AI World": "A I World", "Ai_World": "A I World", "Brain.py": "Brain dot pie", "API": "A P I", "GitHub": "Git Hub", "qwen3:4b": "Qwen 3, 4 B", "Hunyuan3D": "Hunyuan 3 D", "Mixamo": "Mix a mo", "BSU": "B S U"}, "lines": lines}
 
@@ -1420,7 +1420,7 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
             show = None
             for p in ([provider, "ollama"] if provider != "ollama" else ["ollama"]):
                 try:
-                    show = make_show(source, p)
+                    show = make_show(source, p, str(payload.get("ask") or "")[:500])
                     print("Presentation written by %s: %d lines." % (p, len(show["lines"])))
                     break
                 except Exception as error:
