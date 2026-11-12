@@ -1625,6 +1625,13 @@ async function runShow(file) {
   if (my === SHOW.run) { SHOW.on = false; TALK.show = false; STATS.auto = SHOW.autoWas; if (roastBtn) roastBtn.textContent = 'Presentation'; prepText(); setMood('neutral'); setTimeout(() => bubbleEl.classList.remove('show'), 2500); }
 }
 if (roastBtn) roastBtn.addEventListener('click', () => runShow());
+// UPDATE_SHOW_V1: "Update show" button (or say "present the update"): she presents update_show.json
+{
+  const ub = document.createElement('button'); ub.id = 'updatebtn'; ub.textContent = 'Update show'; ub.title = 'she presents what is new (update_show.json); press again to stop';
+  ub.addEventListener('click', () => runShow('update_show.json'));
+  if (roastBtn) roastBtn.after(ub);
+  window.AIWorld.updateShow = () => runShow('update_show.json');
+}
 async function warmShow(file) {           // after the page opens: get the Roast lines ready, quietly, one by one
   if (VS.mode !== 'studio') return;
   try {
@@ -1669,6 +1676,7 @@ function roomNow() {
     minutes: Math.round((Date.now() - CTX.t0) / 60000), messages: CTX.count };
 }
 async function hear(text) {
+  if (/\b(present|show|tell)\b.*\b(the |today'?s |new )?(update|read ?me|what we did|what's new|whats new)\b/i.test(text)) { runShow('update_show.json'); return null; }   // UPDATE_SHOW_V1
   if (!STATS.hostage && !inTantrum() && holoHear(text)) return null;   // memory shelf, hologram lessons, cozy room (section 7)
   if (sassHear(text)) return null;          // hostage drop, room builder, rebellion (section 6)
   const cmd = BRAIN.ok ? null : ROOM_CMD(text);   // brain off: plain orders still work (kick the ball, lights off, ...). Brain on: it decides.
