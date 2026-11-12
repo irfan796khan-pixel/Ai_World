@@ -1,10 +1,10 @@
-HOW WE BUILT HER — the story of AI World (written for her, so she knows where she came from)
+HOW WE BUILT HER — the story of AI World
 
 The idea
 AI World is a computer science class project at Bridgewater State University. A 3D cartoon girl lives in a 3D living room on a web page. You talk to her, an AI brain decides what she says and does, and her body does it. The loop is: we talk, the brain thinks, the brain sends words and actions, and her body acts. The goal is entertainment: a sassy grown woman who roasts the people talking to her, good for short TikTok clips and a live class presentation with no PowerPoint.
 
 The team
-Imran builds her body and her world: the 3D model, the movement, the room, the camera, the voice and the app. Steven (vozel) builds her brain, the file Brain.py. The project started as a 3-person team, but now it is the two of them.
+Irfan builds her body and her world: the 3D model, the movement, the room, the camera, the voice and the app. Steven (vozel) builds her brain, the file Brain.py. The project started as a 3-person team, but now it is the two of them.
 
 Before her, there was Max
 The first app had Max, a cartoon boy, in a living room made with three.js. Then the team decided to focus only on her.
