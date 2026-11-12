@@ -3541,10 +3541,14 @@ controls.addEventListener('start', () => { CINE.userUntil = performance.now() + 
   box.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:50;background:#1d2230;color:#fff;padding:16px 18px;border-radius:12px;font:14px system-ui;width:min(440px,92vw);box-shadow:0 8px 30px #0008;display:none';
   const keyRow = (id, ph) => '<div style="display:flex;gap:6px"><input id="' + id + '" type="password" autocomplete="off" placeholder="' + ph + '" style="flex:1;padding:6px"><button data-show="' + id + '">Show</button></div>';
   box.innerHTML = '<b>Brain + API keys</b><div style="margin:10px 0 4px">Brain</div>'
-    + '<select id="ak_prov" style="width:100%;padding:6px"><option value="ollama">Ollama on this laptop (qwen3:4b, free)</option><option value="gemini">Gemini (needs Gemini key)</option><option value="claude">Claude (needs Anthropic key)</option></select>'
+    + '<select id="ak_prov" style="width:100%;padding:6px"><option value="ollama">Ollama on this laptop (qwen3:4b, free)</option><option value="gemini">Gemini, AI Studio key</option><option value="vertex">Gemini via Google Cloud (Vertex AI, uses your AI Pro credits)</option><option value="venice">Venice AI (needs Venice key)</option><option value="claude">Claude (needs Anthropic key)</option></select>'
     + '<div style="margin:10px 0 4px">Gemini model</div>'
     + '<select id="ak_gmodel" style="width:100%;padding:6px"><option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (fastest)</option><option value="gemini-3.8-flash">gemini-3.8-flash (smarter, a little slower)</option></select>'
     + '<div style="margin:10px 0 4px">Gemini API key</div>' + keyRow('ak_gkey', 'AIza...')
+    + '<div style="margin:10px 0 4px">Google Cloud (Vertex AI) API key</div>' + keyRow('ak_vkey', 'AQ... or AIza...')   // VERTEX_V1
+    + '<div style="margin:10px 0 4px">Venice model</div>'   // VENICE_V1
+    + '<select id="ak_vmodel" style="width:100%;padding:6px"><option value="deepseek-v4-1-flash">deepseek-v4-1-flash (fast)</option><option value="grok-4-7">grok-4-7 (sharp, slower)</option><option value="venice-uncensored">venice-uncensored</option></select>'
+    + '<div style="margin:10px 0 4px">Venice API key</div>' + keyRow('ak_venkey', 'Venice key')
     + '<div style="margin:10px 0 4px">Anthropic API key</div>' + keyRow('ak_key', 'sk-ant-...')
     + '<div id="ak_msg" style="margin:8px 0;opacity:.8;font-size:12px"></div>'
     + '<div style="display:flex;gap:8px;justify-content:flex-end"><button id="ak_close">Close</button><button id="ak_save">Save</button></div>';
@@ -3554,9 +3558,9 @@ controls.addEventListener('start', () => { CINE.userUntil = performance.now() + 
   box.querySelectorAll('[data-show]').forEach(b => b.onclick = () => { const k = $(b.dataset.show); k.type = k.type === 'password' ? 'text' : 'password'; b.textContent = k.type === 'password' ? 'Show' : 'Hide'; });
   const tail = (k) => k ? '...' + String(k).slice(-4) : 'none';
   function fill(j) {
-    $('ak_prov').value = ['gemini', 'claude'].includes(j.provider) ? j.provider : 'ollama';
+    $('ak_prov').value = ['gemini', 'vertex', 'venice', 'claude'].includes(j.provider) ? j.provider : 'ollama'; $('ak_vkey').value = j.vertex_key || ''; $('ak_venkey').value = j.venice_key || ''; $('ak_vmodel').value = j.venice_model || 'deepseek-v4-1-flash';
     $('ak_key').value = j.key || ''; $('ak_gkey').value = j.gemini_key || ''; $('ak_gmodel').value = j.gemini_model || 'gemini-3.5-flash-lite';
-    msg('Brain now: ' + j.provider + (j.provider === 'gemini' ? ' (' + (j.gemini_model || '') + ')' : '') + '  |  Gemini key: ' + tail(j.gemini_key) + '  |  Anthropic key: ' + tail(j.key));
+    msg('Brain now: ' + j.provider + (j.provider === 'gemini' || j.provider === 'vertex' ? ' (' + (j.gemini_model || '') + ')' : j.provider === 'venice' ? ' (' + (j.venice_model || '') + ')' : '') + '  |  Gemini key: ' + tail(j.gemini_key) + '  |  Cloud key: ' + tail(j.vertex_key) + '  |  Venice key: ' + tail(j.venice_key) + '  |  Anthropic key: ' + tail(j.key));
   }
   btn.onclick = () => {
     box.style.display = box.style.display === 'none' ? 'block' : 'none';
@@ -3564,10 +3568,12 @@ controls.addEventListener('start', () => { CINE.userUntil = performance.now() + 
   };
   $('ak_close').onclick = () => { box.style.display = 'none'; };
   $('ak_save').onclick = () => {
-    const provider = $('ak_prov').value, api_key = $('ak_key').value.trim(), gemini_api_key = $('ak_gkey').value.trim(), gemini_model = $('ak_gmodel').value;
+    const provider = $('ak_prov').value, api_key = $('ak_key').value.trim(), gemini_api_key = $('ak_gkey').value.trim(), gemini_model = $('ak_gmodel').value, vertex_api_key = $('ak_vkey').value.trim(), venice_api_key = $('ak_venkey').value.trim(), venice_model = $('ak_vmodel').value;
     if (provider === 'claude' && !api_key) { msg('Claude needs an Anthropic API key.'); return; }
     if (provider === 'gemini' && !gemini_api_key) { msg('Gemini needs a Gemini API key.'); return; }
-    fetch(BRAIN_SET, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, api_key, gemini_api_key, gemini_model }) })
+    if (provider === 'vertex' && !vertex_api_key) { msg('Google Cloud needs its Vertex AI API key.'); return; }
+    if (provider === 'venice' && !venice_api_key) { msg('Venice needs a Venice API key.'); return; }
+    fetch(BRAIN_SET, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, api_key, gemini_api_key, gemini_model, vertex_api_key, venice_api_key, venice_model }) })
       .then(r => r.json()).then(j => { fill(j); msg('Saved. ' + $('ak_msg').textContent); }).catch(() => msg('Could not save: the brain is not running.'));
   };
 }
