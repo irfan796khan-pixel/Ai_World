@@ -662,6 +662,47 @@ def ask_gemini(user_text, reminder=None, vertex=False):
     return reply
 
 
+# VENICE_V1: Venice AI (OpenAI-style chat API). Key + model from the room's "API key" box.
+VENICE_URL = "https://api.venice.ai/api/v1/chat/completions"
+VENICE_MODELS = ["deepseek-v4-1-flash", "grok-4-7", "venice-uncensored"]
+
+
+def ask_venice(user_text, reminder=None):
+    api_key = os.getenv("VENICE_API_KEY")
+    if not api_key:
+        raise ValueError("Venice isn't configured. Add the Venice API key in the room (button API key).")
+    model = os.getenv("VENICE_MODEL", "").strip() or VENICE_MODELS[0]
+    system = (PERSONALITY + day_summary_text() + said_hint() + context_hint()
+              + "\n\nReturn ONLY one JSON object with the keys response, emotion, animation, actions. No other text.")
+    payload = {
+        "model": model,
+        "messages": [{"role": "system", "content": system}] + messages_for(user_text, reminder),
+        "temperature": 0.9,
+        "max_tokens": 400,
+        "response_format": {"type": "json_object"},
+        "venice_parameters": {"include_venice_system_prompt": False},   # only her personality, not Venice's own
+    }
+    headers = {"Content-Type": "application/json", "Authorization": "Bearer " + api_key}
+    try:
+        data = send_json(VENICE_URL, payload, headers)
+    except urllib.error.HTTPError as error:
+        if error.code != 400:
+            raise
+        payload.pop("response_format", None)          # this model does not take these settings: ask again without them
+        payload.pop("venice_parameters", None)
+        data = send_json(VENICE_URL, payload, headers)
+    text = data["choices"][0]["message"].get("content") or ""
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()   # some models write their thinking first
+    reply = json.loads(text[text.find("{"): text.rfind("}") + 1])
+    if not isinstance(reply.get("actions"), list):
+        reply["actions"] = []
+    if reply.get("emotion") not in EMOTIONS:
+        reply["emotion"] = "amused"
+    if reply.get("animation") not in ANIMATIONS:
+        reply["animation"] = "idle"
+    return reply
+
+
 def ask_claude(user_text, reminder=None):
 
     # We don't need Claude yet, but when we do,
@@ -913,7 +954,7 @@ CLOUD_FAIL = [None]
 
 def ask_brain(user_text, provider):
     CLOUD_FAIL[0] = None
-    reply = _ask_brain(user_text, provider, 2 if provider in ("gemini", "vertex", "claude") else MAX_ATTEMPTS)
+    reply = _ask_brain(user_text, provider, 2 if provider in ("gemini", "vertex", "venice", "claude") else MAX_ATTEMPTS)
     if reply is None and provider != "ollama" and CLOUD_FAIL[0]:
         print("%s could not answer (%s). Using the free Ollama brain for this reply." % (provider, CLOUD_FAIL[0]))
         reply = _ask_brain(user_text, "ollama", MAX_ATTEMPTS)
@@ -937,6 +978,8 @@ def _ask_brain(user_text, provider, max_attempts):
                 reply = ask_gemini(user_text, reminder)
             elif provider == "vertex":
                 reply = ask_vertex(user_text, reminder)
+            elif provider == "venice":
+                reply = ask_venice(user_text, reminder)
             else:
                 reply = ask_ollama(user_text, reminder)
 
@@ -1103,6 +1146,10 @@ def load_settings():
         os.environ["GEMINI_MODEL"] = data["gemini_model"]
     if data.get("vertex_api_key"):
         os.environ["VERTEX_API_KEY"] = data["vertex_api_key"]
+    if data.get("venice_api_key"):
+        os.environ["VENICE_API_KEY"] = data["venice_api_key"]
+    if data.get("venice_model"):
+        os.environ["VENICE_MODEL"] = data["venice_model"]
     return data
 
 
@@ -1123,6 +1170,8 @@ def settings_view():
         "key": key,
         "gemini_key": os.getenv("GEMINI_API_KEY", ""),
         "vertex_key": os.getenv("VERTEX_API_KEY", ""),
+        "venice_key": os.getenv("VENICE_API_KEY", ""),
+        "venice_model": os.getenv("VENICE_MODEL", "").strip() or "deepseek-v4-1-flash",
         "gemini_model": os.getenv("GEMINI_MODEL", "").strip() or "gemini-3.5-flash-lite",
         "gemini_models": ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
     }
@@ -1223,7 +1272,16 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
                     os.environ["VERTEX_API_KEY"] = data["vertex_api_key"]
                 else:
                     os.environ.pop("VERTEX_API_KEY", None)
-            if payload.get("provider") in ("ollama", "claude", "gemini", "vertex"):
+            if "venice_api_key" in payload:
+                data["venice_api_key"] = str(payload.get("venice_api_key") or "").strip()
+                if data["venice_api_key"]:
+                    os.environ["VENICE_API_KEY"] = data["venice_api_key"]
+                else:
+                    os.environ.pop("VENICE_API_KEY", None)
+            if payload.get("venice_model"):
+                data["venice_model"] = str(payload["venice_model"])
+                os.environ["VENICE_MODEL"] = data["venice_model"]
+            if payload.get("provider") in ("ollama", "claude", "gemini", "vertex", "venice"):
                 data["provider"] = payload["provider"]
                 os.environ["BRAIN_PROVIDER"] = payload["provider"]
             save_settings(data)
