@@ -1143,7 +1143,44 @@ function handsAndTurnTick(t, dt) {
 //   The hand-made moves (trip, sit, knock, point, thumbs-up) fade the clips out while they run.
 // ============================================================================
 const MOCAP = { ready: false, clips: null, map: {}, order: [], tposeGL: {}, parentGL: {}, layers: {}, w: 0, armQ: null, hipRest: null, hipH: 0.9 };
-fetch('moves.json').then(r => r.json()).then(j => { MOCAP.clips = j.clips; if (loaded) prepareMocap(); }).catch(e => console.warn('moves.json not loaded — hand-made moves only', e));
+// SMOOTH_CLIPS_V1: moves.json keeps bone turns with only 4 decimals, so slow clips (idle breathing, talking) move in
+// tiny stop-go steps, 30 times a second. That looks like she vibrates. A soft blur over nearby frames (the clips loop,
+// so the blur wraps around) removes the steps and keeps the real motion. Walking, running and waving stay as they are.
+function smoothClips(clips) {
+  const SOFT = { idle: [1, 6, 15, 20, 15, 6, 1], talking: [1, 4, 6, 4, 1] };
+  for (const name in SOFT) {
+    const c = clips && clips[name]; if (!c || !c.tracks) continue;
+    const w = SOFT[name], h = (w.length - 1) / 2, sum = w.reduce((a, b) => a + b, 0), F = c.frames;
+    const blur1 = (arr, stride, comp) => {          // one number per frame (stride), loop-wrapped
+      const n = Math.floor(arr.length / stride); if (n < 3) return;
+      const src = arr.slice();
+      for (let f = 0; f < n; f++) { let v = 0; for (let k = -h; k <= h; k++) v += w[k + h] * src[((f + k) % n + n) % n * stride + comp]; arr[f * stride + comp] = v / sum; }
+    };
+    for (const key in c.tracks) {
+      const tr = c.tracks[key], n = Math.floor(tr.length / 4); if (n < 3) continue;
+      const src = tr.slice();
+      for (let f = 1; f < n; f++) {                 // keep each turn on the same side as the one before (q and -q are the same turn)
+        const d = src[f*4]*src[f*4-4] + src[f*4+1]*src[f*4-3] + src[f*4+2]*src[f*4-2] + src[f*4+3]*src[f*4-1];
+        if (d < 0) for (let i = 0; i < 4; i++) src[f*4+i] = -src[f*4+i];
+      }
+      for (let f = 0; f < n; f++) {
+        let x = 0, y = 0, z = 0, q = 0;
+        for (let k = -h; k <= h; k++) {
+          const g = ((f + k) % n + n) % n, wk = w[k + h];
+          let a = src[g*4], b = src[g*4+1], cc = src[g*4+2], dd = src[g*4+3];
+          if (a*src[f*4] + b*src[f*4+1] + cc*src[f*4+2] + dd*src[f*4+3] < 0) { a = -a; b = -b; cc = -cc; dd = -dd; }
+          x += wk * a; y += wk * b; z += wk * cc; q += wk * dd;
+        }
+        const L = Math.hypot(x, y, z, q) || 1;
+        tr[f*4] = x / L; tr[f*4+1] = y / L; tr[f*4+2] = z / L; tr[f*4+3] = q / L;
+      }
+    }
+    if (Array.isArray(c.hipY)) blur1(c.hipY, 1, 0);
+    if (Array.isArray(c.hipXZ)) { blur1(c.hipXZ, 2, 0); blur1(c.hipXZ, 2, 1); }
+  }
+  return clips;
+}
+fetch('moves.json').then(r => r.json()).then(j => { MOCAP.clips = smoothClips(j.clips); if (loaded) prepareMocap(); }).catch(e => console.warn('moves.json not loaded — hand-made moves only', e));
 const gl = (obj) => girl.quaternion.clone().invert().multiply(obj.getWorldQuaternion(new THREE.Quaternion()));
 function captureTPose() {
   girl.updateMatrixWorld(true);
