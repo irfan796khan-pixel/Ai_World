@@ -1718,7 +1718,7 @@ async function presentText(text) {
   let n = 0; setMood('confused'); showBubble(think[0], 30);
   const tick = setInterval(() => { n++; showBubble(think[Math.min(n, think.length - 1)], 30); }, 12000);   // she may think for a while (up to 5 minutes)
   try {
-    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text.length >= 200 ? text : '' }) });
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text.length >= 200 ? text : '', ask: text.slice(0, 500) }) });   // NO_LIMITS_V1: her length follows your words ("in detail", "short")
     clearInterval(tick); setMood('neutral');
     const show = await r.json();
     if (!show || !Array.isArray(show.lines) || !show.lines.length) throw new Error(show && show.error || 'no lines');
@@ -1729,7 +1729,7 @@ async function presentText(text) {
 window.AIWorld.presentText = presentText;
 async function hear(text) {
   if (text.length >= 200 && /\bpresent/i.test(text)) { presentText(text); return null; }
-  if (PRESENT_ASK.test(text)) { presentText(''); return null; }   // PRESENT_V2
+  if (PRESENT_ASK.test(text)) { presentText(text); return null; }   // PRESENT_V2
   if (!STATS.hostage && !inTantrum() && holoHear(text)) return null;   // memory shelf, hologram lessons, cozy room (section 7)
   if (sassHear(text)) return null;          // hostage drop, room builder, rebellion (section 6)
   const cmd = BRAIN.ok ? null : ROOM_CMD(text);   // brain off: plain orders still work (kick the ball, lights off, ...). Brain on: it decides.
