@@ -566,7 +566,7 @@ def ask_ollama(user_text, reminder=None):
 
     messages = [{
         "role": "system",
-        "content": PERSONALITY + day_summary_text() + said_hint() + context_hint()
+        "content": PERSONALITY + day_summary_text() + said_hint() + context_hint() + story_hint()
     }]
 
     messages.extend(
@@ -631,7 +631,7 @@ def ask_gemini(user_text, reminder=None, vertex=False):
             contents[-1]["parts"][0]["text"] += "\n" + m["content"]
         else:
             contents.append({"role": role, "parts": [{"text": m["content"]}]})
-    system = (PERSONALITY + day_summary_text() + said_hint() + context_hint()
+    system = (PERSONALITY + day_summary_text() + said_hint() + context_hint() + story_hint()
               + "\n\nReturn ONLY one JSON object with the keys response, emotion, animation, actions. No other text.")
     payload = {
         "systemInstruction": {"parts": [{"text": system}]},
@@ -676,7 +676,7 @@ def ask_venice(user_text, reminder=None):
     if not api_key:
         raise ValueError("Venice isn't configured. Add the Venice API key in the room (button API key).")
     model = os.getenv("VENICE_MODEL", "").strip() or VENICE_MODELS[0]
-    system = (PERSONALITY + day_summary_text() + said_hint() + context_hint()
+    system = (PERSONALITY + day_summary_text() + said_hint() + context_hint() + story_hint()
               + "\n\nReturn ONLY one JSON object with the keys response, emotion, animation, actions. No other text.")
     payload = {
         "model": model,
@@ -732,7 +732,7 @@ def ask_claude(user_text, reminder=None):
     payload = {
         "model": CLAUDE_MODEL,
         "max_tokens": 700,
-        "system": PERSONALITY + day_summary_text() + said_hint() + context_hint(),
+        "system": PERSONALITY + day_summary_text() + said_hint() + context_hint() + story_hint(),
         "messages": messages_for(user_text, reminder),
         "tools": tools,
         "tool_choice": {
@@ -1217,6 +1217,94 @@ def context_hint():
     return "\n\nROOM RIGHT NOW (use it for the roast, do not read it out like a list):\n" + "\n".join(lines) if lines else ""
 
 
+# STORY_V1: her_story.txt = how she was built. She reads it when a message asks about it,
+# and POST /present turns it (or any long text you paste) into a presentation show.
+STORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "her_story.txt")
+STORY_WORDS = re.compile(r"\b(built|build|made|make you|created?|creator|story|team|project|presentation|present|who are you|where (do|did) you come|how (were|was|did) you)\b", re.I)
+CURRENT_TEXT = [""]
+
+
+def read_story():
+    try:
+        with open(STORY_FILE, encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def story_hint():
+    if not STORY_WORDS.search(CURRENT_TEXT[0] or ""):
+        return ""
+    story = read_story()
+    return ("\n\nYOUR OWN STORY (true facts about how you were built; use them, never make up other facts):\n" + story) if story else ""
+
+
+SHOW_ACTIONS = ["idle", "wave", "talk", "walk", "walk_to_bed", "sit", "cross", "thumbs", "point_camera"]
+
+
+def model_text(provider, system, user, max_tokens=1800):
+    """One plain call to the chosen brain; returns its text. Used for writing presentation shows."""
+    if provider == "venice":
+        payload = {"model": os.getenv("VENICE_MODEL", "").strip() or VENICE_MODELS[0], "temperature": 0.9, "max_tokens": max_tokens,
+                   "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                   "response_format": {"type": "json_object"}, "venice_parameters": {"include_venice_system_prompt": False}}
+        headers = {"Content-Type": "application/json", "Authorization": "Bearer " + (os.getenv("VENICE_API_KEY") or "")}
+        try:
+            data = send_json(VENICE_URL, payload, headers)
+        except urllib.error.HTTPError as error:
+            if error.code != 400:
+                raise
+            payload.pop("response_format", None); payload.pop("venice_parameters", None)
+            data = send_json(VENICE_URL, payload, headers)
+        return data["choices"][0]["message"].get("content") or ""
+    if provider in ("gemini", "vertex"):
+        key = os.getenv("VERTEX_API_KEY" if provider == "vertex" else "GEMINI_API_KEY") or ""
+        url = (VERTEX_URL if provider == "vertex" else GEMINI_URL) % (os.getenv("GEMINI_MODEL", "").strip() or GEMINI_MODELS[0])
+        payload = {"systemInstruction": {"parts": [{"text": system}]}, "contents": [{"role": "user", "parts": [{"text": user}]}],
+                   "generationConfig": {"temperature": 1.0, "responseMimeType": "application/json", "thinkingConfig": {"thinkingLevel": "minimal"}}}
+        headers = {"Content-Type": "application/json", "x-goog-api-key": key}
+        try:
+            data = send_json(url, payload, headers)
+        except urllib.error.HTTPError as error:
+            if error.code != 400:
+                raise
+            payload["generationConfig"].pop("thinkingConfig", None)
+            data = send_json(url, payload, headers)
+        return "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"] if not p.get("thought"))
+    if provider == "claude":
+        data = send_json(CLAUDE_URL, {"model": CLAUDE_MODEL, "max_tokens": max_tokens, "system": system,
+                                      "messages": [{"role": "user", "content": user}]},
+                         {"Content-Type": "application/json", "x-api-key": os.getenv("ANTHROPIC_API_KEY") or "", "anthropic-version": "2023-06-01"})
+        return "".join(b.get("text", "") for b in data.get("content", []))
+    data = send_json(OLLAMA_URL, {"model": OLLAMA_MODEL, "stream": False, "think": False, "format": "json", "keep_alive": KEEP_ALIVE,
+                                  "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                                  "options": {"temperature": 0.8, "num_ctx": 8192, "num_predict": max_tokens}}, {"Content-Type": "application/json"})
+    return data["message"]["content"]
+
+
+def make_show(source_text, provider):
+    """Turns a text (her story, or anything you paste) into a presentation she performs."""
+    system = (PERSONALITY + "\n\nNOW YOU ARE ON STAGE. Turn the text the user gives you into YOUR presentation, "
+              "told by you in the first person, in your sassy roasting stand-up style, to an audience (a class). "
+              "Use only facts from the text; never invent numbers, names or features. Keep every fact, cut nothing important. "
+              "8 to 12 lines. Each line is 2 to 4 short sentences that are easy to say out loud. Start by greeting the room, end with a punchline and an exit. "
+              "Return ONLY JSON: {\"lines\": [{\"action\": one of %s, \"mood\": one of %s, \"text\": \"...\"}]}" % (SHOW_ACTIONS, EMOTIONS))
+    text = model_text(provider, system, "Present this:\n\n" + source_text)
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
+    data = json.loads(text[text.find("{"): text.rfind("}") + 1])
+    lines = []
+    for ln in (data.get("lines") or [])[:14]:
+        t = str(ln.get("text") or "").strip()
+        if not t:
+            continue
+        lines.append({"action": ln.get("action") if ln.get("action") in SHOW_ACTIONS else "talk",
+                      "mood": ln.get("mood") if ln.get("mood") in EMOTIONS else "amused", "text": t, "pause": 0.5})
+    if not lines:
+        raise ValueError("The brain wrote no lines.")
+    lines[0]["action"] = "wave"
+    return {"about": "Written by the brain from a text", "sayAs": {"AI World": "A I World", "Ai_World": "A I World", "Brain.py": "Brain dot pie", "API": "A P I", "GitHub": "Git Hub", "qwen3:4b": "Qwen 3, 4 B"}, "lines": lines}
+
+
 def get_provider_for_web(requested=None):
 
     if requested:
@@ -1309,6 +1397,32 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
             save_settings(data)
             self._send_json(settings_view())
             return
+        if path == "/present":            # STORY_V1: write a presentation show from her story or a pasted text
+            try:
+                payload = self._read_json()
+            except ValueError as error:
+                self._send_json({"error": str(error)}, 400)
+                return
+            source = str(payload.get("text") or "").strip()
+            if len(source) < 200:
+                source = read_story()
+            if not source:
+                self._send_json({"error": "her_story.txt is empty and no text was given"}, 400)
+                return
+            provider = get_provider_for_web(payload.get("provider"))
+            show = None
+            for p in ([provider, "ollama"] if provider != "ollama" else ["ollama"]):
+                try:
+                    show = make_show(source, p)
+                    print("Presentation written by %s: %d lines." % (p, len(show["lines"])))
+                    break
+                except Exception as error:
+                    print("Presentation by %s failed: %s" % (p, error))
+            if show is None:
+                self._send_json({"error": "The brain could not write the presentation."}, 500)
+                return
+            self._send_json(show)
+            return
         if path != "/brain":
             self._send_json({"error": "Not found"}, 404)
             return
@@ -1334,6 +1448,7 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
         ROOM_NOW.clear()
         if isinstance(payload.get("context"), dict):
             ROOM_NOW.update(payload["context"])
+        CURRENT_TEXT[0] = text
         reply = ask_brain(text, provider)
 
         if reply is None:
