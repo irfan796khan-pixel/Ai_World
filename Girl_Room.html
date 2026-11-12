@@ -1407,15 +1407,51 @@ try { const m = localStorage.getItem('aiworld_voice_mode'); if (m === 'vstudio')
 //   2. makes the NEXT lines of the Roast script while she says the current one,
 //   3. gets the Roast lines ready in the background after the page opens (page_server.py also saves them in voice_cache/, so next time they play at once).
 const VCACHE = new Map();
+function voiceFetch(text, engine, extra) {
+  return fetch(VS.url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer local', 'X-Voice-Engine': engine },
+    body: JSON.stringify(Object.assign({ model: 'tts-1', voice: VS.name, input: text }, extra || {})) })
+    .then(res => { if (!res.ok) throw new Error('VoiceStudio error ' + res.status); return res.blob(); });
+}
+// VS_CHECK_V1: VoiceStudio sometimes makes audio that leaves out part of the text (and the page server keeps that
+// bad audio, so the same line skips every time). Each VoiceStudio piece is measured: VoiceStudio talks about
+// 3.7 words a second, so more than 5 words a second means words are missing. Then it is made again once
+// (as a new request), and if it is still short, her own Piper voice says that piece.
+const VS_MAX_WPS = 5.0;
+async function blobSeconds(blob) {
+  try { const ctx = voiceCtx(); const b = await ctx.decodeAudioData((await blob.arrayBuffer()).slice(0)); return b.duration; } catch (e) { return 0; }
+}
+async function checkedVoice(text) {
+  const words = String(text).split(/\s+/).filter(Boolean).length;
+  const ok = (sec) => sec > 0 && (words < 4 || words / sec <= VS_MAX_WPS);
+  const first = await voiceFetch(text, 'voicestudio');
+  if (ok(await blobSeconds(first))) return first;
+  console.warn('VoiceStudio left words out, making it again:', text);
+  const again = await voiceFetch(text, 'voicestudio', { retry: Date.now() });   // a new request, not the saved bad one
+  if (ok(await blobSeconds(again))) return again;
+  console.warn('VoiceStudio still short: her own voice says this piece:', text);
+  return voiceFetch(text, 'piper');
+}
 function studioVoice(text) {
   const k = VS.engine + '|' + VS.name + '|' + text;
   if (VCACHE.has(k)) return VCACHE.get(k);
-  const p = fetch(VS.url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer local', 'X-Voice-Engine': VS.engine },
-    body: JSON.stringify({ model: 'tts-1', voice: VS.name, input: text }) })
-    .then(res => { if (!res.ok) throw new Error('VoiceStudio error ' + res.status); return res.blob(); });
+  const p = VS.engine === 'voicestudio' ? checkedVoice(text) : voiceFetch(text, VS.engine);
   VCACHE.set(k, p);
   p.catch(() => VCACHE.delete(k));        // failed: ask again next time
   return p;
+}
+// VoiceStudio gets short pieces (one sentence, long sentences cut at a comma), so it has less to drop
+function shortChunks(text) {
+  const out = [];
+  for (const sent of String(text).split(/(?<=[.?!])\s+/).map(x => x.trim()).filter(Boolean)) {
+    let rest = sent;
+    while (rest.length > 110) {
+      const cut = rest.slice(0, 110).lastIndexOf(', ');
+      if (cut < 30) break;
+      out.push(rest.slice(0, cut + 1)); rest = rest.slice(cut + 2);
+    }
+    if (rest) out.push(rest);
+  }
+  return out.length ? out : [String(text)];
 }
 // Her voice in pieces: the FIRST sentence goes alone (so she starts talking fast), the rest in pieces of
 // up to about 150 letters. While she says one piece, the next pieces are already being made.
@@ -1433,7 +1469,7 @@ function fastChunks(text) {
   return out;
 }
 function voicePieces(text) {                     // starts making every piece, one after another, right now
-  const parts = fastChunks(text), proms = [];
+  const parts = VS.engine === 'voicestudio' ? shortChunks(text) : fastChunks(text), proms = [];
   parts.forEach((c, i) => { proms.push(i === 0 ? studioVoice(c) : proms[i - 1].then(() => studioVoice(c), () => studioVoice(c))); });
   proms.forEach(p => p.catch(() => {}));
   return { parts, proms };
@@ -1444,7 +1480,7 @@ async function prepVoices(list, opts) {   // makes the lines one by one, in orde
   for (const t of list) {
     if (my !== PREP.run || VS.mode !== 'studio' || VS.ok === false) break;
     if (opts && opts.background) while (TALK.main > 0 && !TALK.show && my === PREP.run) await waitS(0.3);   // a live reply goes first
-    try { for (const c of fastChunks(t)) await studioVoice(c); } catch (e) { break; }
+    try { for (const c of (VS.engine === 'voicestudio' ? shortChunks(t) : fastChunks(t))) await studioVoice(c); } catch (e) { break; }
     if (my === PREP.run) { PREP.done++; prepText(); }
   }
 }
