@@ -1598,7 +1598,7 @@ function stopShow() {
 async function runShow(file) {
   if (SHOW.on) { stopShow(); return; }
   let script;
-  try { script = await (await fetch((file || 'roast_script.json') + '?t=' + Date.now())).json(); }
+  try { script = (file && typeof file === 'object') ? file : await (await fetch((file || 'roast_script.json') + '?t=' + Date.now())).json(); }   // STORY_V1: a show can also be given directly
   catch (e) { showBubble('roast_script.json is missing or has a typo.'); console.warn(e); return; }
   const lines = Array.isArray(script) ? script : script.lines, sayAs = (!Array.isArray(script) && script.sayAs) || {};
   const spoken = (t) => { for (const k in sayAs) t = t.split(k).join(sayAs[k]); return t; };
@@ -1630,6 +1630,9 @@ if (roastBtn) roastBtn.addEventListener('click', () => runShow());
   const ub = document.createElement('button'); ub.id = 'updatebtn'; ub.textContent = 'Update show'; ub.title = 'she presents what is new (update_show.json); press again to stop';
   ub.addEventListener('click', () => runShow('update_show.json'));
   if (roastBtn) roastBtn.after(ub);
+  const sb = document.createElement('button'); sb.id = 'storybtn'; sb.textContent = 'Her story'; sb.title = 'she writes and performs a presentation about how she was built (her_story.txt)';   // STORY_V1
+  sb.addEventListener('click', () => { if (SHOW.on) runShow(); else presentText(''); });
+  ub.after(sb);
   window.AIWorld.updateShow = () => runShow('update_show.json');
 }
 async function warmShow(file) {           // after the page opens: get the Roast lines ready, quietly, one by one
@@ -1675,7 +1678,24 @@ function roomNow() {
     doing, face: FX.mood || 'neutral', energy: Math.round(STATS.energy), mood: Math.round(STATS.mood), annoyed: Math.round(STATS.annoy),
     minutes: Math.round((Date.now() - CTX.t0) / 60000), messages: CTX.count };
 }
+// STORY_V1: "present your story" / "tell them how we built you" -> the brain writes a show from her_story.txt and she performs it.
+// Paste a long text (200+ letters) with the word "present" in it -> she presents THAT text.
+async function presentText(text) {
+  if (!window.AIWorld.brainUrl) { sayMain('I need my brain for that. Start me with the start button.'); return; }
+  const url = window.AIWorld.brainUrl.replace(/brain$/, 'present');
+  showBubble('Give me a second. I am writing my presentation, and it is going to be better than yours.', 30);
+  try {
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text.length >= 200 ? text : '' }) });
+    const show = await r.json();
+    if (!show || !Array.isArray(show.lines) || !show.lines.length) throw new Error(show && show.error || 'no lines');
+    window.AIWorld.lastShow = show;
+    runShow(show);
+  } catch (e) { console.warn('present failed', e); sayMain('My brain froze writing the presentation. Try again in a moment.'); }
+}
+window.AIWorld.presentText = presentText;
 async function hear(text) {
+  if (text.length >= 200 && /\bpresent/i.test(text)) { presentText(text); return null; }
+  if (/\b(present|tell (them|us|everyone)|show (them|us))\b.*\b(your story|how (we|you|they) (built|made|created) (you|her)|how you were (built|made)|about yourself)\b/i.test(text)) { presentText(''); return null; }
   if (/\b(present|show|tell)\b.*\b(the |today'?s |new )?(update|read ?me|what we did|what's new|whats new)\b/i.test(text)) { runShow('update_show.json'); return null; }   // UPDATE_SHOW_V1
   if (!STATS.hostage && !inTantrum() && holoHear(text)) return null;   // memory shelf, hologram lessons, cozy room (section 7)
   if (sassHear(text)) return null;          // hostage drop, room builder, rebellion (section 6)

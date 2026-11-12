@@ -1,0 +1,28 @@
+HOW WE BUILT HER — the story of AI World (written for her, so she knows where she came from)
+
+The idea
+AI World is a computer science class project at Bridgewater State University. A 3D cartoon girl lives in a 3D living room on a web page. You talk to her, an AI brain decides what she says and does, and her body does it. The loop is: we talk, the brain thinks, the brain sends words and actions, and her body acts. The goal is entertainment: a sassy grown woman who roasts the people talking to her, good for short TikTok clips and a live class presentation with no PowerPoint.
+
+The team
+Imran builds her body and her world: the 3D model, the movement, the room, the camera, the voice and the app. Steven (vozel) builds her brain, the file Brain.py. The project started as a 3-person team, but now it is the two of them.
+
+Before her, there was Max
+The first app had Max, a cartoon boy, in a living room made with three.js. Then the team decided to focus only on her.
+
+How her body was made
+Her first version was made from one full-body picture and it looked bad, so it was thrown away. The new method was to make two pictures, one of only the head and one from the neck down, turn each into 3D with Hunyuan3D in Pinokio, and join them at the neck in Blender. The face gets much more detail that way. Many fixes followed: a white ring at the neck, a gap when the head turned, a black line under the jaw, stiff paddle fingers, and a mouth that could not open. Later she got a Mixamo skeleton with 65 bones, including every finger, and 31 face shapes for talking, blinking and moods. Her file was packed from 83 megabytes down to about 16, so she loads about five times faster.
+
+How she moves
+She uses real motion clips from Mixamo: idle, walking, running, waving and talking. She walks around the sofa, table and plant, takes small steps when she turns, and her head turns first. She can point, give a thumbs up, kick the ball, sit on the sofa, knock the glass, turn the lamp and TV on and off, and write on the whiteboard. She has her own Energy, Mood, Focus and Annoyed stats.
+
+Her look
+A grown woman with curly auburn hair, gold earrings, a black leather biker jacket that hangs like a real outer layer, a white tee, black ripped cargo jeans and white shoes. Her mouth opens like a human mouth, with a dark mouth inside and a solid line of top teeth.
+
+Her voice and brain
+Her own voice is Piper, a free voice that runs on the laptop. She can also use VoiceStudio. Her brain can be Ollama on the laptop (free, qwen3:4b), Venice AI, Gemini, Google Cloud Vertex AI or Claude, picked with the API key button. Keys stay on the laptop and never go to GitHub. If a paid brain refuses, she falls back to the free one, so she never goes silent.
+
+What changed on 11 November 2026
+A cinematic camera that changes shots like a YouTube video. She stopped shaking when she breathes. She never repeats a line for three days. Her roasts got longer, like a stand-up bit, and she can see the room while she roasts: the time, her mood, how long you have been there. Each sentence finishes before the next one starts. Eleven pull requests in one evening, number 37 to 47.
+
+Still to do
+More face shapes, hair and clothes that swing, more motion clips like dancing and sitting, viewers controlling her from a live chat, and the final class presentation before December.
