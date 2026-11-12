@@ -442,14 +442,19 @@ def split_sentences(text):
 
 
 def already_said(sentence):
+    # NEVER_SILENT_V1: short lines (1-3 words, like "Bold move.") only count when the exact same line was said
+    # in her last 60 lines. Longer lines count when they are the same or almost the same (85%) as any old line.
     n = _said_norm(sentence)
-    if len(n.split()) < 2:          # one-word lines ("Okay." "Wow.") may come again
+    words = len(n.split())
+    if words < 2:
         return False
+    if words < 4:
+        return any(d["n"] == n for d in said_lines[-60:])
     for d in said_lines:
         o = d["n"]
         if o == n:
             return True
-        if abs(len(o) - len(n)) < 40 and difflib.SequenceMatcher(None, o, n).ratio() >= 0.78:
+        if abs(len(o) - len(n)) < 40 and difflib.SequenceMatcher(None, o, n).ratio() >= 0.85:
             return True
     return False
 
@@ -893,6 +898,7 @@ def fix_reaction(reply, user_text):
 def ask_brain(user_text, provider):
 
     reminder = None
+    best = [None, 99]          # NEVER_SILENT_V1: the try with the fewest old lines
 
     for attempt in range(MAX_ATTEMPTS):
 
@@ -915,7 +921,10 @@ def ask_brain(user_text, provider):
                     "No dialogue remained after cleanup."
                 )
 
+            whole = dict(reply)                       # NEVER_SILENT_V1: keep this try in case every try has old lines
             reply, dropped = remove_repeats(reply)   # NO_REPEAT_V1
+            if best[0] is None or len(dropped) < best[1]:
+                best[0], best[1] = whole, len(dropped)
             if dropped and (not reply["response"] or len(reply["response"].split()) < 4):
                 print("She repeated an old line. Retrying...")
                 reminder = ("You already said these lines before: " + " | ".join(dropped)
@@ -923,7 +932,8 @@ def ask_brain(user_text, provider):
                 if attempt < MAX_ATTEMPTS - 1:
                     continue
                 if not reply["response"]:
-                    raise ValueError("Only old lines were left.")
+                    print("Every try had old lines: she says the best try anyway (never silent).")
+                    reply = dict(best[0])
 
             if repeated_response(user_text, reply):
 
@@ -1003,6 +1013,17 @@ def ask_brain(user_text, provider):
                     "response, emotion, and animation. "
                     "Follow the required format exactly."
                 )
+
+    if best[0] is not None and best[0].get("response"):     # NEVER_SILENT_V1: answer with the best try instead of nothing
+        print("Using her best try so she does not go silent.")
+        reply = dict(best[0])
+        history.append({"role": "user", "content": user_text})
+        history.append({"role": "assistant", "content": json.dumps(reply)})
+        save_day_memory(history[-2:])
+        remember_said(reply["response"])
+        if len(history) > MAX_HISTORY_MESSAGES:
+            del history[:-MAX_HISTORY_MESSAGES]
+        return reply
 
     print(
         "Hugh couldn't produce a usable response."
