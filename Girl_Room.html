@@ -3601,7 +3601,12 @@ controls.addEventListener('start', () => { CINE.userUntil = performance.now() + 
   const box = document.createElement('div'); box.id = 'apikeybox';
   box.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:50;background:#1d2230;color:#fff;padding:16px 18px;border-radius:12px;font:14px system-ui;width:min(440px,92vw);box-shadow:0 8px 30px #0008;display:none';
   const keyRow = (id, ph) => '<div style="display:flex;gap:6px"><input id="' + id + '" type="password" autocomplete="off" placeholder="' + ph + '" style="flex:1;padding:6px"><button data-show="' + id + '">Show</button></div>';
-  box.innerHTML = '<b>Brain + API keys</b><div style="margin:10px 0 4px">Brain</div>'
+  box.innerHTML = '<b>Brain + API keys</b>'
+    + '<div style="margin:10px 0 4px">Live chat engine</div>'   // GEMINI_LIVE_V1
+    + '<select id="ak_live" style="width:100%;padding:6px"><option value="gemini">Gemini Live: fastest, talks back while it thinks (needs Gemini key)</option><option value="old">Old: mic, then Whisper, then the brain below</option></select>'
+    + '<div style="display:flex;gap:6px;margin-top:6px"><select id="ak_lmodel" style="flex:1;padding:6px" title="Gemini Live model"></select><select id="ak_lvoice" style="width:120px;padding:6px" title="her live voice"></select></div>'
+    + '<div style="margin:6px 0 0;font-size:12px;opacity:.75">Hard questions in live chat: OpenRouter (free) first, then Gemini, then Venice, Ollama only last. Uses the keys below.</div>'
+    + '<div style="margin:10px 0 4px">Brain (typed chat and old live chat)</div>'
     + '<select id="ak_prov" style="width:100%;padding:6px"><option value="ollama">Ollama on this laptop (qwen3:4b, free)</option><option value="gemini">Gemini, AI Studio key</option><option value="vertex">Gemini via Google Cloud (Vertex AI, uses your AI Pro credits)</option><option value="venice">Venice AI (needs Venice key)</option><option value="openrouter">OpenRouter, free models (needs OpenRouter key)</option><option value="claude">Claude (needs Anthropic key)</option></select>'
     + '<div style="margin:10px 0 4px">Gemini model</div>'
     + '<select id="ak_gmodel" style="width:100%;padding:6px"><option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (fastest)</option><option value="gemini-3.8-flash">gemini-3.8-flash (smarter, a little slower)</option></select>'
@@ -3624,6 +3629,8 @@ controls.addEventListener('start', () => { CINE.userUntil = performance.now() + 
   function fill(j) {
     $('ak_prov').value = ['gemini', 'vertex', 'venice', 'openrouter', 'claude'].includes(j.provider) ? j.provider : 'ollama'; $('ak_vkey').value = j.vertex_key || ''; $('ak_venkey').value = j.venice_key || ''; $('ak_vmodel').value = j.venice_model || 'deepseek-v4-1-flash'; $('ak_orkey').value = j.openrouter_key || ''; $('ak_omodel').value = j.openrouter_model || 'openrouter/free';
     $('ak_key').value = j.key || ''; $('ak_gkey').value = j.gemini_key || ''; $('ak_gmodel').value = j.gemini_model || 'gemini-3.5-flash-lite';
+    const opts = (el, list, cur) => { el.innerHTML = (list || [cur]).map(v => '<option value="' + v + '">' + v + '</option>').join(''); el.value = cur; };   // GEMINI_LIVE_V1
+    $('ak_live').value = j.live_engine === 'old' ? 'old' : 'gemini'; opts($('ak_lmodel'), j.live_models, j.live_model || 'gemini-3.1-flash-live-preview'); opts($('ak_lvoice'), j.live_voices, j.live_voice || 'Leda');
     msg('Brain now: ' + j.provider + (j.provider === 'gemini' || j.provider === 'vertex' ? ' (' + (j.gemini_model || '') + ')' : j.provider === 'venice' ? ' (' + (j.venice_model || '') + ')' : j.provider === 'openrouter' ? ' (' + (j.openrouter_model || '') + ')' : '') + '  |  Gemini key: ' + tail(j.gemini_key) + '  |  Cloud key: ' + tail(j.vertex_key) + '  |  Venice key: ' + tail(j.venice_key) + '  |  OpenRouter key: ' + tail(j.openrouter_key) + '  |  Anthropic key: ' + tail(j.key));
   }
   btn.onclick = () => {
@@ -3638,7 +3645,9 @@ controls.addEventListener('start', () => { CINE.userUntil = performance.now() + 
     if (provider === 'vertex' && !vertex_api_key) { msg('Google Cloud needs its Vertex AI API key.'); return; }
     if (provider === 'venice' && !venice_api_key) { msg('Venice needs a Venice API key.'); return; }
     if (provider === 'openrouter' && !openrouter_api_key) { msg('OpenRouter needs an OpenRouter API key.'); return; }
-    fetch(BRAIN_SET, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, api_key, gemini_api_key, gemini_model, vertex_api_key, venice_api_key, venice_model, openrouter_api_key, openrouter_model }) })
+    const live_engine = $('ak_live').value, live_model = $('ak_lmodel').value, live_voice = $('ak_lvoice').value;   // GEMINI_LIVE_V1
+    if (live_engine === 'gemini' && !gemini_api_key) { msg('Gemini Live needs a Gemini API key.'); return; }
+    fetch(BRAIN_SET, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, api_key, gemini_api_key, gemini_model, vertex_api_key, venice_api_key, venice_model, openrouter_api_key, openrouter_model, live_engine, live_model, live_voice }) })
       .then(r => r.json()).then(j => { fill(j); msg('Saved. ' + $('ak_msg').textContent); }).catch(() => msg('Could not save: the brain is not running.'));
   };
 }
@@ -3701,6 +3710,262 @@ window.addEventListener('resize', () => {
   place(); window.addEventListener('resize', place);
   if (window.ResizeObserver) new ResizeObserver(place).observe(bar);
   setInterval(place, 1000);
+})();
+</script>
+<script id="geminiLive">
+// ============================================================================
+// GEMINI_LIVE_V1: fast live voice chat (like Gemini Live / Tesla Grok)
+//   One open line to Google's Gemini Live: your voice goes up while you talk, her voice comes back
+//   while it is being made. No "speech -> text -> brain -> voice" waiting. Talk over her and she stops.
+//   - Brain.py /live_token gives a short-lived Google token (the real key never comes to this page)
+//     plus her personality, today's memory and her old lines (so she stays the same girl and does not repeat).
+//   - Her voice plays through the same sound path as before, so her mouth follows the real sound.
+//   - Tool "room_action": she moves and changes face while she talks (walk, sit, lamp, tv, ...).
+//   - Tool "think_hard": hard questions go to her big brain via Brain.py /think (OpenRouter free, then Gemini,
+//     then Venice, Ollama only last); she says the answer.
+//   - Every finished turn goes to Brain.py /live_log (day memory + no-repeat list).
+//   Turn it on/off in the API key box: "Live chat engine". The old engine (mic -> Whisper -> brain) still works.
+//   Console: AIWorld.geminiLive.start() / .stop() / .bargeLevel = 0.06 (lower = easier to interrupt her)
+// ============================================================================
+(function () {
+  const BRAIN = 'http://localhost:5005';
+  const GL = { on: false, ws: null, ready: false, ctx: null, mic: null, node: null, sink: null, src: null,
+    playAt: 0, nodes: [], userText: '', herText: '', handle: null, plain: false, closing: false, retries: 0,
+    bargeLevel: 0.07, greet: true, engine: null, startedAt: 0, lastAudioAt: 0 };
+  const liveBtn = document.getElementById('live');
+  const status = (s) => { if (liveBtn) { liveBtn.textContent = s; liveBtn.classList.toggle('rec', GL.on); } };
+  const herTalking = () => GL.nodes.length > 0;
+
+  // ---- which engine? asked from Brain.py settings (default: Gemini Live when a Gemini key is saved)
+  async function engine() {
+    try {
+      const j = await (await fetch(BRAIN + '/settings', { cache: 'no-store' })).json();
+      GL.engine = (j.live_engine === 'old' || !j.gemini_key) ? 'old' : 'gemini';
+    } catch (e) { GL.engine = 'old'; }
+    return GL.engine;
+  }
+
+  // ---- mic: 16 kHz, 16-bit PCM in small pieces (about 40 ms), made in an AudioWorklet (its own audio thread)
+  const WORKLET = `
+  class MicPcm extends AudioWorkletProcessor {
+    constructor() { super(); this.step = sampleRate / 16000; this.pos = 0; this.buf = new Int16Array(640); this.n = 0; this.sum = 0; }
+    process(inputs) {
+      const ch = inputs[0] && inputs[0][0]; if (!ch) return true;
+      for (; this.pos < ch.length; this.pos += this.step) {
+        const s = Math.max(-1, Math.min(1, ch[Math.floor(this.pos)]));
+        this.sum += s * s; this.buf[this.n++] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        if (this.n === this.buf.length) {
+          this.port.postMessage({ pcm: this.buf.buffer, rms: Math.sqrt(this.sum / this.n) }, [this.buf.buffer]);
+          this.buf = new Int16Array(640); this.n = 0; this.sum = 0;
+        }
+      }
+      this.pos -= ch.length; return true;
+    }
+  }
+  registerProcessor('mic-pcm', MicPcm);`;
+  const b64 = (buf) => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+  const unb64 = (str) => { const s = atob(str), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u.buffer; };
+
+  async function startMic() {
+    GL.ctx = voiceCtx();                                   // the same audio system as her voice (face follows it)
+    GL.mic = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    if (!GL.ctx.__micPcm) { await GL.ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' }))); GL.ctx.__micPcm = true; }
+    GL.src = GL.ctx.createMediaStreamSource(GL.mic);
+    GL.node = new AudioWorkletNode(GL.ctx, 'mic-pcm');
+    GL.sink = GL.ctx.createGain(); GL.sink.gain.value = 0;   // the worklet must be in the graph to run; this keeps it silent
+    GL.src.connect(GL.node); GL.node.connect(GL.sink); GL.sink.connect(GL.ctx.destination);
+    GL.node.port.onmessage = (ev) => {
+      if (!GL.ready || !GL.ws || GL.ws.readyState !== 1) return;
+      let pcm = ev.data.pcm;
+      // her own voice coming back through the speakers must not count as you talking:
+      // while she talks, only a clearly louder voice (you, close to the mic) gets through
+      if (herTalking() && ev.data.rms < GL.bargeLevel) pcm = new ArrayBuffer(pcm.byteLength);
+      GL.ws.send(JSON.stringify({ realtimeInput: { audio: { data: b64(pcm), mimeType: 'audio/pcm;rate=16000' } } }));
+    };
+  }
+  function stopMic() {
+    try { GL.node && (GL.node.port.onmessage = null); GL.src && GL.src.disconnect(); GL.node && GL.node.disconnect(); GL.sink && GL.sink.disconnect(); } catch (e) {}
+    try { GL.mic && GL.mic.getTracks().forEach(t => t.stop()); } catch (e) {}
+    GL.mic = GL.src = GL.node = GL.sink = null;
+  }
+
+  // ---- her voice: 24 kHz PCM pieces, played back to back through VOICE.analyser (so the mouth moves with it)
+  function playPcm(buf, rate) {
+    const ctx = GL.ctx || voiceCtx(), i16 = new Int16Array(buf), f = new Float32Array(i16.length);
+    for (let i = 0; i < i16.length; i++) f[i] = i16[i] / 32768;
+    const ab = ctx.createBuffer(1, f.length, rate); ab.copyToChannel(f, 0);
+    const s = ctx.createBufferSource(); s.buffer = ab; s.connect(VOICE.analyser);
+    const at = Math.max(ctx.currentTime + 0.03, GL.playAt); s.start(at); GL.playAt = at + ab.duration;
+    GL.nodes.push(s); VOICE.src = s; FX.talking = true; GL.lastAudioAt = performance.now();
+    s.onended = () => {
+      GL.nodes = GL.nodes.filter(n => n !== s);
+      if (GL.nodes.length) VOICE.src = GL.nodes[GL.nodes.length - 1];
+      else { if (VOICE.src === s) VOICE.src = null; FX.talking = false; if (GL.on) status('Live: listening…'); }
+    };
+  }
+  function cutVoice() {                                    // you talked over her: stop at once, drop what was waiting
+    const list = GL.nodes; GL.nodes = [];
+    for (const s of list) { try { s.onended = null; s.stop(); } catch (e) {} }
+    if (list.includes(VOICE.src)) VOICE.src = null;
+    FX.talking = false; GL.playAt = 0;
+  }
+
+  // ---- tools she can call while she talks
+  const EMO = ['neutral', 'happy', 'amused', 'annoyed', 'confused', 'sad', 'surprised'];
+  function tools(acts, plain) {
+    const fns = [
+      { name: 'room_action',
+        description: 'Move your body in the room and/or change your face. Call it while you talk when your words say you do something, or when your mood clearly changes.',
+        parameters: { type: 'OBJECT', properties: {
+          actions: { type: 'ARRAY', description: 'Steps in order. Empty for face only.', items: { type: 'OBJECT', properties: {
+            do: { type: 'STRING', enum: acts.filter(a => a !== 'none') },
+            target: { type: 'STRING', description: 'walk: sofa, window, plant, tv, table, ball, shelf, center, front. sit: sofa or miss. point: tv, sofa, plant, window, table, ball, shelf, board, lamp' },
+            text: { type: 'STRING', description: 'for tv_text, write_board, explain, open_memory' } }, required: ['do'] } },
+          emotion: { type: 'STRING', enum: EMO } } } },
+      { name: 'think_hard',
+        description: 'Ask your big smart brain. Use it for real facts, numbers, maths, code, news, or anything you are not sure about. Say a short line first, then call it.',
+        parameters: { type: 'OBJECT', properties: { question: { type: 'STRING', description: 'The full question, with what the person wants to know.' } }, required: ['question'] } },
+    ];
+    const t = [{ functionDeclarations: fns }];
+    if (!plain) t.push({ googleSearch: {} });
+    return t;
+  }
+  async function onToolCall(tc) {
+    const out = [];
+    for (const fc of tc.functionCalls || []) {
+      const args = fc.args || {};
+      if (fc.name === 'room_action') {
+        if (args.emotion) setMood(args.emotion);
+        const acts = Array.isArray(args.actions) ? brainActs(args.actions.map(a => ({ do: a.do, target: a.target || '', text: a.text || '' }))) : [];
+        if (acts.length) { window.AIWorld.stop(); window.AIWorld.act(acts); }
+        out.push({ id: fc.id, name: fc.name, response: { result: 'ok, doing it' } });
+      } else if (fc.name === 'think_hard') {
+        status('Live: thinking hard…'); setMood('confused', 0.6, 4);
+        let result;
+        try {
+          const j = await (await fetch(BRAIN + '/think', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: args.question || GL.userText }) })).json();
+          result = j.answer ? { answer: j.answer } : { error: j.error || 'no answer' };
+        } catch (e) { result = { error: 'big brain not reachable' }; }
+        out.push({ id: fc.id, name: fc.name, response: result });
+      } else out.push({ id: fc.id, name: fc.name, response: { error: 'unknown tool' } });
+    }
+    if (GL.ws && GL.ws.readyState === 1) GL.ws.send(JSON.stringify({ toolResponse: { functionResponses: out } }));
+  }
+
+  // ---- one finished turn: show it, remember it
+  function endTurn() {
+    const user = GL.userText.trim(), her = GL.herText.trim();
+    GL.userText = ''; GL.herText = '';
+    if (!user && !her) return;
+    if (user) { console.log('live heard:', user); if (typeof sayEl !== 'undefined' && sayEl) sayEl.placeholder = 'you said: ' + user; }
+    if (her) { try { SAID3.add(her); } catch (e) {} }
+    fetch(BRAIN + '/live_log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user, her }) }).catch(() => {});
+  }
+
+  async function onMessage(ev) {
+    let m; try { m = JSON.parse(typeof ev.data === 'string' ? ev.data : await ev.data.text()); } catch (e) { return; }
+    if (m.setupComplete) {
+      GL.ready = true; GL.retries = 0; status('Live: listening…'); console.log('Gemini Live: connected' + (GL.plain ? ' (plain setup)' : ''));
+      if (GL.greet && !GL.handle) { GL.greet = false; GL.ws.send(JSON.stringify({ clientContent: { turns: [{ role: 'user', parts: [{ text: '(The person just started a live voice call with you. Greet them with one short, fresh roast.)' }] }], turnComplete: true } })); }
+      return;
+    }
+    if (m.sessionResumptionUpdate && m.sessionResumptionUpdate.newHandle) GL.handle = m.sessionResumptionUpdate.newHandle;
+    if (m.goAway) { console.log('Gemini Live: line ends soon, reconnecting'); reconnect(); return; }
+    if (m.toolCall) { onToolCall(m.toolCall); return; }
+    const sc = m.serverContent; if (!sc) return;
+    if (sc.interrupted) { cutVoice(); endTurn(); status('Live: listening…'); }
+    if (sc.inputTranscription && sc.inputTranscription.text) { GL.userText += sc.inputTranscription.text; if (!herTalking()) status('Live: hearing you…'); }
+    if (sc.outputTranscription && sc.outputTranscription.text) { GL.herText += sc.outputTranscription.text; showBubble(GL.herText.trim(), 30); }
+    for (const p of (sc.modelTurn && sc.modelTurn.parts) || []) {
+      if (p.inlineData && /^audio\/pcm/.test(p.inlineData.mimeType || '')) {
+        const rate = +(/rate=(\d+)/.exec(p.inlineData.mimeType) || [0, 24000])[1];
+        playPcm(unb64(p.inlineData.data), rate); status('Live: talking…');
+      }
+    }
+    if (sc.turnComplete) endTurn();
+  }
+
+  async function connect() {
+    status('Live: connecting…');
+    const r = await fetch(BRAIN + '/live_token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ context: roomNow() }) });
+    const j = await r.json();
+    if (!r.ok || !j.token) throw new Error(j.error || 'no live token');
+    const url = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.' + (j.api_version || 'v1beta')
+      + '.GenerativeService.BidiGenerateContentConstrained?access_token=' + encodeURIComponent(j.token);
+    const ws = new WebSocket(url); GL.ws = ws; GL.ready = false;
+    const setup = { model: 'models/' + j.model,
+      generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: j.voice } } } },
+      systemInstruction: { parts: [{ text: j.system }] }, tools: tools(j.actions || [], GL.plain),
+      inputAudioTranscription: {}, outputAudioTranscription: {}, sessionResumption: GL.handle ? { handle: GL.handle } : {} };
+    if (!GL.plain) setup.contextWindowCompression = { slidingWindow: {} };
+    ws.onopen = () => ws.send(JSON.stringify({ setup }));
+    ws.onmessage = onMessage;
+    ws.onerror = () => console.warn('Gemini Live: line error');
+    ws.onclose = (e) => {
+      if (GL.ws !== ws) return;
+      const wasReady = GL.ready; GL.ready = false; GL.ws = null;
+      if (!GL.on || GL.closing) return;
+      console.warn('Gemini Live closed', e.code, e.reason);
+      if (!wasReady && !GL.plain) { GL.plain = true; console.warn('Gemini Live: trying again with a plain setup'); reconnect(); return; }   // Google refused an extra (search, compression): drop extras
+      if (++GL.retries > 3) { stop(); sayMain('My live line keeps dropping. ' + (e.reason ? 'Google says: ' + e.reason : 'Check the Gemini key and the internet.')); return; }
+      reconnect();
+    };
+  }
+  async function reconnect() {
+    const old = GL.ws; GL.ws = null; GL.ready = false;
+    try { old && old.close(); } catch (e) {}
+    try { await connect(); } catch (e) { stop(); sayMain('Live chat could not reconnect: ' + e.message); }
+  }
+
+  async function start() {
+    if (GL.on) return true;
+    GL.on = true; GL.closing = false; GL.greet = true; GL.handle = null; GL.plain = false; GL.retries = 0; GL.startedAt = Date.now();
+    try { stopVoices(); } catch (e) {}
+    try { await startMic(); }
+    catch (e) { GL.on = false; status('Live chat'); sayMain("I need the microphone for live chat. Allow it in the browser."); return false; }
+    try { await connect(); }
+    catch (e) {
+      console.warn('Gemini Live could not start:', e); stopMic(); GL.on = false; status('Live chat');
+      showBubble('Gemini Live could not start: ' + e.message + ' — using the old live chat.', 8);
+      try { return await window.AIWorld.live.start(); } catch (e2) { return false; }
+    }
+    return true;
+  }
+  function stop() {
+    GL.closing = true; GL.on = false; GL.ready = false;
+    endTurn(); cutVoice(); stopMic();
+    try { GL.ws && GL.ws.close(); } catch (e) {} GL.ws = null;
+    status('Live chat');
+  }
+
+  // the Live chat button: Gemini Live when chosen, else the old engine (its own click handler runs as before)
+  if (liveBtn) liveBtn.addEventListener('click', async (ev) => {
+    if (GL.on) { ev.stopImmediatePropagation(); stop(); return; }
+    if (window.AIWorld.live && window.AIWorld.live.isOn()) return;            // old engine is on: its handler turns it off
+    ev.stopImmediatePropagation();
+    if ((await engine()) === 'gemini') start(); else window.AIWorld.live.start();
+  }, true);
+
+  // the Stop / voice-change paths also cut her live voice
+  const _stopVoices = stopVoices;
+  stopVoices = function () { cutVoice(); return _stopVoices.apply(this, arguments); };
+  // typed text while the live line is open goes into the same live talk (fast, same memory)
+  const _hear = window.AIWorld.hear;
+  window.AIWorld.hear = function (text) {
+    if (GL.on && GL.ready && GL.ws) { GL.userText += text; GL.ws.send(JSON.stringify({ realtimeInput: { text: String(text) } })); return null; }
+    return _hear.apply(this, arguments);
+  };
+  function typedLive(ev) {                                 // Send button / Enter key while the live line is open
+    if (!(GL.on && GL.ready && GL.ws) || typeof sayEl === 'undefined' || !sayEl) return;
+    if (ev.type === 'keydown' && ev.key !== 'Enter') return;
+    const t = sayEl.value.trim(); if (!t) return;
+    ev.stopImmediatePropagation(); ev.preventDefault(); sayEl.value = ''; window.AIWorld.hear(t);
+  }
+  if (typeof sendEl !== 'undefined' && sendEl) sendEl.addEventListener('click', typedLive, true);
+  if (typeof sayEl !== 'undefined' && sayEl) sayEl.addEventListener('keydown', typedLive, true);
+
+  window.AIWorld.geminiLive = { start, stop, isOn: () => GL.on, state: () => ({ on: GL.on, ready: GL.ready, engine: GL.engine, plain: GL.plain, talking: herTalking() }),
+    get bargeLevel() { return GL.bargeLevel; }, set bargeLevel(v) { GL.bargeLevel = Math.max(0, +v || 0); } };
 })();
 </script>
 </body>

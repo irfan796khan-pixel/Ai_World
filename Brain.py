@@ -1207,6 +1207,9 @@ def load_settings():
         os.environ["OPENROUTER_API_KEY"] = data["openrouter_api_key"]
     if data.get("openrouter_model"):
         os.environ["OPENROUTER_MODEL"] = data["openrouter_model"]
+    for k, env in LIVE_SETTING_ENV.items():    # GEMINI_LIVE_V1
+        if data.get(k):
+            os.environ[env] = str(data[k])
     return data
 
 
@@ -1248,8 +1251,170 @@ def settings_view():
         "openrouter_model": os.getenv("OPENROUTER_MODEL", "").strip() or OPENROUTER_MODELS[0],
         "gemini_model": os.getenv("GEMINI_MODEL", "").strip() or "gemini-3.5-flash-lite",
         "gemini_models": ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
+        "live_engine": live_setting("live_engine"),          # GEMINI_LIVE_V1
+        "live_model": live_setting("live_model"),
+        "live_models": LIVE_MODELS,
+        "live_voice": live_setting("live_voice"),
+        "live_voices": LIVE_VOICES,
+        "think_order": THINK_ORDER,
     }
 
+
+# ============================================================================
+# GEMINI_LIVE_V1: fast live voice chat, like Gemini Live / Tesla Grok.
+#   The page talks straight to Google's Gemini Live (one open line: your voice goes up, her voice comes back
+#   while it is being made, and talking over her cuts her off). This brain only:
+#     POST /live_token  -> a short-lived Google token (the real key never goes to the page) + her personality,
+#                          today's memory and her old lines, so the live voice is still HER
+#     POST /live_log    -> what you said and what she said, saved into her day memory and no-repeat list
+#     POST /think       -> hard questions: the live voice asks her big brain (OpenRouter free, then Gemini, then Venice,
+#                          Ollama only last) and says the answer
+# ============================================================================
+LIVE_MODELS = ["gemini-3.1-flash-live-preview", "gemini-3.8-live", "gemini-2.5-flash-native-audio-preview-12-2025"]   # 3.1 flash live = free tier on Google's pricing page
+LIVE_VOICES = ["Leda", "Aoede", "Kore", "Zephyr", "Callirrhoe", "Despina"]
+LIVE_DEFAULTS = {"live_engine": "gemini", "live_model": LIVE_MODELS[0], "live_voice": "Leda"}
+LIVE_SETTING_ENV = {"live_engine": "LIVE_ENGINE", "live_model": "LIVE_MODEL", "live_voice": "LIVE_VOICE"}
+THINK_ORDER = ["openrouter", "gemini", "venice", "ollama"]   # hard questions: free OpenRouter first, slow Ollama only as the very last backup. No Claude (Imran, 12 Nov).
+AUTH_TOKEN_URLS = [("v1beta", "https://generativelanguage.googleapis.com/v1beta/auth_tokens"),
+                   ("v1alpha", "https://generativelanguage.googleapis.com/v1alpha/auth_tokens")]
+
+
+def live_setting(name):
+    return (os.getenv(LIVE_SETTING_ENV[name], "") or "").strip() or LIVE_DEFAULTS[name]
+
+
+def _utc_in(minutes):
+    t = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=minutes)
+    return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def make_live_token():
+    """Asks Google for a short-lived Live API token. Returns (token, api_version). Raises with Google's own message."""
+    key = os.getenv("GEMINI_API_KEY")
+    if not key:
+        raise ValueError("No Gemini API key saved. Put it in the room's API key box.")
+    body = {"uses": 1, "expireTime": _utc_in(30), "newSessionExpireTime": _utc_in(2)}
+    errors = []
+    for version, url in AUTH_TOKEN_URLS:
+        for payload in (body, {"authToken": body}):
+            try:
+                data = send_json(url, payload, {"Content-Type": "application/json", "x-goog-api-key": key}, 20)
+                token = data.get("name") or (data.get("authToken") or {}).get("name")
+                if token:
+                    return token, version
+                errors.append("%s: no token in answer" % version)
+            except urllib.error.HTTPError as error:
+                try:
+                    detail = error.read().decode("utf-8", "replace")[:300]
+                except Exception:
+                    detail = ""
+                errors.append("%s %s %s" % (version, error.code, detail))
+                if error.code in (401, 403):        # wrong key: trying again will not help
+                    raise ValueError("Google refused the Gemini key: " + detail)
+    raise ValueError("Google did not give a live token. " + " | ".join(errors))
+
+
+LIVE_RULES = """
+YOU ARE IN A LIVE VOICE CALL RIGHT NOW. The person talks to you out loud and hears your voice.
+- Answer fast and short, like real talk: usually one to three sentences. A longer bit only when they ask for a story or a real explanation.
+- Start talking at once. Never begin with filler like "Well", "So", "Great question".
+- Never say the same sentence twice, and never reuse an old joke (see the list of old lines below).
+- If they talk over you, stop and answer the new thing.
+- Never read emojis, stage directions, or words in brackets out loud.
+
+YOUR BODY: you live in a 3D living room (sofa, coffee table with a glass, ball, TV, window, plant, floor lamp,
+whiteboard, memory shelf). To move or change your face, call the tool room_action WHILE you talk:
+- If your words say you will do something, call room_action so your body really does it.
+- When your mood clearly changes, call room_action with just the emotion.
+- Plain chat needs no tool call.
+
+HARD QUESTIONS: for real facts, numbers, maths, code, news, or anything you are not sure about, first say a
+very short in-character line (like "Hold on, let me actually think for once"), then call think_hard with the
+question. When it answers, say the answer in your own voice and style, short. Never make up facts.
+"""
+
+
+def live_history_text(limit=12):
+    lines = [message_text(m) for m in history[-limit:]]
+    return ("\n\nTHE LAST THINGS YOU TWO SAID (word for word):\n" + "\n".join(lines)) if lines else ""
+
+
+def live_system_text():
+    persona = PERSONALITY.split("EMOTIONS:")[0]       # who she is + how she roasts (not the JSON reply format)
+    return (persona.strip() + "\n" + LIVE_RULES + context_hint() + day_summary_text()
+            + live_history_text() + said_hint())
+
+
+def live_log(user_text, her_text):
+    user_text = str(user_text or "").strip()[:2000]
+    her_text = str(her_text or "").strip()[:4000]
+    if not user_text and not her_text:
+        return
+    new = []
+    if user_text:
+        new.append({"role": "user", "content": user_text})
+    if her_text:
+        new.append({"role": "assistant", "content": json.dumps({"response": her_text, "emotion": "neutral",
+                                                                   "animation": "idle", "actions": []})})
+    history.extend(new)
+    if len(history) > MAX_HISTORY_MESSAGES:
+        del history[:-MAX_HISTORY_MESSAGES]
+    save_day_memory(new)
+    if her_text:
+        remember_said(her_text)
+
+
+THINK_SYSTEM = """You are the expert brain behind a sassy cartoon girl in a live voice chat.
+She asks you a question the person asked her. Give her a correct answer she can say out loud:
+two to five short sentences, plain words, no lists, no markdown, no code blocks (describe code in words),
+no emojis. If you are not sure, say so plainly. Do not roast; she adds the attitude herself."""
+
+
+def think_answer(question):
+    """Hard questions from the live voice. Tries THINK_ORDER: OpenRouter (free models), Gemini (free-tier key),
+    Venice, and Ollama only as the very last backup (it is slow). Skips any brain with no key. Returns (answer, who)."""
+    question = str(question or "").strip()[:2000]
+    if not question:
+        raise ValueError("no question")
+    user = ("Recent chat for context:\n" + "\n".join(message_text(m) for m in history[-6:])
+            + "\n\nQuestion: " + question)
+    msgs = [{"role": "system", "content": THINK_SYSTEM}, {"role": "user", "content": user}]
+    tried = []
+    for who in THINK_ORDER:
+        try:
+            if who == "openrouter":
+                if not os.getenv("OPENROUTER_API_KEY"):
+                    continue
+                model = os.getenv("OPENROUTER_MODEL", "").strip() or OPENROUTER_MODELS[0]
+                data = openrouter_send({"model": model, "messages": msgs, "max_tokens": 900}, 30)
+                text = re.sub(r"<think>.*?</think>", "", data["choices"][0]["message"].get("content") or "", flags=re.S).strip()
+            elif who == "gemini":
+                if not os.getenv("GEMINI_API_KEY"):
+                    continue
+                model = os.getenv("GEMINI_MODEL", "").strip() or GEMINI_MODELS[0]
+                data = send_json(GEMINI_URL % model, {"systemInstruction": {"parts": [{"text": THINK_SYSTEM}]},
+                                                      "contents": [{"role": "user", "parts": [{"text": user}]}]},
+                                 {"Content-Type": "application/json", "x-goog-api-key": os.getenv("GEMINI_API_KEY")}, 30)
+                text = "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"] if not p.get("thought")).strip()
+            elif who == "venice":
+                if not os.getenv("VENICE_API_KEY"):
+                    continue
+                model = os.getenv("VENICE_MODEL", "").strip() or VENICE_MODELS[0]
+                data = send_json(VENICE_URL, {"model": model, "messages": msgs, "max_tokens": 900,
+                                              "venice_parameters": {"include_venice_system_prompt": False, "disable_thinking": True}},
+                                 {"Content-Type": "application/json", "Authorization": "Bearer " + os.getenv("VENICE_API_KEY")}, 30)
+                text = re.sub(r"<think>.*?</think>", "", data["choices"][0]["message"].get("content") or "", flags=re.S).strip()
+            else:
+                model = OLLAMA_MODEL
+                data = send_json(OLLAMA_URL, {"model": model, "stream": False, "think": False, "keep_alive": KEEP_ALIVE, "messages": msgs},
+                                 {"Content-Type": "application/json"}, 120)
+                text = (data.get("message") or {}).get("content", "").strip()
+            if text:
+                return text, "%s (%s)" % (who, model)
+            tried.append(who + ": empty answer")
+        except Exception as error:
+            tried.append("%s: %s" % (who, error))
+    raise ValueError("No brain could answer: " + " | ".join(tried))
 
 load_settings()
 
@@ -1465,11 +1630,42 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
             if payload.get("openrouter_model"):
                 data["openrouter_model"] = str(payload["openrouter_model"]).strip()
                 os.environ["OPENROUTER_MODEL"] = data["openrouter_model"]
+            for k, env in LIVE_SETTING_ENV.items():     # GEMINI_LIVE_V1: live engine, live model, voice, think model
+                if payload.get(k):
+                    data[k] = str(payload[k]).strip()
+                    os.environ[env] = data[k]
             if payload.get("provider") in ("ollama", "claude", "gemini", "vertex", "venice", "openrouter"):
                 data["provider"] = payload["provider"]
                 os.environ["BRAIN_PROVIDER"] = payload["provider"]
             save_settings(data)
             self._send_json(settings_view())
+            return
+        if path in ("/live_token", "/live_log", "/think"):    # GEMINI_LIVE_V1
+            try:
+                payload = self._read_json()
+            except ValueError as error:
+                self._send_json({"error": str(error)}, 400)
+                return
+            try:
+                if path == "/live_token":
+                    ROOM_NOW.clear()
+                    if isinstance(payload.get("context"), dict):
+                        ROOM_NOW.update(payload["context"])
+                    token, version = make_live_token()
+                    print("Live chat: Gemini Live token made (%s, %s)." % (live_setting("live_model"), version))
+                    self._send_json({"token": token, "api_version": version, "model": live_setting("live_model"),
+                                     "voice": live_setting("live_voice"), "system": live_system_text(),
+                                     "emotions": EMOTIONS, "actions": ROOM_ACTIONS})
+                elif path == "/live_log":
+                    live_log(payload.get("user"), payload.get("her"))
+                    self._send_json({"ok": True})
+                else:
+                    answer, who = think_answer(payload.get("question"))
+                    print("Live chat: hard question answered by %s." % who)
+                    self._send_json({"answer": answer, "by": who})
+            except Exception as error:
+                print("Live chat %s failed: %s" % (path, error))
+                self._send_json({"error": str(error)}, 500)
             return
         if path == "/present":            # STORY_V1: write a presentation show from her story or a pasted text
             try:
