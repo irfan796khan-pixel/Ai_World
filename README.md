@@ -145,6 +145,12 @@ Her voice is made on the laptop by `girl_voice.py` with **Piper** (free, offline
 - Long answers are cut into pieces: the first sentence alone, the rest in pieces of up to about 150 letters. She starts talking as soon as the first piece is ready, and the next pieces are made in the background while she talks. Test: a 16.7 s answer took 1.75 s to make in one go; the first piece took 0.19 s.
 - Live chat speech-to-text still uses VoiceStudio if it is running; if not, Live chat uses the browser's speech recognition from the first sentence.
 
+## Listening while she talks + presentation stays in place — LISTEN_WHILE_TALK_V1, PRESENT_STAY_V1
+- Old live chat now keeps listening while she talks (`AIWorld.live.bargeIn = true`). She is not cut by any sound (it may be her own echo); when your words come in and they are not her own (echo filter, stricter while she talks), her voice stops and she answers you.
+- During her presentation only "stop", "enough", "quiet", "shut up" or "pause" stop it; other talk is ignored so the show is not cut.
+- Presentations: the brain can no longer pick "walk" for a part, and a "walk" step in a show only turns her to the class (it used to step her about 1 m to one side and back, so she walked back and forth mid-talk).
+- Turn listening-while-talking off in the console: `AIWorld.live.bargeIn = false`.
+
 ## Echo filter (old live chat on speakers) — ECHO_FILTER_V1
 On laptop speakers the mic heard HER voice, and speech-to-text often finished after she stopped, so her own line came back as "you said ..." and she roasted you for repeating her.
 Now every line she says is remembered for 45 s. If what the mic heard is mostly her own word pairs (at least 3 pairs and half of what was heard), it is dropped and the console shows `live: ignored her own voice from the speakers`. Short things like "stop" or "yes" always get through.
