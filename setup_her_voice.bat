@@ -5,10 +5,15 @@ rem ONE TIME: makes voice_env (its own Python box, so nothing else breaks), inst
 rem and OmniVoice (the voice engine inside VoiceStudio, without the VoiceStudio app), then makes her voice and a test line.
 rem Downloads a few GB the first time. Run it again any time to repair.
 set PY=
-for /f "delims=" %%p in ('where python 2^>nul') do if not defined PY set "PY=%%p"
+for /f "delims=" %%p in ('where python 2^>nul ^| findstr /v /i WindowsApps') do if not defined PY set "PY=%%p"
 if not defined PY if exist "%USERPROFILE%\miniconda3\python.exe" set "PY=%USERPROFILE%\miniconda3\python.exe"
 if not defined PY if exist "%USERPROFILE%\anaconda3\python.exe" set "PY=%USERPROFILE%\anaconda3\python.exe"
-if not defined PY (echo Python not found. & pause & exit /b)
+if not defined PY if exist "%LOCALAPPDATA%\Programs\Python\Python313\python.exe" set "PY=%LOCALAPPDATA%\Programs\Python\Python313\python.exe"
+if not defined PY if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" set "PY=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+if not defined PY if exist "%LOCALAPPDATA%\Programs\Python\Python311\python.exe" set "PY=%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
+if not defined PY if exist "%LOCALAPPDATA%\Programs\Python\Python310\python.exe" set "PY=%LOCALAPPDATA%\Programs\Python\Python310\python.exe"
+if not defined PY (echo Python not found. Take a photo of this window. & pause & exit /b)
+echo Using Python: %PY%
 if not exist voice_env\Scripts\python.exe (
   echo Making voice_env...
   "%PY%" -m venv voice_env
