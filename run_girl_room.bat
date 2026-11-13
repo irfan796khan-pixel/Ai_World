@@ -34,6 +34,8 @@ if errorlevel 1 (
 )
 
 rem ---- her HD voice (OmniVoice, the engine inside VoiceStudio, without the app). Only if setup_her_voice.bat was run.
+rem her speed: above 1.0 is faster (1.1 = a bit peppier). Change it here.
+set HER_VOICE_SPEED=1.1
 if exist voice_env\Scripts\python.exe (
   "%PY%" wait_for.py http://127.0.0.1:3901/health 0
   if errorlevel 1 start "AI World - her HD voice (keep open)" /min voice_env\Scripts\python.exe her_voice.py
