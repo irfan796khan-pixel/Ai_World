@@ -1256,7 +1256,7 @@ def settings_view():
         "live_models": LIVE_MODELS,
         "live_voice": live_setting("live_voice"),
         "live_voices": LIVE_VOICES,
-        "think_model": live_setting("think_model"),
+        "think_order": THINK_ORDER,
     }
 
 
@@ -1267,12 +1267,14 @@ def settings_view():
 #     POST /live_token  -> a short-lived Google token (the real key never goes to the page) + her personality,
 #                          today's memory and her old lines, so the live voice is still HER
 #     POST /live_log    -> what you said and what she said, saved into her day memory and no-repeat list
-#     POST /think       -> hard questions: the live voice asks her big brain (Claude) and says the answer
+#     POST /think       -> hard questions: the live voice asks her big brain (OpenRouter free, then Gemini, then Venice,
+#                          Ollama only last) and says the answer
 # ============================================================================
-LIVE_MODELS = ["gemini-3.8-live", "gemini-3.1-flash-live-preview", "gemini-2.5-flash-native-audio-preview-12-2025"]
+LIVE_MODELS = ["gemini-3.1-flash-live-preview", "gemini-3.8-live", "gemini-2.5-flash-native-audio-preview-12-2025"]   # 3.1 flash live = free tier on Google's pricing page
 LIVE_VOICES = ["Leda", "Aoede", "Kore", "Zephyr", "Callirrhoe", "Despina"]
-LIVE_DEFAULTS = {"live_engine": "gemini", "live_model": LIVE_MODELS[0], "live_voice": "Leda", "think_model": "claude-sonnet-5-5"}
-LIVE_SETTING_ENV = {"live_engine": "LIVE_ENGINE", "live_model": "LIVE_MODEL", "live_voice": "LIVE_VOICE", "think_model": "THINK_MODEL"}
+LIVE_DEFAULTS = {"live_engine": "gemini", "live_model": LIVE_MODELS[0], "live_voice": "Leda"}
+LIVE_SETTING_ENV = {"live_engine": "LIVE_ENGINE", "live_model": "LIVE_MODEL", "live_voice": "LIVE_VOICE"}
+THINK_ORDER = ["openrouter", "gemini", "venice", "ollama"]   # hard questions: free OpenRouter first, slow Ollama only as the very last backup. No Claude (Imran, 12 Nov).
 AUTH_TOKEN_URLS = [("v1beta", "https://generativelanguage.googleapis.com/v1beta/auth_tokens"),
                    ("v1alpha", "https://generativelanguage.googleapis.com/v1alpha/auth_tokens")]
 
@@ -1369,48 +1371,50 @@ no emojis. If you are not sure, say so plainly. Do not roast; she adds the attit
 
 
 def think_answer(question):
-    """Hard questions from the live voice. Claude first (think_model, then the small Claude),
-    then Gemini, then Ollama. Returns (answer, who)."""
+    """Hard questions from the live voice. Tries THINK_ORDER: OpenRouter (free models), Gemini (free-tier key),
+    Venice, and Ollama only as the very last backup (it is slow). Skips any brain with no key. Returns (answer, who)."""
     question = str(question or "").strip()[:2000]
     if not question:
         raise ValueError("no question")
     user = ("Recent chat for context:\n" + "\n".join(message_text(m) for m in history[-6:])
             + "\n\nQuestion: " + question)
+    msgs = [{"role": "system", "content": THINK_SYSTEM}, {"role": "user", "content": user}]
     tried = []
-    if os.getenv("ANTHROPIC_API_KEY"):
-        for model in dict.fromkeys([live_setting("think_model"), CLAUDE_MODEL]):
-            try:
-                data = send_json(CLAUDE_URL, {"model": model, "max_tokens": 700, "system": THINK_SYSTEM,
-                                              "messages": [{"role": "user", "content": user}]},
-                                 {"Content-Type": "application/json", "x-api-key": os.getenv("ANTHROPIC_API_KEY"),
-                                  "anthropic-version": "2023-06-01"}, 60)
-                text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text").strip()
-                if text:
-                    return text, model
-            except Exception as error:
-                tried.append("%s: %s" % (model, error))
-    if os.getenv("GEMINI_API_KEY"):
-        model = os.getenv("GEMINI_MODEL", "").strip() or GEMINI_MODELS[0]
+    for who in THINK_ORDER:
         try:
-            data = send_json(GEMINI_URL % model, {"systemInstruction": {"parts": [{"text": THINK_SYSTEM}]},
-                                                  "contents": [{"role": "user", "parts": [{"text": user}]}]},
-                             {"Content-Type": "application/json", "x-goog-api-key": os.getenv("GEMINI_API_KEY")}, 60)
-            text = "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"] if not p.get("thought")).strip()
+            if who == "openrouter":
+                if not os.getenv("OPENROUTER_API_KEY"):
+                    continue
+                model = os.getenv("OPENROUTER_MODEL", "").strip() or OPENROUTER_MODELS[0]
+                data = openrouter_send({"model": model, "messages": msgs, "max_tokens": 900}, 30)
+                text = re.sub(r"<think>.*?</think>", "", data["choices"][0]["message"].get("content") or "", flags=re.S).strip()
+            elif who == "gemini":
+                if not os.getenv("GEMINI_API_KEY"):
+                    continue
+                model = os.getenv("GEMINI_MODEL", "").strip() or GEMINI_MODELS[0]
+                data = send_json(GEMINI_URL % model, {"systemInstruction": {"parts": [{"text": THINK_SYSTEM}]},
+                                                      "contents": [{"role": "user", "parts": [{"text": user}]}]},
+                                 {"Content-Type": "application/json", "x-goog-api-key": os.getenv("GEMINI_API_KEY")}, 30)
+                text = "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"] if not p.get("thought")).strip()
+            elif who == "venice":
+                if not os.getenv("VENICE_API_KEY"):
+                    continue
+                model = os.getenv("VENICE_MODEL", "").strip() or VENICE_MODELS[0]
+                data = send_json(VENICE_URL, {"model": model, "messages": msgs, "max_tokens": 900,
+                                              "venice_parameters": {"include_venice_system_prompt": False, "disable_thinking": True}},
+                                 {"Content-Type": "application/json", "Authorization": "Bearer " + os.getenv("VENICE_API_KEY")}, 30)
+                text = re.sub(r"<think>.*?</think>", "", data["choices"][0]["message"].get("content") or "", flags=re.S).strip()
+            else:
+                model = OLLAMA_MODEL
+                data = send_json(OLLAMA_URL, {"model": model, "stream": False, "think": False, "keep_alive": KEEP_ALIVE, "messages": msgs},
+                                 {"Content-Type": "application/json"}, 120)
+                text = (data.get("message") or {}).get("content", "").strip()
             if text:
-                return text, model
+                return text, "%s (%s)" % (who, model)
+            tried.append(who + ": empty answer")
         except Exception as error:
-            tried.append("%s: %s" % (model, error))
-    try:
-        data = send_json(OLLAMA_URL, {"model": OLLAMA_MODEL, "stream": False, "think": False, "keep_alive": KEEP_ALIVE,
-                                      "messages": [{"role": "system", "content": THINK_SYSTEM}, {"role": "user", "content": user}]},
-                         {"Content-Type": "application/json"}, 120)
-        text = (data.get("message") or {}).get("content", "").strip()
-        if text:
-            return text, OLLAMA_MODEL
-    except Exception as error:
-        tried.append("ollama: %s" % error)
+            tried.append("%s: %s" % (who, error))
     raise ValueError("No brain could answer: " + " | ".join(tried))
-
 
 load_settings()
 

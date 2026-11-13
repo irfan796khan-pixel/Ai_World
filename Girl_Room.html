@@ -3605,8 +3605,7 @@ controls.addEventListener('start', () => { CINE.userUntil = performance.now() + 
     + '<div style="margin:10px 0 4px">Live chat engine</div>'   // GEMINI_LIVE_V1
     + '<select id="ak_live" style="width:100%;padding:6px"><option value="gemini">Gemini Live: fastest, talks back while it thinks (needs Gemini key)</option><option value="old">Old: mic, then Whisper, then the brain below</option></select>'
     + '<div style="display:flex;gap:6px;margin-top:6px"><select id="ak_lmodel" style="flex:1;padding:6px" title="Gemini Live model"></select><select id="ak_lvoice" style="width:120px;padding:6px" title="her live voice"></select></div>'
-    + '<div style="margin:10px 0 4px">Big brain for hard questions in live chat (Claude model, needs Anthropic key)</div>'
-    + '<input id="ak_think" type="text" autocomplete="off" placeholder="claude-sonnet-5-5" style="width:100%;padding:6px;box-sizing:border-box">'
+    + '<div style="margin:6px 0 0;font-size:12px;opacity:.75">Hard questions in live chat: OpenRouter (free) first, then Gemini, then Venice, Ollama only last. Uses the keys below.</div>'
     + '<div style="margin:10px 0 4px">Brain (typed chat and old live chat)</div>'
     + '<select id="ak_prov" style="width:100%;padding:6px"><option value="ollama">Ollama on this laptop (qwen3:4b, free)</option><option value="gemini">Gemini, AI Studio key</option><option value="vertex">Gemini via Google Cloud (Vertex AI, uses your AI Pro credits)</option><option value="venice">Venice AI (needs Venice key)</option><option value="openrouter">OpenRouter, free models (needs OpenRouter key)</option><option value="claude">Claude (needs Anthropic key)</option></select>'
     + '<div style="margin:10px 0 4px">Gemini model</div>'
@@ -3631,7 +3630,7 @@ controls.addEventListener('start', () => { CINE.userUntil = performance.now() + 
     $('ak_prov').value = ['gemini', 'vertex', 'venice', 'openrouter', 'claude'].includes(j.provider) ? j.provider : 'ollama'; $('ak_vkey').value = j.vertex_key || ''; $('ak_venkey').value = j.venice_key || ''; $('ak_vmodel').value = j.venice_model || 'deepseek-v4-1-flash'; $('ak_orkey').value = j.openrouter_key || ''; $('ak_omodel').value = j.openrouter_model || 'openrouter/free';
     $('ak_key').value = j.key || ''; $('ak_gkey').value = j.gemini_key || ''; $('ak_gmodel').value = j.gemini_model || 'gemini-3.5-flash-lite';
     const opts = (el, list, cur) => { el.innerHTML = (list || [cur]).map(v => '<option value="' + v + '">' + v + '</option>').join(''); el.value = cur; };   // GEMINI_LIVE_V1
-    $('ak_live').value = j.live_engine === 'old' ? 'old' : 'gemini'; opts($('ak_lmodel'), j.live_models, j.live_model || 'gemini-3.8-live'); opts($('ak_lvoice'), j.live_voices, j.live_voice || 'Leda'); $('ak_think').value = j.think_model || 'claude-sonnet-5-5';
+    $('ak_live').value = j.live_engine === 'old' ? 'old' : 'gemini'; opts($('ak_lmodel'), j.live_models, j.live_model || 'gemini-3.1-flash-live-preview'); opts($('ak_lvoice'), j.live_voices, j.live_voice || 'Leda');
     msg('Brain now: ' + j.provider + (j.provider === 'gemini' || j.provider === 'vertex' ? ' (' + (j.gemini_model || '') + ')' : j.provider === 'venice' ? ' (' + (j.venice_model || '') + ')' : j.provider === 'openrouter' ? ' (' + (j.openrouter_model || '') + ')' : '') + '  |  Gemini key: ' + tail(j.gemini_key) + '  |  Cloud key: ' + tail(j.vertex_key) + '  |  Venice key: ' + tail(j.venice_key) + '  |  OpenRouter key: ' + tail(j.openrouter_key) + '  |  Anthropic key: ' + tail(j.key));
   }
   btn.onclick = () => {
@@ -3646,9 +3645,9 @@ controls.addEventListener('start', () => { CINE.userUntil = performance.now() + 
     if (provider === 'vertex' && !vertex_api_key) { msg('Google Cloud needs its Vertex AI API key.'); return; }
     if (provider === 'venice' && !venice_api_key) { msg('Venice needs a Venice API key.'); return; }
     if (provider === 'openrouter' && !openrouter_api_key) { msg('OpenRouter needs an OpenRouter API key.'); return; }
-    const live_engine = $('ak_live').value, live_model = $('ak_lmodel').value, live_voice = $('ak_lvoice').value, think_model = $('ak_think').value.trim() || 'claude-sonnet-5-5';   // GEMINI_LIVE_V1
+    const live_engine = $('ak_live').value, live_model = $('ak_lmodel').value, live_voice = $('ak_lvoice').value;   // GEMINI_LIVE_V1
     if (live_engine === 'gemini' && !gemini_api_key) { msg('Gemini Live needs a Gemini API key.'); return; }
-    fetch(BRAIN_SET, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, api_key, gemini_api_key, gemini_model, vertex_api_key, venice_api_key, venice_model, openrouter_api_key, openrouter_model, live_engine, live_model, live_voice, think_model }) })
+    fetch(BRAIN_SET, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, api_key, gemini_api_key, gemini_model, vertex_api_key, venice_api_key, venice_model, openrouter_api_key, openrouter_model, live_engine, live_model, live_voice }) })
       .then(r => r.json()).then(j => { fill(j); msg('Saved. ' + $('ak_msg').textContent); }).catch(() => msg('Could not save: the brain is not running.'));
   };
 }
@@ -3722,7 +3721,8 @@ window.addEventListener('resize', () => {
 //     plus her personality, today's memory and her old lines (so she stays the same girl and does not repeat).
 //   - Her voice plays through the same sound path as before, so her mouth follows the real sound.
 //   - Tool "room_action": she moves and changes face while she talks (walk, sit, lamp, tv, ...).
-//   - Tool "think_hard": hard questions go to her big brain (Claude, via Brain.py /think); she says the answer.
+//   - Tool "think_hard": hard questions go to her big brain via Brain.py /think (OpenRouter free, then Gemini,
+//     then Venice, Ollama only last); she says the answer.
 //   - Every finished turn goes to Brain.py /live_log (day memory + no-repeat list).
 //   Turn it on/off in the API key box: "Live chat engine". The old engine (mic -> Whisper -> brain) still works.
 //   Console: AIWorld.geminiLive.start() / .stop() / .bargeLevel = 0.06 (lower = easier to interrupt her)
