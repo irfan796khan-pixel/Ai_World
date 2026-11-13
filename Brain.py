@@ -1457,6 +1457,7 @@ def story_hint():
 
 
 SHOW_ACTIONS = ["idle", "wave", "talk", "walk", "walk_to_bed", "sit", "cross", "thumbs", "point_camera"]
+PRESENT_ACTIONS = ["idle", "wave", "talk", "cross", "thumbs", "point_camera"]   # PRESENT_STAY_V1: no "walk" (she walked back and forth mid-talk)   # SHOW_STEP_V1: her own presentations stay standing (no sofa in the middle of the talk)
 
 
 def model_text(provider, system, user, max_tokens=4000):
@@ -1514,7 +1515,7 @@ def make_show(source_text, provider, ask=""):
               "Split it into parts that are easy to say out loud. Tell it like a stand-up show: greet the room, tell where you came from, how your body, "
               "face, moves, voice and brain were built, the problems the team fixed, what changed most recently, what is still missing, "
               "and finish with a punchline and a goodbye. Roast the team and the audience along the way, but keep it fun, not mean. "
-              "Return ONLY JSON: {\"lines\": [{\"action\": one of %s, \"mood\": one of %s, \"text\": \"...\"}]}" % (SHOW_ACTIONS, EMOTIONS))
+              "Return ONLY JSON: {\"lines\": [{\"action\": one of %s, \"mood\": one of %s, \"text\": \"...\"}]}" % (PRESENT_ACTIONS, EMOTIONS))
     text = model_text(provider, system, ("The request: " + ask + "\n\n" if ask else "") + "These are the true facts about you:\n\n" + source_text, 16000)
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
     data = json.loads(text[text.find("{"): text.rfind("}") + 1])
@@ -1527,7 +1528,7 @@ def make_show(source_text, provider, ask=""):
         t = str((ln or {}).get("text") or "").strip() if isinstance(ln, dict) else str(ln).strip()
         if not t:
             continue
-        lines.append({"action": ln.get("action") if isinstance(ln, dict) and ln.get("action") in SHOW_ACTIONS else "talk",
+        lines.append({"action": ln.get("action") if isinstance(ln, dict) and ln.get("action") in PRESENT_ACTIONS else "talk",
                       "mood": ln.get("mood") if isinstance(ln, dict) and ln.get("mood") in EMOTIONS else "amused", "text": t, "pause": 0.5})
     if not lines:
         raise ValueError("The brain wrote no parts.")

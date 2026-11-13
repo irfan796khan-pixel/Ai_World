@@ -1623,7 +1623,9 @@ function showSentences(text) {               // one sentence on screen at a time
 function showAction(a) {
   const A = window.AIWorld;
   if (a === 'wave') A.act([{ face: 'camera' }, { wave: 2.5 }]);
-  else if (a === 'walk') A.act([{ walk: { x: -2.2, z: 0.4 } }, { walk: { x: 1.6, z: 0.6 } }, { walk: 'center' }, { face: 'camera' }]);
+  else if (a === 'walk') {   // PRESENT_STAY_V1: she stays in place and faces the class (the side steps made her walk back and forth mid-talk)
+    if (!act.cur) A.act([{ face: 'camera' }]);
+  }
   else if (a === 'walk_to_bed' || a === 'sit') A.act([{ walk: 'sofa', run: false }, { sit: 'sofa', time: 60 }]);   // the room has no bed: the sofa
   else if (a === 'cross') A.act([{ rebel: 'cross', quiet: true }]);
   else if (a === 'thumbs') A.act([{ face: 'camera' }, { thumbs: 2 }]);
@@ -1651,7 +1653,7 @@ async function runShow(file) {
   for (const l of lines) {
     if (my !== SHOW.run) return;
     showAction(l.action);
-    if (/walk|sit/.test(l.action || '')) await waitStill(20);   // she gets there first, then talks
+    if (/walk_to_bed|sit/.test(l.action || '')) await waitStill(20);   // she gets to the sofa first, then talks (a 'walk' step does not stop the talk)
     if (my !== SHOW.run) return;
     setMood(l.mood || (l.action === 'walk' ? 'annoyed' : 'amused'), 0.8, 60);
     for (const s of showSentences(l.text || '')) {
@@ -1994,7 +1996,7 @@ function gestureTick(t, dt) {
 //   -> hear(text): quick reply or brain -> her voice + face + moves.
 //   No VoiceStudio? It falls back to the browser's own speech recognition (Chrome / Edge).
 //   While she talks the mic is ignored (so she does not hear herself), unless AIWorld.live.bargeIn = true.
-const LIVE = { on: false, mode: null, vad: null, rec: null, busy: false, quietUntil: 0, bargeIn: false, lang: 'en',
+const LIVE = { on: false, mode: null, vad: null, rec: null, busy: false, quietUntil: 0, bargeIn: true, lang: 'en',   // LISTEN_WHILE_TALK_V1: she keeps listening while she talks
   sttUrl: 'v1/audio/transcriptions', model: 'whisper-1', heard: [] };
 const liveEl = document.getElementById('live');
 const sheTalks = () => FX.talking || TALK.main > 0 || TALK.show || (window.speechSynthesis && speechSynthesis.speaking);
@@ -2030,20 +2032,26 @@ function herSaid(text) {
   if (p.length) ECHO.lines.push({ t: now, p: new Set(p) });
   ECHO.lines = ECHO.lines.filter(x => now - x.t < ECHO.seconds * 1000).slice(-40);
 }
-function isEcho(text) {
+function isEcho(text, strict) {                   // strict: she is talking right now, so a smaller match already counts as her echo
   const p = echoPairs(text), now = Date.now();
   if (p.length < 3) return false;                 // "stop", "yes", "hey you" always get through
   const mine = new Set();
   for (const x of ECHO.lines) if (now - x.t < ECHO.seconds * 1000) x.p.forEach(y => mine.add(y));
   if (!mine.size) return false;
   const hit = p.filter(y => mine.has(y)).length;
+  if (strict) return hit >= 2 && hit / p.length >= ECHO.limit * 0.6;
   return hit >= 3 && hit / p.length >= ECHO.limit;   // at least 3 of her word pairs, and most of what was heard
 }
 window.AIWorld.echo = ECHO;
 function liveSaid(text) {                     // one thing you said: show it, then answer like typed text
   text = String(text || '').replace(/\s+/g, ' ').trim();
   if (!text || text.length < 2 || JUNK.test(text)) { liveIdle(); return; }
-  if (isEcho(text)) { ECHO.dropped++; console.log('live: ignored her own voice from the speakers:', text); liveIdle(); return; }
+  const talking = sheTalks();
+  if (isEcho(text, talking)) { ECHO.dropped++; console.log('live: ignored her own voice from the speakers:', text); liveIdle(); return; }
+  if (TALK.show) {                                // her presentation: only "stop" words can cut it, everything else waits
+    if (/\b(stop|enough|quiet|shut up|pause)\b/i.test(text)) { console.log('live: you stopped the presentation:', text); stopShow(); }
+    liveIdle(); return;
+  }
   LIVE.heard.push(text); LIVE.heard = LIVE.heard.slice(-50);
   console.log('live heard:', text);
   if (LIVE.bargeIn && sheTalks()) stopVoices();
@@ -2061,7 +2069,7 @@ async function startVad() {                   // best way: Silero VAD + VoiceStu
     model: 'v5', positiveSpeechThreshold: 0.6, negativeSpeechThreshold: 0.4, redemptionMs: 700, minSpeechMs: 300, preSpeechPadMs: 300,
     onnxWASMBasePath: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/',
     baseAssetPath: 'https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/',
-    onSpeechRealStart: () => { if (canHear()) { liveText('Listening…'); if (LIVE.bargeIn && sheTalks()) stopVoices(); } },
+    onSpeechRealStart: () => { if (canHear()) liveText('Listening…'); },   // LISTEN_WHILE_TALK_V1: she is not cut on any sound (it may be her own echo); she stops when your words come in and are not hers
     onVADMisfire: () => liveIdle(),
     onSpeechEnd: async (audio) => {
       if (!canHear() && !(LIVE.bargeIn && LIVE.on)) { liveIdle(); return; }   // started while she talked: her own voice, skip
