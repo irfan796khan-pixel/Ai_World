@@ -2001,7 +2001,7 @@ function gestureTick(t, dt) {
 //   No VoiceStudio? It falls back to the browser's own speech recognition (Chrome / Edge).
 //   While she talks the mic is ignored (so she does not hear herself), unless AIWorld.live.bargeIn = true.
 const LIVE = { on: false, mode: null, vad: null, rec: null, busy: false, quietUntil: 0, bargeIn: true, lang: 'en', parts: [], joinTimer: 0,
-  wait: (() => { try { const v = parseFloat(localStorage.getItem('aiworld_live_wait')); return v >= 0.3 && v <= 5 ? v : 1.2; } catch (e) { return 1.2; } })(),   // WAIT_FOR_ME_V1   // LISTEN_WHILE_TALK_V1: she keeps listening while she talks
+  wait: (() => { try { const v = parseFloat(localStorage.getItem('aiworld_live_wait')); return v >= 0.3 && v <= 6 ? v : 4; } catch (e) { return 4; } })(),   // WAIT_FOR_ME_V1   // LISTEN_WHILE_TALK_V1: she keeps listening while she talks
   sttUrl: 'v1/audio/transcriptions', model: 'whisper-1', heard: [] };
 const liveEl = document.getElementById('live');
 const sheTalks = () => FX.talking || TALK.main > 0 || TALK.show || (window.speechSynthesis && speechSynthesis.speaking);
@@ -2060,7 +2060,7 @@ function liveSaid(text) {                     // one thing you said: show it, th
   return joinHeard(text);
 }
 // WAIT_FOR_ME_V1: she waits until you have finished your whole sentence. A short pause to think does not end your turn:
-// only LIVE.wait seconds of silence does (default 1.2 s; people answer each other after about 0.1-0.3 s, but mid-sentence
+// only LIVE.wait seconds of silence does (default 4 s, Imran's choice; people answer each other after about 0.1-0.3 s, but mid-sentence
 // thinking pauses are longer). Pieces the speech-to-text sends during your pauses are joined into one message.
 // Change it in the console: AIWorld.live.wait = 1.5  (seconds; kept in this browser; restart Live chat for the mic detector)
 function joinHeard(text) {
@@ -2144,7 +2144,7 @@ function liveOff() { LIVE.on = false; LIVE.busy = false; stopVad(); stopBrowserR
 if (liveEl) liveEl.addEventListener('click', () => { if (LIVE.on) liveOff(); else liveOn(); });
 window.AIWorld.live = { start: liveOn, stop: liveOff, isOn: () => LIVE.on, mode: () => LIVE.mode, heard: () => LIVE.heard.slice(),
   get bargeIn() { return LIVE.bargeIn; }, set bargeIn(v) { LIVE.bargeIn = !!v; },
-  get wait() { return LIVE.wait; }, set wait(v) { v = Math.min(5, Math.max(0.3, +v || 1.2)); LIVE.wait = v; try { localStorage.setItem('aiworld_live_wait', String(v)); } catch (e) {} },
+  get wait() { return LIVE.wait; }, set wait(v) { v = Math.min(6, Math.max(0.3, +v || 4)); LIVE.wait = v; try { localStorage.setItem('aiworld_live_wait', String(v)); } catch (e) {} },
   get lang() { return LIVE.lang; }, set lang(v) { LIVE.lang = String(v || 'en'); },
   get model() { return LIVE.model; }, set model(v) { LIVE.model = String(v); },
   said: liveSaid };
@@ -4001,7 +4001,7 @@ window.addEventListener('resize', () => {
       systemInstruction: { parts: [{ text: j.system }] }, tools: tools(j.actions || [], GL.plain),
       inputAudioTranscription: {}, outputAudioTranscription: {}, sessionResumption: GL.handle ? { handle: GL.handle } : {} };
     if (!GL.plain) { setup.contextWindowCompression = { slidingWindow: {} };
-      setup.realtimeInputConfig = { automaticActivityDetection: { silenceDurationMs: Math.round(((typeof LIVE !== 'undefined' && LIVE.wait) || 1.2) * 1000) } };   // WAIT_FOR_ME_V1: Gemini waits for you to finish too
+      setup.realtimeInputConfig = { automaticActivityDetection: { silenceDurationMs: Math.round(((typeof LIVE !== 'undefined' && LIVE.wait) || 4) * 1000) } };   // WAIT_FOR_ME_V1: Gemini waits for you to finish too
     }
     ws.onopen = () => ws.send(JSON.stringify({ setup }));
     ws.onmessage = onMessage;

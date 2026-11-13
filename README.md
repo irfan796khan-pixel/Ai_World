@@ -278,5 +278,5 @@ Faster or better: set `HER_VOICE_STEPS` to 16 (fast, default) or 32 (better).
 
 ## Wait for me (pause before she answers)
 
-She waits until you are quiet for `AIWorld.live.wait` seconds (default 1.2) before she answers, so you can finish
+She waits until you are quiet for `AIWorld.live.wait` seconds (default 4) before she answers, so you can finish
 your sentence. Change it in the browser console, for example `AIWorld.live.wait = 1.5`. It is saved.
