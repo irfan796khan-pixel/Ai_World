@@ -31,6 +31,7 @@ import shelf   # her memory shelf: /api/books (your files in memory_books/)
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8081
 VOICESTUDIO = "http://127.0.0.1:3900"
+HER_VOICE = "http://127.0.0.1:3901"     # HER_HD_VOICE_V1: her_voice.py (OmniVoice, without the VoiceStudio app)
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(HERE, "voice_cache")   # every line VoiceStudio made once is kept here: the same line plays at once next time
 ONE_AT_A_TIME = threading.Lock()            # VoiceStudio has one worker: send it one line at a time (no "queue full" errors)
@@ -49,6 +50,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         body = None
         if method == "POST":
             body = self.rfile.read(int(self.headers.get("Content-Length", "0") or 0))
+        if self.headers.get("X-Voice-Engine", "").lower() == "omnivoice" or self.path.startswith("/v1/her/"):   # HER_HD_VOICE_V1
+            return self._her_voice(method, body)
         piper = girl_voice is not None and girl_voice.ready()
         if self.headers.get("X-Voice-Engine", "").lower() == "voicestudio":   # VOICE_SWITCH_V1: menu "Voice: VoiceStudio"
             piper = False
@@ -94,6 +97,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 f.write(data)
             os.replace(key + ".part", key)
         return self._send(status, ctype, data, "made" if key else "")
+
+    def _her_voice(self, method, body):
+        """Her HD voice: passes the line to her_voice.py on port 3901 (it keeps its own voice_cache files)."""
+        path = "/health" if self.path.startswith("/v1/her/health") else self.path
+        req = urllib.request.Request(HER_VOICE + path, data=body if method == "POST" else None, method=method,
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=120) as res:
+                return self._send(res.status, res.headers.get("Content-Type", "audio/wav"), res.read())
+        except urllib.error.HTTPError as e:
+            return self._send(e.code, e.headers.get("Content-Type", "text/plain"), e.read())
+        except Exception as e:
+            return self._send(502, "text/plain", ("her HD voice is not running (setup_her_voice.bat, then start AI World): " + str(e)).encode())
 
     def _ask_voicestudio(self, method, body):
         for attempt in range(6):
