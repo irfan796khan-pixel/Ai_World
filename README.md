@@ -145,6 +145,16 @@ Her voice is made on the laptop by `girl_voice.py` with **Piper** (free, offline
 - Long answers are cut into pieces: the first sentence alone, the rest in pieces of up to about 150 letters. She starts talking as soon as the first piece is ready, and the next pieces are made in the background while she talks. Test: a 16.7 s answer took 1.75 s to make in one go; the first piece took 0.19 s.
 - Live chat speech-to-text still uses VoiceStudio if it is running; if not, Live chat uses the browser's speech recognition from the first sentence.
 
+## Sentence streaming (typed chat + old live chat) — STREAM_SENTENCES_V1
+She starts talking after her FIRST sentence instead of waiting for the whole answer.
+- `Brain.py` `POST /brain_stream`: the brain writes her words first and her face/moves last (after `###`); each finished sentence is sent to the page at once (`{"say": ...}`), then `{"done": true, response, emotion, animation, actions}`.
+- Streams with OpenRouter, Venice, Gemini, Vertex and Ollama. If the chosen brain fails before saying anything, Ollama streams; last, the normal `/brain` way. Claude is not streamed (it uses the normal way).
+- No-repeat stays on: an old line is skipped; if the answer starts with 2 old lines it stops at once and asks again, and the second try always speaks (never silent).
+- `<think>...</think>` text from thinking models is never spoken. If a brain ignores the format and writes JSON, the words are read from the JSON at the end.
+- Page: each sentence goes into her line queue; her Piper voice for that sentence starts being made the moment it arrives, so the next one is ready when she finishes. Moves and face come at the end of the answer.
+- Older brains without `/brain_stream` (or `AIWorld.noStream = true`) use the old way automatically.
+- Console shows `brain: first sentence after ... ms` and `brain: whole answer after ... ms`.
+
 ## Gemini Live chat (fast, like Gemini Live / Tesla Grok) — GEMINI_LIVE_V1
 Button **Live chat** now uses Google's Gemini Live when a Gemini key is saved (API key box → "Live chat engine").
 One open line: your voice goes up while you talk, her voice comes back while it is being made, and talking over her cuts her off at once. No "speech → text → brain → voice" waiting.

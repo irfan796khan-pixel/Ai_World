@@ -1727,6 +1727,53 @@ async function presentText(text) {
   } catch (e) { clearInterval(tick); setMood('neutral'); console.warn('present failed', e); sayMain('My brain froze writing the presentation. Try again in a moment.'); }
 }
 window.AIWorld.presentText = presentText;
+// STREAM_SENTENCES_V1: Brain.py /brain_stream sends each sentence the moment it is written.
+// She says sentence 1 while the brain is still writing sentence 2, and her voice for the next sentence
+// is made while she says this one. Her face and moves come at the end of the answer.
+// Returns false (so the old way runs) when the brain has no /brain_stream (older Brain.py, brain_server.py).
+async function brainStream(text) {
+  const base = String(window.AIWorld.brainUrl || '');
+  if (!/brain$/.test(base) || window.AIWorld.noStream) return false;
+  let r;
+  try { r = await fetch(base.replace(/brain$/, 'brain_stream'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, context: roomNow() }) }); }
+  catch (e) { return false; }
+  if (!r.ok || !r.body) return false;
+  const reader = r.body.getReader(), dec = new TextDecoder();
+  let rest = '', said = [], done = null, firstAt = 0;
+  const t0 = performance.now();
+  const onLine = (line) => {
+    let d; try { d = JSON.parse(line); } catch (e) { return; }
+    if (d.say) {
+      if (!said.length) { firstAt = performance.now() - t0; console.log('brain: first sentence after ' + Math.round(firstAt) + ' ms'); }
+      said.push(d.say);
+      if (VS.mode === 'studio' && VS.ok !== false && typeof window.AIWorld.onSay !== 'function') { try { voicePieces(d.say); } catch (e) {} }   // start making her voice now
+      sayMain(d.say);
+    }
+    if (d.done) done = d;
+  };
+  try {
+    for (;;) {
+      const { value, done: end } = await reader.read();
+      if (value) { rest += dec.decode(value, { stream: true }); let i; while ((i = rest.indexOf('\n')) >= 0) { const l = rest.slice(0, i).trim(); rest = rest.slice(i + 1); if (l) onLine(l); } }
+      if (end) break;
+    }
+    if (rest.trim()) onLine(rest.trim());
+  } catch (e) { console.warn('brain stream cut off', e); }
+  if (!said.length) {
+    if (!done) return false;                    // nothing came at all: try the old way
+    sayMain("The brain is not answering. Try one of my quick ones."); return true;
+  }
+  const j = done && !done.error ? done : { response: said.join(' '), emotion: 'neutral', animation: 'idle', actions: [] };
+  console.log('brain: whole answer after ' + Math.round(performance.now() - t0) + ' ms (' + said.length + ' sentences)');
+  if (isQuestion(text)) answerCard(text, j.response);
+  let acts = Array.isArray(j.actions) ? brainActs(j.actions) : [];
+  if (!acts.length) { const s = ROOM_CMD(j.response, true) || ROOM_CMD(text); if (s) { acts = s.acts; j.animation = undefined; } }   // she said a room action but gave no moves: do it anyway
+  if (acts.length) { window.AIWorld.stop(); window.AIWorld.act(acts); }
+  handleReply({ emotion: j.emotion, animation: acts.length ? undefined : j.animation });
+  SAID3.add(j.response);   // NO_REPEAT_V1
+  if (j.learn !== false) learn({ match: [norm(text)], say: [j.response], mood: j.emotion || 'neutral', actions: acts.length ? acts : undefined, gesture: j.animation === 'nod' ? 'nod' : j.animation === 'shake_head' ? 'shake' : undefined });
+  return true;
+}
 async function hear(text) {
   if (text.length >= 200 && /\bpresent/i.test(text)) { presentText(text); return null; }
   if (PRESENT_ASK.test(text)) { presentText(text); return null; }   // PRESENT_V2
@@ -1745,6 +1792,7 @@ async function hear(text) {
   if (typeof window.AIWorld.onUnmatched === 'function') { window.AIWorld.onUnmatched(text); return null; }
   if (window.AIWorld.brainUrl) {
     showBubble('…', 20);
+    if (await brainStream(text)) return null;   // STREAM_SENTENCES_V1: she talks sentence by sentence; old way below if the brain cannot stream
     try {
       const r = await fetch(window.AIWorld.brainUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, context: roomNow() }) });   // LIVE_CONTEXT_V1
       const j = await r.json();

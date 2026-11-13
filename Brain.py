@@ -1544,6 +1544,267 @@ def get_provider_for_web(requested=None):
     return provider.lower()
 
 
+# ============================================================================
+# STREAM_SENTENCES_V1: she starts talking after her FIRST sentence, not after the whole answer.
+#   POST /brain_stream sends one line per finished sentence ({"say": "..."}) while the brain is still
+#   writing the rest, then {"done": true, response, emotion, animation, actions} at the end.
+#   The brain writes her words first and her face/moves last (after ###), so words can stream.
+#   Same rules as /brain: no repeated old lines, day memory, room facts. Old /brain still works.
+#   Streams: OpenRouter, Venice, Gemini, Vertex, Ollama. Claude (or any failure) uses the normal brain.
+# ============================================================================
+STREAM_FORMAT = """
+OUTPUT (you are heard live, sentence by sentence):
+1. First write ONLY the words you say out loud, as plain sentences. Make the first sentence short and punchy,
+   so you can start talking at once. No JSON, no lists, no quotes, no stage directions.
+2. Then on a new line write ### and after it ONE JSON object:
+   {"emotion": "...", "animation": "...", "actions": [{"do": "...", "target": "...", "text": "..."}]}
+   using only the emotions, animations and actions listed above (actions can be an empty list).
+"""
+SENT_END = re.compile(r"[.!?…]+[\"')\]]*\s+")
+
+
+def stream_system():
+    return (PERSONALITY.split("OUTPUT:")[0] + STREAM_FORMAT + day_summary_text() + said_hint()
+            + context_hint() + story_hint())
+
+
+def plain_history(user_text, reminder=None):
+    out = []
+    for m in history:
+        text = m.get("content", "")
+        if m.get("role") == "assistant":
+            try:
+                text = json.loads(text).get("response", text)
+            except Exception:
+                pass
+        out.append({"role": m.get("role"), "content": text})
+    out.append({"role": "user", "content": user_text})
+    if reminder:
+        out.append({"role": "user", "content": reminder})
+    return out
+
+
+def _sse_json(response):
+    """Reads 'data: {...}' lines (OpenAI-style and Gemini ?alt=sse) and yields each JSON object."""
+    for raw in response:
+        line = raw.decode("utf-8", "replace").strip()
+        if not line.startswith("data:"):
+            continue
+        body = line[5:].strip()
+        if body == "[DONE]":
+            return
+        try:
+            yield json.loads(body)
+        except Exception:
+            continue
+
+
+def stream_tokens(provider, system, messages):
+    """Yields text pieces from the brain as they are written. Raises if this brain cannot stream."""
+    if provider in ("openrouter", "venice"):
+        if provider == "openrouter":
+            key = os.getenv("OPENROUTER_API_KEY")
+            url, model = OPENROUTER_URL, os.getenv("OPENROUTER_MODEL", "").strip() or OPENROUTER_MODELS[0]
+            extra = {}
+            headers = {"HTTP-Referer": "http://localhost:8081", "X-Title": "AI World"}
+        else:
+            key = os.getenv("VENICE_API_KEY")
+            url, model = VENICE_URL, os.getenv("VENICE_MODEL", "").strip() or VENICE_MODELS[0]
+            extra = {"venice_parameters": {"include_venice_system_prompt": False, "disable_thinking": True}}
+            headers = {}
+        if not key:
+            raise ValueError("%s isn't configured." % provider)
+        headers.update({"Content-Type": "application/json", "Authorization": "Bearer " + key})
+        payload = dict({"model": model, "stream": True, "temperature": 0.9, "max_tokens": 4000,
+                        "messages": [{"role": "system", "content": system}] + messages}, **extra)
+        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=60) as res:
+            for d in _sse_json(res):
+                for c in d.get("choices") or []:
+                    piece = (c.get("delta") or {}).get("content")
+                    if piece:
+                        yield piece
+        return
+    if provider in ("gemini", "vertex"):
+        key = os.getenv("VERTEX_API_KEY" if provider == "vertex" else "GEMINI_API_KEY")
+        if not key:
+            raise ValueError("%s isn't configured." % provider)
+        model = os.getenv("GEMINI_MODEL", "").strip() or GEMINI_MODELS[0]
+        url = ((VERTEX_URL if provider == "vertex" else GEMINI_URL) % model).replace(":generateContent", ":streamGenerateContent?alt=sse")
+        contents = []
+        for m in messages:
+            role = "model" if m["role"] == "assistant" else "user"
+            if contents and contents[-1]["role"] == role:
+                contents[-1]["parts"][0]["text"] += "\n" + m["content"]
+            else:
+                contents.append({"role": role, "parts": [{"text": m["content"]}]})
+        payload = {"systemInstruction": {"parts": [{"text": system}]}, "contents": contents,
+                   "generationConfig": {"temperature": 1.0, "thinkingConfig": {"thinkingLevel": "minimal"}}}
+        headers = {"Content-Type": "application/json", "x-goog-api-key": key}
+        try:
+            res = urllib.request.urlopen(urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST"), timeout=60)
+        except urllib.error.HTTPError as error:
+            if error.code != 400:
+                raise
+            payload["generationConfig"].pop("thinkingConfig", None)
+            res = urllib.request.urlopen(urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST"), timeout=60)
+        with res:
+            for d in _sse_json(res):
+                for cand in d.get("candidates") or []:
+                    for part in (cand.get("content") or {}).get("parts") or []:
+                        if part.get("text") and not part.get("thought"):
+                            yield part["text"]
+        return
+    if provider == "ollama":
+        payload = {"model": OLLAMA_MODEL, "stream": True, "think": False, "keep_alive": KEEP_ALIVE,
+                   "messages": [{"role": "system", "content": system}] + messages,
+                   "options": {"temperature": 0.7, "repeat_penalty": 1.15, "num_ctx": 4096}}
+        req = urllib.request.Request(OLLAMA_URL, data=json.dumps(payload).encode("utf-8"),
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=120) as res:
+            for raw in res:
+                try:
+                    d = json.loads(raw.decode("utf-8", "replace"))
+                except Exception:
+                    continue
+                piece = (d.get("message") or {}).get("content")
+                if piece:
+                    yield piece
+                if d.get("done"):
+                    return
+        return
+    raise ValueError("%s does not stream here" % provider)
+
+
+def _clean_sentence(text):
+    return remove_stage_directions({"response": text})["response"].strip().strip('"').strip()
+
+
+class _OldLines(Exception):
+    """The reply starts with lines she already said: stop reading it and ask again at once."""
+    def __init__(self, lines):
+        Exception.__init__(self, "old lines")
+        self.lines = lines
+
+
+def stream_reply(user_text, provider, emit, reminder=None, allow_old=False):
+    """Streams one reply. emit(sentence) is called for each new sentence the moment it is finished.
+    Returns (reply dict or None, spoken sentences, dropped old sentences)."""
+    spoken, dropped = [], []
+    raw, tail, consumed, meta_mode, json_mode = "", "", 0, False, None
+
+    def say(sentence):
+        sentence = _clean_sentence(sentence)
+        if not sentence or not re.search(r"[A-Za-z0-9]", sentence):
+            return
+        if any(_said_norm(sentence) == _said_norm(x) for x in spoken):
+            return
+        if already_said(sentence) and not allow_old:
+            dropped.append(sentence)          # NO_REPEAT_V1: an old line is not said again
+            if len(dropped) >= 2 and not spoken:
+                raise _OldLines(dropped)      # starts with old lines: do not wait for the rest
+            return
+        spoken.append(sentence)
+        emit(sentence)
+
+    def visible():                             # <think>...</think> from thinking models is never spoken
+        v = re.sub(r"<think>.*?</think>", "", raw, flags=re.S)
+        i = v.find("<think>")
+        return v[:i] if i >= 0 else v
+
+    for piece in stream_tokens(provider, stream_system(), plain_history(user_text, reminder)):
+        if meta_mode:
+            tail += piece
+            continue
+        raw += piece
+        vis = visible()
+        if json_mode is None and vis.strip():
+            json_mode = vis.lstrip().startswith("{")   # the brain ignored the format and wrote JSON: read it at the end
+        if json_mode:
+            continue
+        buf = vis[consumed:]
+        if "###" in buf:
+            words, tail = buf.split("###", 1)
+            meta_mode = True
+            for sent in re.split(r"(?<=[.!?\u2026])\s+", words.strip()):
+                say(sent)
+            continue
+        while True:
+            m = SENT_END.search(buf)
+            if not m:
+                break
+            say(buf[:m.end()])
+            consumed += m.end()
+            buf = buf[m.end():]
+    vis = visible()
+    if json_mode:
+        text = vis.strip().strip("`")
+        try:
+            data = json.loads(text[text.find("{"): text.rfind("}") + 1])
+        except Exception:
+            data = {}
+        for sent in re.split(r"(?<=[.!?\u2026])\s+", str(data.get("response") or "").strip()):
+            say(sent)
+        tail = json.dumps({k: data.get(k) for k in ("emotion", "animation", "actions")})
+    elif not meta_mode and vis[consumed:].strip():
+        say(vis[consumed:])
+    if not spoken:
+        return None, spoken, dropped
+    meta = {}
+    try:
+        t = tail.strip().strip("`")
+        meta = json.loads(t[t.find("{"): t.rfind("}") + 1]) if "{" in t else {}
+    except Exception:
+        meta = {}
+    reply = {"response": " ".join(spoken), "emotion": meta.get("emotion"), "animation": meta.get("animation"),
+             "actions": meta.get("actions") if isinstance(meta.get("actions"), list) else []}
+    if reply["emotion"] not in EMOTIONS:
+        reply["emotion"] = "amused"
+    if reply["animation"] not in ANIMATIONS:
+        reply["animation"] = "idle"
+    try:
+        reply = check_reply(reply)
+    except Exception:
+        reply["actions"] = []
+    reply = fix_reaction(reply, user_text)
+    history.append({"role": "user", "content": user_text})
+    history.append({"role": "assistant", "content": json.dumps(reply)})
+    save_day_memory(history[-2:])
+    remember_said(reply["response"])
+    if len(history) > MAX_HISTORY_MESSAGES:
+        del history[:-MAX_HISTORY_MESSAGES]
+    return reply, spoken, dropped
+
+
+def stream_brain(user_text, provider, emit):
+    """The chosen brain streams; if it fails before saying anything, slow Ollama streams; last, the normal brain."""
+    order = [provider] if provider == "ollama" else [provider, "ollama"]
+    reminder = None
+    for p in order:
+        for attempt in range(2):
+            try:
+                reply, spoken, dropped = stream_reply(user_text, p, emit, reminder, allow_old=attempt > 0)   # NEVER_SILENT_V1: the 2nd try always speaks
+            except _OldLines as old:
+                reply, spoken, dropped = None, [], old.lines
+            except Exception as error:
+                print("Streaming brain %s failed: %s" % (p, error))
+                break
+            if reply:
+                print("Streamed reply by %s: %d sentences." % (p, len(spoken)))
+                return reply
+            if dropped:                          # every sentence was an old line: ask once more for new words
+                reminder = ("You already said these lines before: " + " | ".join(dropped)
+                            + " . Answer my last message again with completely new words and a new joke.")
+                continue
+            break
+    reply = ask_brain(user_text, provider)        # NEVER_SILENT_V1: the normal brain (it has its own Ollama backup)
+    if reply:
+        for sent in re.split(r"(?<=[.!?…])\s+", reply["response"].strip()):
+            if sent.strip():
+                emit(sent.strip())
+    return reply
+
+
 class BrainHTTPHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
@@ -1666,6 +1927,47 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
             except Exception as error:
                 print("Live chat %s failed: %s" % (path, error))
                 self._send_json({"error": str(error)}, 500)
+            return
+        if path == "/brain_stream":       # STREAM_SENTENCES_V1
+            try:
+                payload = self._read_json()
+            except ValueError as error:
+                self._send_json({"error": str(error)}, 400)
+                return
+            text = str(payload.get("text") or payload.get("message") or "").strip()
+            if not text:
+                self._send_json({"error": "Missing text."}, 400)
+                return
+            provider = get_provider_for_web(payload.get("provider"))
+            ROOM_NOW.clear()
+            if isinstance(payload.get("context"), dict):
+                ROOM_NOW.update(payload["context"])
+            CURRENT_TEXT[0] = text
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS, GET")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+            self.end_headers()
+
+            def line(obj):
+                try:
+                    self.wfile.write((json.dumps(obj) + "\n").encode("utf-8"))
+                    self.wfile.flush()
+                except Exception:
+                    pass                          # the page stopped listening
+
+            try:
+                reply = stream_brain(text, provider, lambda sentence: line({"say": sentence}))
+            except Exception as error:
+                print("brain_stream failed:", error)
+                reply = None
+            if reply:
+                line({"done": True, "response": reply["response"], "emotion": reply["emotion"],
+                      "animation": reply["animation"], "actions": reply.get("actions", [])})
+            else:
+                line({"done": True, "error": "The brain is not answering right now."})
             return
         if path == "/present":            # STORY_V1: write a presentation show from her story or a pasted text
             try:
