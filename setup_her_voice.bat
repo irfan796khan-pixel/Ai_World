@@ -24,14 +24,23 @@ if not defined PY (
 )
 echo Using Python: %PY%
 "%PY%" --version
-rem an old voice_env made with a wrong Python is thrown away and made again
-if exist voice_env\Scripts\python.exe (
-  voice_env\Scripts\python.exe -c "import sys;sys.exit(0 if (3,10)<=sys.version_info[:2]<=(3,13) else 1)" 2>nul
-  if errorlevel 1 (
-    echo The old voice_env uses a Python that is too new. Making it again...
-    rmdir /s /q voice_env
-  )
+rem an old voice_env that is broken, or made with a wrong Python, is thrown away and made again
+set VMINOR=
+if not exist voice_env goto venv_ok
+if exist voice_env\Scripts\python.exe for /f "delims=" %%m in ('voice_env\Scripts\python.exe -c "import sys;print(sys.version_info[1])" 2^>nul') do set "VMINOR=%%m"
+if not defined VMINOR goto venv_bad
+if %VMINOR% GTR 13 goto venv_bad
+if %VMINOR% LSS 10 goto venv_bad
+goto venv_ok
+:venv_bad
+echo The old voice_env is broken or uses a Python that is too new. Removing it...
+rmdir /s /q voice_env
+if exist voice_env (
+  echo Windows would not remove the folder voice_env. Close other black windows, delete the folder voice_env by hand, then run this file again.
+  pause
+  exit /b
 )
+:venv_ok
 if not exist voice_env\Scripts\python.exe (
   echo Making voice_env...
   "%PY%" -m venv voice_env
