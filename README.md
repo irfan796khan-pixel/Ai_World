@@ -145,7 +145,20 @@ Her voice is made on the laptop by `girl_voice.py` with **Piper** (free, offline
 - Long answers are cut into pieces: the first sentence alone, the rest in pieces of up to about 150 letters. She starts talking as soon as the first piece is ready, and the next pieces are made in the background while she talks. Test: a 16.7 s answer took 1.75 s to make in one go; the first piece took 0.19 s.
 - Live chat speech-to-text still uses VoiceStudio if it is running; if not, Live chat uses the browser's speech recognition from the first sentence.
 
-## Live chat (hands-free, button "Live chat")
+## Gemini Live chat (fast, like Gemini Live / Tesla Grok) — GEMINI_LIVE_V1
+Button **Live chat** now uses Google's Gemini Live when a Gemini key is saved (API key box → "Live chat engine").
+One open line: your voice goes up while you talk, her voice comes back while it is being made, and talking over her cuts her off at once. No "speech → text → brain → voice" waiting.
+- `Brain.py` `POST /live_token`: makes a short-lived Google token (the real key stays in `brain_settings.json`) and sends her personality, the room right now, today's memory, the last 12 lines and her old lines (no-repeat).
+- `POST /live_log`: every finished turn goes into her day memory and the 3-day no-repeat list, like typed chat.
+- `POST /think`: hard questions (facts, maths, code) — the live voice calls the tool `think_hard`, Brain.py asks Claude (`think_model`, default `claude-sonnet-5-5`, then `claude-haiku-4-5`, then Gemini, then Ollama) and she says the answer.
+- Tool `room_action`: she walks, sits, points, turns the lamp/TV on, changes face while she talks (same actions as the brain).
+- Her live voice goes through the same sound path as Piper, so her mouth follows the real sound.
+- Typed text while the live line is open goes into the same live talk.
+- Speakers: while she talks, only a voice louder than `AIWorld.geminiLive.bargeLevel` (0.07) gets through, so she does not hear herself. A headset works best. Lower it (0.04) if she is hard to interrupt, raise it (0.12) if she cuts herself off.
+- If Google refuses the token or the line, the old live chat starts instead and the reason shows in the bubble.
+- Settings (API key box): Live chat engine (Gemini Live / Old), live model (`gemini-3.8-live` default), live voice (`Leda` default), big-brain Claude model.
+
+## Live chat (hands-free, button "Live chat") — the old engine
 Press **Live chat** once, allow the microphone, then just talk. No typing.
 1. **Silero VAD** ([ricky0123/vad](https://github.com/ricky0123/vad), ISC licence, loaded from the CDN) hears when you start and stop talking.
 2. **VoiceStudio's local Whisper** (`/v1/audio/transcriptions`, passed through `page_server.py`) turns your words into text on the PC. Free, nothing leaves the laptop.
