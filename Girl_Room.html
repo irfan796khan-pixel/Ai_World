@@ -1554,6 +1554,7 @@ function sayNow(text, spoken) {
 }
 async function sayLine(text, spoken) {          // bubble shows text, the voice says spoken (or text); resolves when she is done talking
   showBubble(text, spoken === undefined ? undefined : 30); spoken = spoken || text;
+  herSaid(spoken);                                // ECHO_FILTER_V1: remember what she says, so the mic can't hand it back as yours
   if (typeof window.AIWorld.onSay === 'function') { try { window.AIWorld.onSay(spoken); } catch (e) { console.warn('onSay failed', e); } return readTime(spoken); }
   if (VS.mode === 'off') return readTime(spoken);
   VS.seq++; const my = VS.seq;                   // the line before is already finished: nothing to cut
@@ -2018,9 +2019,31 @@ async function whisper(f32) {                 // VoiceStudio speech-to-text (Ope
   if (!r.ok) throw new Error('transcription ' + r.status + ': ' + (await r.text()).slice(0, 200));
   const j = await r.json(); return String(j.text || '').trim();
 }
+// ECHO_FILTER_V1: on laptop speakers the mic hears HER voice, and speech-to-text often finishes after she stops,
+// so her own line came back as "you said ..." and she roasted you for repeating her.
+// Now: everything she said in the last 45 s is remembered; if what the mic heard is mostly her words, it is dropped.
+// Tune in the console: AIWorld.echo.limit = 0.5 (share of heard word pairs that are hers; lower drops more), AIWorld.echo.seconds = 45
+const ECHO = { lines: [], limit: 0.5, seconds: 45, dropped: 0 };
+const echoPairs = (t) => { const w = norm(t).split(' ').filter(Boolean), out = []; for (let i = 1; i < w.length; i++) out.push(w[i - 1] + ' ' + w[i]); return out; };   // word pairs in order: an echo copies her phrases, you do not
+function herSaid(text) {
+  const p = echoPairs(text), now = Date.now();
+  if (p.length) ECHO.lines.push({ t: now, p: new Set(p) });
+  ECHO.lines = ECHO.lines.filter(x => now - x.t < ECHO.seconds * 1000).slice(-40);
+}
+function isEcho(text) {
+  const p = echoPairs(text), now = Date.now();
+  if (p.length < 3) return false;                 // "stop", "yes", "hey you" always get through
+  const mine = new Set();
+  for (const x of ECHO.lines) if (now - x.t < ECHO.seconds * 1000) x.p.forEach(y => mine.add(y));
+  if (!mine.size) return false;
+  const hit = p.filter(y => mine.has(y)).length;
+  return hit >= 3 && hit / p.length >= ECHO.limit;   // at least 3 of her word pairs, and most of what was heard
+}
+window.AIWorld.echo = ECHO;
 function liveSaid(text) {                     // one thing you said: show it, then answer like typed text
   text = String(text || '').replace(/\s+/g, ' ').trim();
   if (!text || text.length < 2 || JUNK.test(text)) { liveIdle(); return; }
+  if (isEcho(text)) { ECHO.dropped++; console.log('live: ignored her own voice from the speakers:', text); liveIdle(); return; }
   LIVE.heard.push(text); LIVE.heard = LIVE.heard.slice(-50);
   console.log('live heard:', text);
   if (LIVE.bargeIn && sheTalks()) stopVoices();
