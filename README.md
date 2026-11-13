@@ -266,3 +266,17 @@ mouthLeft/Right, mouthStretchLeft/Right. "Left" shapes sit on the model's +x sid
 - Fingers move (from the clips, plus point and thumbs-up). Hair and clothes do not swing yet.
 - Face: 28 of the 52 ARKit shapes. The other 24 (eye look, tongue, jaw sideways, lip roll and press …) need sculpting in Blender.
 - Tested in a headless Chromium browser (all actions, the clips, point, thumbs-up, quick replies, the clip recorder, packed vs original file). Not yet tested on the Windows PC.
+
+## Her HD voice (OmniVoice, without VoiceStudio)
+
+VoiceStudio crashes, so only its voice engine (OmniVoice, Apache-2.0) runs on its own in `her_voice.py` on port 3901.
+Set it up once with `setup_her_voice.bat` (makes `voice_env`, installs torch 2.8.0+cu128 and omnivoice, about a few GB,
+then makes `her_voice\test.wav`). The first run designs her voice once ("female, young adult, low pitch, american accent",
+seed 42) and saves it in `her_voice\ref.wav`, so she sounds the same every time. `run_girl_room.bat` starts it by itself.
+In the room pick **Voice: Her HD voice**. If her_voice is not running, she falls back to Piper for that line.
+Faster or better: set `HER_VOICE_STEPS` to 16 (fast, default) or 32 (better).
+
+## Wait for me (pause before she answers)
+
+She waits until you are quiet for `AIWorld.live.wait` seconds (default 1.2) before she answers, so you can finish
+your sentence. Change it in the browser console, for example `AIWorld.live.wait = 1.5`. It is saved.

@@ -31,7 +31,7 @@
 <body>
 <div id="status">loading the girl…</div>
 <div id="bubble"></div>
-<div id="bar"><input id="say" placeholder="say something: sit, wave, trip, go to the window, tell me a joke…" autocomplete="off"><button id="send">Send</button><button id="live" title="hands-free live chat: just speak (click again to stop)">Live chat</button><select id="voicesel" title="her voice"><option value="studio">Voice: Her voice</option><option value="vstudio">Voice: VoiceStudio</option><option value="browser">Voice: Browser</option><option value="off">Voice: Off</option></select><button id="clip" class="rec" title="record a 15 s vertical clip (9:16) for TikTok">Clip 15s</button></div>
+<div id="bar"><input id="say" placeholder="say something: sit, wave, trip, go to the window, tell me a joke…" autocomplete="off"><button id="send">Send</button><button id="live" title="hands-free live chat: just speak (click again to stop)">Live chat</button><select id="voicesel" title="her voice"><option value="studio">Voice: Her voice</option><option value="omni">Voice: Her HD voice</option><option value="vstudio">Voice: VoiceStudio</option><option value="browser">Voice: Browser</option><option value="off">Voice: Off</option></select><button id="clip" class="rec" title="record a 15 s vertical clip (9:16) for TikTok">Clip 15s</button></div>
 <script>
 // ============================================================================
 // AI World — ONLY the girl and the room.
@@ -1403,14 +1403,14 @@ if (location.protocol.startsWith('http')) fetch('v1/audio/voices').then(r => {
   else if (r.status === 502) console.warn('voice: page server is ready, but VoiceStudio is closed. Open the VoiceStudio app.');
 }).catch(() => {});
 try { if (localStorage.getItem('aiworld_voice_name') === 'AI World Girl') localStorage.removeItem('aiworld_voice_name');   // old voice: use the new one
-  const m = localStorage.getItem('aiworld_voice_mode'); if (m === 'vstudio') { VS.mode = 'studio'; VS.engine = 'voicestudio'; } else if (m) VS.mode = m; const n = localStorage.getItem('aiworld_voice_name'); if (n && n !== 'alloy') VS.name = n; } catch (e) {}
+  const m = localStorage.getItem('aiworld_voice_mode'); if (m === 'vstudio') { VS.mode = 'studio'; VS.engine = 'voicestudio'; } else if (m === 'omni') { VS.mode = 'studio'; VS.engine = 'omnivoice'; } else if (m) VS.mode = m; const n = localStorage.getItem('aiworld_voice_name'); if (n && n !== 'alloy') VS.name = n; } catch (e) {}
 // VoiceStudio on this laptop runs on the CPU: one line takes 10-30 s to make. So the page
 //   1. keeps every line it got (VCACHE) and asks only once per line,
 //   2. makes the NEXT lines of the Roast script while she says the current one,
 //   3. gets the Roast lines ready in the background after the page opens (page_server.py also saves them in voice_cache/, so next time they play at once).
 const VCACHE = new Map();
 function voiceFetch(text, engine, extra) {
-  return fetch(VS.url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer local', 'X-Voice-Engine': engine },
+  return fetch(engine === 'omnivoice' ? VS_LOCAL : VS.url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer local', 'X-Voice-Engine': engine },
     body: JSON.stringify(Object.assign({ model: 'tts-1', voice: VS.name, input: text }, engine === 'voicestudio' ? { speed: VS_SPEED } : {}, extra || {})) })
     .then(res => { if (!res.ok) throw new Error('VoiceStudio error ' + res.status); return res.blob(); });
 }
@@ -1436,7 +1436,9 @@ async function checkedVoice(text) {
 function studioVoice(text) {
   const k = VS.engine + '|' + VS.name + '|' + text;
   if (VCACHE.has(k)) return VCACHE.get(k);
-  const p = VS.engine === 'voicestudio' ? checkedVoice(text) : voiceFetch(text, VS.engine);
+  const p = VS.engine === 'voicestudio' ? checkedVoice(text)
+    : VS.engine === 'omnivoice' ? voiceFetch(text, 'omnivoice').catch(e => { console.warn('her HD voice did not answer, her Piper voice says this line', e); return voiceFetch(text, 'piper'); })   // HER_HD_VOICE_V1
+    : voiceFetch(text, VS.engine);
   VCACHE.set(k, p);
   p.catch(() => VCACHE.delete(k));        // failed: ask again next time
   return p;
@@ -1591,18 +1593,20 @@ window.AIWorld.onFrame.push((t, dt) => {   // browser voice: no sound data, so t
 const voiceSel = document.getElementById('voicesel');
 function voiceBtnText() {
   if (!voiceSel) return;
-  voiceSel.value = VS.mode === 'studio' && VS.engine === 'voicestudio' ? 'vstudio' : VS.mode;
+  voiceSel.value = VS.mode === 'studio' && VS.engine === 'voicestudio' ? 'vstudio' : VS.mode === 'studio' && VS.engine === 'omnivoice' ? 'omni' : VS.mode;
   const down = VS.ok === false ? ' (not running)' : '';
   voiceSel.options[0].textContent = 'Voice: Her voice' + (VS.engine === 'piper' ? down : '');
-  voiceSel.options[1].textContent = 'Voice: VoiceStudio' + (VS.engine === 'voicestudio' ? down : '');
+  const oi = [...voiceSel.options].findIndex(o => o.value === 'omni'), vi = [...voiceSel.options].findIndex(o => o.value === 'vstudio');
+  if (oi >= 0) voiceSel.options[oi].textContent = 'Voice: Her HD voice' + (VS.engine === 'omnivoice' ? down : '');
+  if (vi >= 0) voiceSel.options[vi].textContent = 'Voice: VoiceStudio' + (VS.engine === 'voicestudio' ? down : '');
 }
 if (voiceSel) voiceSel.addEventListener('change', () => {
   const v = voiceSel.value;
-  VS.mode = v === 'vstudio' ? 'studio' : v; VS.engine = v === 'vstudio' ? 'voicestudio' : 'piper';
+  VS.mode = (v === 'vstudio' || v === 'omni') ? 'studio' : v; VS.engine = v === 'vstudio' ? 'voicestudio' : v === 'omni' ? 'omnivoice' : 'piper';   // HER_HD_VOICE_V1
   if (VS.mode === 'studio') VS.ok = null;                 // try the voice server again
   stopVoices(); voiceBtnText();
   try { localStorage.setItem('aiworld_voice_mode', v); } catch (e) {}
-  if (VS.mode !== 'off') sayMain(v === 'vstudio' ? 'VoiceStudio voice on.' : v === 'studio' ? 'My own voice is on.' : 'Browser voice on.');
+  if (VS.mode !== 'off') sayMain(v === 'vstudio' ? 'VoiceStudio voice on.' : v === 'omni' ? 'This is my new voice. Try to keep up.' : v === 'studio' ? 'My own voice is on.' : 'Browser voice on.');
 });
 voiceBtnText();
 window.AIWorld.voice = VS;
@@ -1996,7 +2000,8 @@ function gestureTick(t, dt) {
 //   -> hear(text): quick reply or brain -> her voice + face + moves.
 //   No VoiceStudio? It falls back to the browser's own speech recognition (Chrome / Edge).
 //   While she talks the mic is ignored (so she does not hear herself), unless AIWorld.live.bargeIn = true.
-const LIVE = { on: false, mode: null, vad: null, rec: null, busy: false, quietUntil: 0, bargeIn: true, lang: 'en',   // LISTEN_WHILE_TALK_V1: she keeps listening while she talks
+const LIVE = { on: false, mode: null, vad: null, rec: null, busy: false, quietUntil: 0, bargeIn: true, lang: 'en', parts: [], joinTimer: 0,
+  wait: (() => { try { const v = parseFloat(localStorage.getItem('aiworld_live_wait')); return v >= 0.3 && v <= 5 ? v : 1.2; } catch (e) { return 1.2; } })(),   // WAIT_FOR_ME_V1   // LISTEN_WHILE_TALK_V1: she keeps listening while she talks
   sttUrl: 'v1/audio/transcriptions', model: 'whisper-1', heard: [] };
 const liveEl = document.getElementById('live');
 const sheTalks = () => FX.talking || TALK.main > 0 || TALK.show || (window.speechSynthesis && speechSynthesis.speaking);
@@ -2052,6 +2057,24 @@ function liveSaid(text) {                     // one thing you said: show it, th
     if (/\b(stop|enough|quiet|shut up|pause)\b/i.test(text)) { console.log('live: you stopped the presentation:', text); stopShow(); }
     liveIdle(); return;
   }
+  return joinHeard(text);
+}
+// WAIT_FOR_ME_V1: she waits until you have finished your whole sentence. A short pause to think does not end your turn:
+// only LIVE.wait seconds of silence does (default 1.2 s; people answer each other after about 0.1-0.3 s, but mid-sentence
+// thinking pauses are longer). Pieces the speech-to-text sends during your pauses are joined into one message.
+// Change it in the console: AIWorld.live.wait = 1.5  (seconds; kept in this browser; restart Live chat for the mic detector)
+function joinHeard(text) {
+  LIVE.parts.push(text);
+  clearTimeout(LIVE.joinTimer);
+  const ms = LIVE.mode === 'vad' ? 0 : Math.max(0, LIVE.wait * 1000 - 400);   // the mic detector already waited LIVE.wait; the browser's recognizer cuts sooner
+  if (!ms) return sendHeard();
+  liveText('Listening…');
+  LIVE.joinTimer = setTimeout(sendHeard, ms);
+}
+function sendHeard() {
+  clearTimeout(LIVE.joinTimer); LIVE.joinTimer = 0;
+  const text = LIVE.parts.join(' ').replace(/\s+/g, ' ').trim(); LIVE.parts = [];
+  if (!text) return;
   LIVE.heard.push(text); LIVE.heard = LIVE.heard.slice(-50);
   console.log('live heard:', text);
   if (LIVE.bargeIn && sheTalks()) stopVoices();
@@ -2066,7 +2089,7 @@ async function startVad() {                   // best way: Silero VAD + VoiceStu
     await loadScript('https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/bundle.min.js');
   }
   LIVE.vad = await window.vad.MicVAD.new({
-    model: 'v5', positiveSpeechThreshold: 0.6, negativeSpeechThreshold: 0.4, redemptionMs: 700, minSpeechMs: 300, preSpeechPadMs: 300,
+    model: 'v5', positiveSpeechThreshold: 0.6, negativeSpeechThreshold: 0.4, redemptionMs: Math.round(LIVE.wait * 1000), minSpeechMs: 300,   /* WAIT_FOR_ME_V1: silence before your turn ends */ preSpeechPadMs: 300,
     onnxWASMBasePath: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/',
     baseAssetPath: 'https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/',
     onSpeechRealStart: () => { if (canHear()) liveText('Listening…'); },   // LISTEN_WHILE_TALK_V1: she is not cut on any sound (it may be her own echo); she stops when your words come in and are not hers
@@ -2093,7 +2116,7 @@ function startBrowserRec() {                  // backup: Chrome / Edge built-in 
   r.onresult = (ev) => {
     for (let i = ev.resultIndex; i < ev.results.length; i++) {
       const res = ev.results[i];
-      if (!res.isFinal) { if (canHear()) liveText('Listening…'); continue; }
+      if (!res.isFinal) { if (canHear()) liveText('Listening…'); if (LIVE.joinTimer && LIVE.parts.length) { clearTimeout(LIVE.joinTimer); LIVE.joinTimer = setTimeout(sendHeard, Math.max(0, LIVE.wait * 1000 - 400)); } continue; }   // still talking: keep waiting
       if (canHear()) liveSaid(res[0].transcript); else liveIdle();
     }
   };
@@ -2121,6 +2144,7 @@ function liveOff() { LIVE.on = false; LIVE.busy = false; stopVad(); stopBrowserR
 if (liveEl) liveEl.addEventListener('click', () => { if (LIVE.on) liveOff(); else liveOn(); });
 window.AIWorld.live = { start: liveOn, stop: liveOff, isOn: () => LIVE.on, mode: () => LIVE.mode, heard: () => LIVE.heard.slice(),
   get bargeIn() { return LIVE.bargeIn; }, set bargeIn(v) { LIVE.bargeIn = !!v; },
+  get wait() { return LIVE.wait; }, set wait(v) { v = Math.min(5, Math.max(0.3, +v || 1.2)); LIVE.wait = v; try { localStorage.setItem('aiworld_live_wait', String(v)); } catch (e) {} },
   get lang() { return LIVE.lang; }, set lang(v) { LIVE.lang = String(v || 'en'); },
   get model() { return LIVE.model; }, set model(v) { LIVE.model = String(v); },
   said: liveSaid };
@@ -3976,7 +4000,9 @@ window.addEventListener('resize', () => {
       generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: j.voice } } } },
       systemInstruction: { parts: [{ text: j.system }] }, tools: tools(j.actions || [], GL.plain),
       inputAudioTranscription: {}, outputAudioTranscription: {}, sessionResumption: GL.handle ? { handle: GL.handle } : {} };
-    if (!GL.plain) setup.contextWindowCompression = { slidingWindow: {} };
+    if (!GL.plain) { setup.contextWindowCompression = { slidingWindow: {} };
+      setup.realtimeInputConfig = { automaticActivityDetection: { silenceDurationMs: Math.round(((typeof LIVE !== 'undefined' && LIVE.wait) || 1.2) * 1000) } };   // WAIT_FOR_ME_V1: Gemini waits for you to finish too
+    }
     ws.onopen = () => ws.send(JSON.stringify({ setup }));
     ws.onmessage = onMessage;
     ws.onerror = () => console.warn('Gemini Live: line error');
