@@ -145,6 +145,11 @@ Her voice is made on the laptop by `girl_voice.py` with **Piper** (free, offline
 - Long answers are cut into pieces: the first sentence alone, the rest in pieces of up to about 150 letters. She starts talking as soon as the first piece is ready, and the next pieces are made in the background while she talks. Test: a 16.7 s answer took 1.75 s to make in one go; the first piece took 0.19 s.
 - Live chat speech-to-text still uses VoiceStudio if it is running; if not, Live chat uses the browser's speech recognition from the first sentence.
 
+## Echo filter (old live chat on speakers) — ECHO_FILTER_V1
+On laptop speakers the mic heard HER voice, and speech-to-text often finished after she stopped, so her own line came back as "you said ..." and she roasted you for repeating her.
+Now every line she says is remembered for 45 s. If what the mic heard is mostly her own word pairs (at least 3 pairs and half of what was heard), it is dropped and the console shows `live: ignored her own voice from the speakers`. Short things like "stop" or "yes" always get through.
+Tune in the console: `AIWorld.echo.limit = 0.5` (lower drops more), `AIWorld.echo.seconds = 45`, `AIWorld.echo.dropped` (how many were dropped).
+
 ## Sentence streaming (typed chat + old live chat) — STREAM_SENTENCES_V1
 She starts talking after her FIRST sentence instead of waiting for the whole answer.
 - `Brain.py` `POST /brain_stream`: the brain writes her words first and her face/moves last (after `###`); each finished sentence is sent to the page at once (`{"say": ...}`), then `{"done": true, response, emotion, animation, actions}`.
