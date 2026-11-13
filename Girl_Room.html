@@ -3926,7 +3926,7 @@ window.addEventListener('resize', () => {
             text: { type: 'STRING', description: 'for tv_text, write_board, explain, open_memory' } }, required: ['do'] } },
           emotion: { type: 'STRING', enum: EMO } } } },
       { name: 'think_hard',
-        description: 'Ask your big smart brain. Use it for real facts, numbers, maths, code, news, or anything you are not sure about. Say a short line first, then call it.',
+        description: 'Ask your big smart brain. Use it for every real question: facts, numbers, maths, code, news, science, how or why something works, advice, plans, comparisons, or anything you are not sure about. Not for plain chat or jokes. Say a short line first, then call it.',
         parameters: { type: 'OBJECT', properties: { question: { type: 'STRING', description: 'The full question, with what the person wants to know.' } }, required: ['question'] } },
     ];
     const t = [{ functionDeclarations: fns }];
