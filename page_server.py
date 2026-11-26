@@ -2,8 +2,8 @@
 
 Her voice: girl_voice.py (Piper teen girl voice, on this laptop, no VoiceStudio needed).
 If Piper is not ready, voice requests go to VoiceStudio (port 3900) as before.
-Speech-to-text for Live chat (/v1/audio/transcriptions) still goes to VoiceStudio; without it the
-page uses the browser's own speech recognition.
+Speech-to-text for Live chat (/v1/audio/transcriptions) goes to her ears (her_ears.py, Whisper large-v3-turbo,
+port 3902) first, then VoiceStudio; without both the page uses the browser's own speech recognition.
 
 Why: the page (port 8081) and VoiceStudio (port 3900) are different addresses, so the browser
 blocks the page from calling VoiceStudio directly. The page calls /v1/audio/... on THIS server
@@ -32,6 +32,7 @@ import shelf   # her memory shelf: /api/books (your files in memory_books/)
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8081
 VOICESTUDIO = "http://127.0.0.1:3900"
 HER_VOICE = "http://127.0.0.1:3901"     # HER_HD_VOICE_V1: her_voice.py (OmniVoice, without the VoiceStudio app)
+HER_EARS = "http://127.0.0.1:3902"      # HER_EARS_V1: her_ears.py (Whisper large-v3-turbo on the GPU)
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(HERE, "voice_cache")   # every line VoiceStudio made once is kept here: the same line plays at once next time
 ONE_AT_A_TIME = threading.Lock()            # VoiceStudio has one worker: send it one line at a time (no "queue full" errors)
@@ -58,6 +59,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if piper and method == "GET" and self.path.startswith("/v1/audio/voices"):
             data = json.dumps({"data": [{"id": "AI World Girl", "name": "AI World Girl (Piper teen)"}]}).encode()
             return self._send(200, "application/json", data)
+        if self.path.startswith("/v1/stt/") or self.path.startswith("/v1/audio/transcriptions"):   # HER_EARS_V1
+            ears = self._her_ears(method, body)
+            if ears:
+                return ears
         if self.path.startswith("/v1/stt/health"):       # can VoiceStudio do Live chat speech-to-text right now?
             try:
                 with urllib.request.urlopen(VOICESTUDIO + "/health", timeout=1.5) as res:
@@ -110,6 +115,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send(e.code, e.headers.get("Content-Type", "text/plain"), e.read())
         except Exception as e:
             return self._send(502, "text/plain", ("her HD voice is not running (setup_her_voice.bat, then start AI World): " + str(e)).encode())
+
+    def _her_ears(self, method, body):
+        """Her ears (Whisper large-v3-turbo). Returns None when they are not running, so VoiceStudio is tried next."""
+        if self.path.startswith("/v1/stt/"):
+            try:
+                with urllib.request.urlopen(HER_EARS + "/health", timeout=1.5) as res:
+                    return self._send(200, "application/json", res.read()) or True
+            except Exception:
+                return None
+        req = urllib.request.Request(HER_EARS + "/v1/audio/transcriptions", data=body, method="POST",
+                                     headers={"Content-Type": self.headers.get("Content-Type", "application/octet-stream")})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as res:
+                return self._send(res.status, "application/json", res.read()) or True
+        except urllib.error.HTTPError as e:
+            if e.code == 503:          # still loading: let VoiceStudio try
+                return None
+            return self._send(e.code, "application/json", e.read()) or True
+        except Exception:
+            return None
 
     def _ask_voicestudio(self, method, body):
         for attempt in range(6):

@@ -41,6 +41,12 @@ if exist voice_env\Scripts\python.exe (
   if errorlevel 1 start "AI World - her HD voice (keep open)" /min voice_env\Scripts\python.exe her_voice.py
 )
 
+rem ---- her ears (Whisper large-v3-turbo on the GPU, HER_EARS_V1). Only if setup_her_ears.bat was run.
+if exist ears_env\Scripts\python.exe (
+  "%PY%" wait_for.py http://127.0.0.1:3902/health 0
+  if errorlevel 1 start "AI World - her ears (keep open)" /min ears_env\Scripts\python.exe her_ears.py
+)
+
 rem ---- 4. the room + voice pass-through, then open her
 "%PY%" wait_for.py http://127.0.0.1:8081/Girl_Room.html 0
 if not errorlevel 1 (
