@@ -1679,6 +1679,12 @@ async function runShow(file) {
     for (const s of showSentences(l.text || '')) {
       if (my !== SHOW.run) return;
       await sayMain(s, spoken(s));
+      // TURN_JUDGE_V1: he asked something important mid-show: wait while she answers, then say the cut sentence again
+      if (SHOW.held || SHOW.cut) {
+        while (SHOW.held && my === SHOW.run) await waitS(0.2);
+        if (my !== SHOW.run) return;
+        if (SHOW.cut) { SHOW.cut = false; await sayMain('Anyway. ' + s, spoken('Anyway. ' + s)); }
+      }
       await waitS(0.12);
     }
     await waitS(l.pause === undefined ? 0.6 : +l.pause);
@@ -2065,11 +2071,82 @@ function isEcho(text, strict) {                   // strict: she is talking righ
 }
 window.AIWorld.echo = ECHO;
 const STOPWORDS = /\b(stop|no+|wait|listen|shut up|enough|quiet|hold on)\b/i;
+// ============================================================================
+// TURN_JUDGE_V1: an AI in the middle of the listen / talk loop.
+//   When you talk while she is still talking (a long answer or her presentation), it decides what she does:
+//     now    -> she stops (or pauses her presentation), answers you, then goes back to where she was
+//     later  -> she keeps going and answers it when she finishes
+//     ignore -> "yeah", "ok", "haha", talking to someone else, noise: she keeps going
+//     stop   -> she stops
+//   Quick things are decided here with no AI (stop words, "yeah"/"ok"). The rest goes to Brain.py /judge
+//   (fast Gemini, then OpenRouter). If the judge is slow or down: a question -> now, anything else -> later.
+//   Console: AIWorld.judge.on = false (old way), AIWorld.judge.log() (last decisions)
+// ============================================================================
+const JUDGE = { on: true, later: [], log: [], quietSince: 0, timeoutMs: 3500 };
+const BACKCHANNEL = /^(yeah|yes|yep|yup|ok|okay|k|mm+|mhm+|uh huh|right|sure|nice|cool|wow|lol|haha+|ha|hehe|true|exactly|i see|got it|go on|alright|all right|interesting|oh)$/;
+const QUESTIONISH = /\?|^(what|why|how|who|when|where|which|can|could|do|does|did|is|are|was|will|would|should|wait|hey|excuse me|sorry)\b/i;
+async function judgeDecide(text) {
+  const q = norm(text), words = q.split(' ').filter(Boolean).length;
+  if (STOPWORDS.test(text) && words <= 4 && !QUESTIONISH.test(q.replace(/^wait\b/, ''))) return { do: 'stop', by: 'rules' };
+  if (BACKCHANNEL.test(q) || /^(ha ?)+$/.test(q)) return { do: 'ignore', by: 'rules' };
+  const base = String(window.AIWorld.brainUrl || 'http://localhost:5005/brain').replace(/\/brain$/, '');
+  const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), JUDGE.timeoutMs);
+  try {
+    const r = await fetch(base + '/judge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ctl.signal,
+      body: JSON.stringify({ heard: text, her: (bubbleEl && bubbleEl.textContent || '').slice(0, 400), show: !!TALK.show }) });
+    const j = await r.json(); clearTimeout(tm);
+    if (j && /^(now|later|ignore|stop)$/.test(j.do)) return j;
+  } catch (e) { clearTimeout(tm); }
+  return { do: QUESTIONISH.test(q) ? 'now' : 'later', by: 'rules (judge not reachable)' };
+}
+function deliverHeard(text) {                     // what you said goes to her brain (Gemini Live takes it when its line is open)
+  LIVE.heard.push(text); LIVE.heard = LIVE.heard.slice(-50);
+  if (sayEl) sayEl.placeholder = 'you said: ' + text;
+  liveIdle();
+  if (typeof window.AIWorld.onHeard === 'function') { try { window.AIWorld.onHeard(text); } catch (e) {} }
+  return (window.AIWorld.hear || hear)(text);
+}
+const waitTalkDone = async () => {                // her answer: wait until it starts (up to 20 s), then until she is quiet for 1 s (up to 90 s)
+  const t0 = performance.now();
+  while (!sheTalks() && performance.now() - t0 < 20000) await waitS(0.2);
+  let quiet = 0; const t1 = performance.now();
+  while (quiet < 1 && performance.now() - t1 < 90000) { await waitS(0.2); quiet = sheTalks() ? 0 : quiet + 0.2; }
+};
+async function interruptShow(text) {              // pause the presentation, answer, then go on
+  SHOW.held = true; SHOW.cut = true; TALK.show = false; stopVoices();
+  try {
+    await deliverHeard('(He cut into your presentation. Answer him short, then say you are going back to the presentation.) ' + text);
+    await waitTalkDone();
+  } finally { if (SHOW.on) TALK.show = true; SHOW.held = false; }
+}
+async function judgeAndAct(text) {
+  const d = await judgeDecide(text);
+  JUDGE.log.push({ t: new Date().toLocaleTimeString(), heard: text, do: d.do, why: d.why || '', by: d.by || '' }); JUDGE.log = JUDGE.log.slice(-30);
+  console.log('turn judge: "' + text + '" -> ' + d.do + (d.why ? ' (' + d.why + ')' : '') + ' [' + (d.by || '') + ']');
+  const gl = window.AIWorld.geminiLive;
+  if (!sheTalks() && d.do !== 'stop') { if (gl && gl.unduck) gl.unduck(); if (d.do !== 'ignore') return deliverHeard(text); liveIdle(); return; }   // she finished meanwhile
+  if (d.do === 'ignore') { if (gl && gl.unduck) gl.unduck(); liveIdle(); return; }
+  if (d.do === 'stop') { if (SHOW.on) stopShow(); else stopVoices(); liveIdle(); return; }
+  if (d.do === 'later') { if (gl && gl.unduck) gl.unduck(); JUDGE.later.push(text); liveText('Got it - after this…'); setTimeout(liveIdle, 2500); return; }
+  if (SHOW.on) return interruptShow(text);            // now
+  stopVoices(); return deliverHeard(text);
+}
+setInterval(() => {                               // the "later" ones: asked as soon as she is done talking (and her presentation is over)
+  if (!JUDGE.later.length) { JUDGE.quietSince = 0; return; }
+  if (sheTalks() || SHOW.on || LIVE.busy) { JUDGE.quietSince = 0; return; }
+  if (!JUDGE.quietSince) JUDGE.quietSince = performance.now();
+  if (performance.now() - JUDGE.quietSince < 1200) return;
+  const t = JUDGE.later.join(' ... '); JUDGE.later = []; JUDGE.quietSince = 0;
+  console.log('turn judge: now answering what you said earlier:', t);
+  deliverHeard('(While you were talking, he said this. Answer it now.) ' + t);
+}, 300);
+window.AIWorld.judge = { get on() { return JUDGE.on; }, set on(v) { JUDGE.on = !!v; }, log: () => JUDGE.log.slice(), later: () => JUDGE.later.slice(), decide: judgeDecide };
 function liveSaid(text) {                     // one thing you said: show it, then answer like typed text
   text = String(text || '').replace(/\s+/g, ' ').trim();
   if (!text || text.length < 2 || JUNK.test(text)) { liveIdle(); return; }
   const talking = sheTalks();
   if (isEcho(text, talking)) { ECHO.dropped++; console.log('live: ignored her own voice from the speakers:', text); liveIdle(); return; }
+  if (talking && JUDGE.on) return judgeAndAct(text);   // TURN_JUDGE_V1: an AI decides now / later / ignore / stop
   if (talking && STOPWORDS.test(text)) { console.log('live: you said stop, she stops:', text); stopVoices(); }   // STOP_WORDS_V1: no 4 s wait for "stop"
   if (TALK.show) {                                // her presentation: only "stop" words can cut it, everything else waits
     if (/\b(stop|enough|quiet|shut up|pause)\b/i.test(text)) { console.log('live: you stopped the presentation:', text); stopShow(); }
@@ -2084,7 +2161,7 @@ function liveSaid(text) {                     // one thing you said: show it, th
 function joinHeard(text) {
   LIVE.parts.push(text);
   clearTimeout(LIVE.joinTimer);
-  const ms = LIVE.mode === 'vad' ? 0 : Math.max(0, LIVE.wait * 1000 - 400);   // the mic detector already waited LIVE.wait; the browser's recognizer cuts sooner
+  const ms = Math.max(0, LIVE.wait * 1000 - (LIVE.mode === 'vad' ? Math.min(LIVE.wait, 0.8) * 1000 : 400));   // TURN_JUDGE_V1: the mic detector cuts a piece after 0.8 s; the rest of your wait is here
   if (!ms) return sendHeard();
   liveText('Listening…');
   LIVE.joinTimer = setTimeout(sendHeard, ms);
@@ -2093,13 +2170,10 @@ function sendHeard() {
   clearTimeout(LIVE.joinTimer); LIVE.joinTimer = 0;
   const text = LIVE.parts.join(' ').replace(/\s+/g, ' ').trim(); LIVE.parts = [];
   if (!text) return;
-  LIVE.heard.push(text); LIVE.heard = LIVE.heard.slice(-50);
   console.log('live heard:', text);
+  if (sheTalks() && JUDGE.on) return judgeAndAct(text);   // she started talking while you were finishing
   if (LIVE.bargeIn && sheTalks()) stopVoices();
-  if (sayEl) sayEl.placeholder = 'you said: ' + text;
-  liveIdle();
-  if (typeof window.AIWorld.onHeard === 'function') { try { window.AIWorld.onHeard(text); } catch (e) {} }
-  return (window.AIWorld.hear || hear)(text);   // HER_EARS_V1: Gemini Live takes it when its line is open
+  return deliverHeard(text);
 }
 async function startVad() {                   // best way: Silero VAD + VoiceStudio Whisper
   if (!window.vad) {
@@ -2107,10 +2181,10 @@ async function startVad() {                   // best way: Silero VAD + VoiceStu
     await loadScript('https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/bundle.min.js');
   }
   LIVE.vad = await window.vad.MicVAD.new({
-    model: 'v5', positiveSpeechThreshold: 0.6, negativeSpeechThreshold: 0.4, redemptionMs: Math.round(LIVE.wait * 1000), minSpeechMs: 300,   /* WAIT_FOR_ME_V1: silence before your turn ends */ preSpeechPadMs: 300,
+    model: 'v5', positiveSpeechThreshold: 0.6, negativeSpeechThreshold: 0.4, redemptionMs: Math.round(Math.min(LIVE.wait, 0.8) * 1000), minSpeechMs: 300,   /* WAIT_FOR_ME_V1: silence before your turn ends */ preSpeechPadMs: 300,
     onnxWASMBasePath: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/',
     baseAssetPath: 'https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/',
-    onSpeechRealStart: () => { if (canHear()) liveText('Listening…'); },   // LISTEN_WHILE_TALK_V1: she is not cut on any sound (it may be her own echo); she stops when your words come in and are not hers
+    onSpeechRealStart: () => { if (canHear()) liveText('Listening…'); if (LIVE.joinTimer && LIVE.parts.length) { clearTimeout(LIVE.joinTimer); LIVE.joinTimer = setTimeout(sendHeard, Math.max(0, LIVE.wait * 1000 - 800)); } },   // still talking: keep waiting   // LISTEN_WHILE_TALK_V1: she is not cut on any sound (it may be her own echo); she stops when your words come in and are not hers
     onVADMisfire: () => liveIdle(),
     onSpeechEnd: async (audio) => {
       if (!canHear() && !(LIVE.bargeIn && LIVE.on)) { liveIdle(); return; }   // started while she talked: her own voice, skip
@@ -3922,6 +3996,10 @@ window.addEventListener('resize', () => {
       const you = rms > Math.max(GL.bargeLevel * 0.5, echo * 2.4 + 0.02);   // clearly louder than her echo = you
       GL.ring.push(pcm); if (GL.ring.length > 8) GL.ring.shift();
       GL.run = you ? GL.run + 1 : 0;
+      if (GL.ears && GL.run >= GL.bargeFrames) {           // TURN_JUDGE_V1: Whisper + the judge decide; until then she just gets quieter
+        if (!GL.duckUntil) console.log('live: you are talking - she gets quieter while the judge listens');
+        duck(0.3); GL.duckUntil = now + 7000; GL.run = 0; return;
+      }
       if (GL.run >= GL.bargeFrames) {                      // about 120 ms of you: stop her NOW and let your words through
         console.log('live: you talked over her, she stops (mic ' + rms.toFixed(3) + ', her echo ' + echo.toFixed(3) + ')');
         bargeIn();
@@ -3944,7 +4022,7 @@ window.addEventListener('resize', () => {
     const ctx = GL.ctx || voiceCtx(), i16 = new Int16Array(buf), f = new Float32Array(i16.length);
     let sum = 0; for (let i = 0; i < i16.length; i++) { f[i] = i16[i] / 32768; sum += f[i] * f[i]; }
     const ab = ctx.createBuffer(1, f.length, rate); ab.copyToChannel(f, 0);
-    const s = ctx.createBufferSource(); s.buffer = ab; s.connect(VOICE.analyser);
+    const s = ctx.createBufferSource(); s.buffer = ab; s.connect(duckNode(ctx));
     const at = Math.max(ctx.currentTime + 0.03, GL.playAt); s.start(at); GL.playAt = at + ab.duration;
     GL.chunks.push({ a: at, b: at + ab.duration, rms: Math.sqrt(sum / Math.max(1, f.length)) });
     if (GL.chunks.length > 400) GL.chunks.splice(0, 200);
@@ -3955,6 +4033,11 @@ window.addEventListener('resize', () => {
       else { if (VOICE.src === s) VOICE.src = null; FX.talking = false; GL.tailUntil = performance.now() + GL.tailMs; if (GL.on) status('Live: listening…'); }
     };
   }
+  // TURN_JUDGE_V1: while the judge decides, her voice goes quieter instead of stopping (Whisper-ears mode)
+  function duckNode(ctx) { if (!GL.duck || GL.duck.context !== ctx) { GL.duck = ctx.createGain(); GL.duck.connect(VOICE.analyser); } return GL.duck; }
+  function duck(v) { if (!GL.duck) return; const t = GL.duck.context.currentTime; GL.duck.gain.cancelScheduledValues(t); GL.duck.gain.setTargetAtTime(v, t, 0.06); }
+  function unduck() { GL.duckUntil = 0; duck(1); }
+  setInterval(() => { if (GL.duckUntil && performance.now() > GL.duckUntil) unduck(); }, 250);   // no decision came: back to normal
   function outLevel() {                                    // loudness of her voice playing at this moment (0 when quiet)
     const ctx = GL.ctx; if (!ctx) return 0; const t = ctx.currentTime;
     GL.chunks = GL.chunks.filter(c => c.b > t - 0.5);
@@ -3962,7 +4045,7 @@ window.addEventListener('resize', () => {
     return m;
   }
   function bargeIn() {                                     // you talk: she stops at once, the rest of her old answer is dropped
-    cutVoice(); GL.muteOld = true; GL.muteOldUntil = performance.now() + 8000;
+    cutVoice(); unduck(); GL.muteOld = true; GL.muteOldUntil = performance.now() + 8000;
     GL.openUntil = performance.now() + 2500; GL.tailUntil = 0;
     try { if (window.AIWorld.speakLevel) window.AIWorld.speakLevel(null); } catch (e) {}
     status('Live: hearing you…');
@@ -4178,7 +4261,7 @@ window.addEventListener('resize', () => {
   const _hear = window.AIWorld.hear;
   window.AIWorld.hear = function (text) {
     if (GL.on && GL.ready && GL.ws) {
-      if (herTalking()) bargeIn();                         // you said something new: she stops and answers that
+      if (herTalking()) bargeIn();                         // only reached when the judge said "now" (or typed text): she stops and answers
       GL.userText += (GL.userText ? ' ' : '') + text; GL.ws.send(JSON.stringify({ realtimeInput: { text: String(text) } }));
       backupLater(); return null;
     }
@@ -4196,6 +4279,7 @@ window.addEventListener('resize', () => {
   window.AIWorld.geminiLive = { start, stop, isOn: () => GL.on, state: () => ({ on: GL.on, ready: GL.ready, engine: GL.engine, plain: GL.plain, talking: herTalking() }),
     get bargeLevel() { return GL.bargeLevel; }, set bargeLevel(v) { GL.bargeLevel = Math.max(0, +v || 0); },
     echo: () => ({ couple: +GL.couple.toFixed(3), herLevel: +outLevel().toFixed(3) }),
+    duck, unduck,
     get ears() { return GL.ears; }, set ears(v) { GL.earsWanted = !!v; try { localStorage.setItem('aiworld_ears', v ? 'on' : 'off'); } catch (e) {} console.log('her ears ' + (v ? 'on' : 'off') + ' - restart Live chat'); } };
 })();
 </script>

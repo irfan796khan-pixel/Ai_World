@@ -1422,6 +1422,66 @@ def think_answer(question):
             tried.append("%s: %s" % (who, error))
     raise ValueError("No brain could answer: " + " | ".join(tried))
 
+# TURN_JUDGE_V1: he talks while she is still talking (a long answer or her presentation).
+# A fast AI decides what she does with it, like a person would:
+#   now    - answer it right away (a real question, a correction, something urgent, something about what she is saying)
+#   later  - worth answering, but it can wait until she finishes her thought or presentation
+#   ignore - not meant for her: "yeah", "ok", "haha", talking to someone else, noise, her own echo
+#   stop   - he wants her to stop talking
+JUDGE_SYSTEM = """You decide, in a live voice talk, what an AI girl should do when the person speaks while she is still talking.
+Reply with ONLY one JSON object: {"do": "now" | "later" | "ignore" | "stop", "why": "a few words"}.
+- now: a real question, a correction ("that is wrong"), something urgent, he asks her to do something, or it is about what she is saying right now.
+- later: worth answering, but not urgent; it can wait until she finishes her point.
+- ignore: listening sounds ("yeah", "ok", "mm", "haha", "nice"), laughing, talking to someone else in the room, noise, or words that repeat what she just said (her own echo).
+- stop: he wants her to stop or be quiet.
+If you are not sure between now and later, pick now. A presentation is less urgent than a chat: pick later more often then."""
+JUDGE_ORDER = ["gemini", "openrouter"]     # fastest first; no Claude (Imran, 12 Nov)
+
+
+def judge_turn(heard, her="", show=False):
+    """Returns ({"do":..., "why":...}, who). Raises when no brain could answer (the page then uses its own rules)."""
+    heard = str(heard or "").strip()[:500]
+    if not heard:
+        return {"do": "ignore", "why": "nothing heard"}, "rules"
+    user = ("She is %s. What she is saying right now: \"%s\"\nWhat the person just said: \"%s\""
+            % ("giving a presentation" if show else "talking (a chat answer)", str(her or "")[:400], heard))
+    tried = []
+    for who in JUDGE_ORDER:
+        try:
+            if who == "gemini":
+                if not os.getenv("GEMINI_API_KEY"):
+                    continue
+                model = GEMINI_MODELS[0]
+                payload = {"systemInstruction": {"parts": [{"text": JUDGE_SYSTEM}]},
+                           "contents": [{"role": "user", "parts": [{"text": user}]}],
+                           "generationConfig": {"temperature": 0, "responseMimeType": "application/json",
+                                                "thinkingConfig": {"thinkingLevel": "minimal"}}}
+                headers = {"Content-Type": "application/json", "x-goog-api-key": os.getenv("GEMINI_API_KEY")}
+                try:
+                    data = send_json(GEMINI_URL % model, payload, headers, 4)
+                except urllib.error.HTTPError as error:
+                    if error.code != 400:
+                        raise
+                    payload["generationConfig"].pop("thinkingConfig", None)
+                    data = send_json(GEMINI_URL % model, payload, headers, 4)
+                text = "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"] if not p.get("thought"))
+            else:
+                if not os.getenv("OPENROUTER_API_KEY"):
+                    continue
+                model = os.getenv("OPENROUTER_MODEL", "").strip() or OPENROUTER_MODELS[0]
+                data = openrouter_send({"model": model, "max_tokens": 60, "temperature": 0, "response_format": {"type": "json_object"},
+                                        "messages": [{"role": "system", "content": JUDGE_SYSTEM}, {"role": "user", "content": user}]}, 5)
+                text = data["choices"][0]["message"].get("content") or ""
+            text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
+            j = json.loads(text[text.find("{"): text.rfind("}") + 1])
+            if j.get("do") in ("now", "later", "ignore", "stop"):
+                return {"do": j["do"], "why": str(j.get("why", ""))[:120]}, "%s (%s)" % (who, model)
+            tried.append(who + ": bad answer")
+        except Exception as error:
+            tried.append("%s: %s" % (who, error))
+    raise ValueError("no judge: " + " | ".join(tried))
+
+
 load_settings()
 
 
@@ -1908,7 +1968,7 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
             save_settings(data)
             self._send_json(settings_view())
             return
-        if path in ("/live_token", "/live_log", "/think"):    # GEMINI_LIVE_V1
+        if path in ("/live_token", "/live_log", "/think", "/judge"):    # GEMINI_LIVE_V1 + TURN_JUDGE_V1
             try:
                 payload = self._read_json()
             except ValueError as error:
@@ -1924,6 +1984,10 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
                     self._send_json({"token": token, "api_version": version, "model": live_setting("live_model"),
                                      "voice": live_setting("live_voice"), "system": live_system_text(),
                                      "emotions": EMOTIONS, "actions": ROOM_ACTIONS})
+                elif path == "/judge":
+                    verdict, who = judge_turn(payload.get("heard"), payload.get("her"), bool(payload.get("show")))
+                    print("Turn judge (%s): %s -> %s (%s)" % (who, str(payload.get("heard"))[:60], verdict["do"], verdict["why"]))
+                    self._send_json(dict(verdict, by=who))
                 elif path == "/live_log":
                     live_log(payload.get("user"), payload.get("her"))
                     self._send_json({"ok": True})
