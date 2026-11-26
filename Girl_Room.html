@@ -663,10 +663,26 @@ function findPath(from, to) {
   if (pts.length) pts[pts.length - 1] = to.clone();
   return pts.length ? pts : [to.clone()];
 }
-function drawTV(on, text) {
+// ROOM_STATE_V1: what is really on, so she can tell the truth about it
+const ROOMSTATE = { lamp: false, tv: false, tvText: '' };
+function setLamp(on) {
+  ROOMSTATE.lamp = on;
+  lampLight.intensity = on ? 2.2 : 0; lampBulb.material.emissiveIntensity = on ? 1.2 : 0.05;
+  try {                                                  // cozy-mode shade + glow follow the switch too (they used to stay lit)
+    if (MOOD.lampShade) MOOD.lampShade.material.emissiveIntensity = on ? 0.9 : 0.04;
+    if (MOOD.lampHalo) MOOD.lampHalo.visible = on;
+  } catch (e) {}
+}
+function drawTV(on, text) {                              // TV_ON_V1: "on" is now clearly lit (it was almost the same black as "off")
   const c = tvCanvas.getContext('2d');
-  c.fillStyle = on ? '#0b1220' : '#111827'; c.fillRect(0, 0, 768, 432);
-  if (on && text) { c.fillStyle = '#e2e8f0'; c.font = '30px Segoe UI, Arial'; c.fillText(String(text).slice(0, 40), 30, 220); }
+  ROOMSTATE.tv = !!on; ROOMSTATE.tvText = on ? String(text || '') : '';
+  if (!on) { c.fillStyle = '#05070c'; c.fillRect(0, 0, 768, 432); tvTex.needsUpdate = true; return; }
+  const g = c.createLinearGradient(0, 0, 768, 432); g.addColorStop(0, '#1d4ed8'); g.addColorStop(0.5, '#7c3aed'); g.addColorStop(1, '#db2777');
+  c.fillStyle = g; c.fillRect(0, 0, 768, 432);
+  c.fillStyle = 'rgba(255,255,255,0.08)'; for (let y = 0; y < 432; y += 6) c.fillRect(0, y, 768, 2);   // soft scan lines
+  c.fillStyle = '#ffffff'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.font = 'bold ' + (text ? 44 : 64) + 'px Segoe UI, Arial'; c.fillText(String(text || 'AI World TV').slice(0, 40), 384, 216);
+  c.textAlign = 'left'; c.textBaseline = 'alphabetic';
   tvTex.needsUpdate = true;
 }
 function writeBoard(text) {
@@ -722,7 +738,7 @@ function startAction(a) {
   }
   else if (a.tv === 'glitch') { a._kind = 'glitch'; a._dur = Math.max(2, +a.time || 4); }
   else if (a.reset !== undefined) { resetProps(); return finishAction(); }
-  else if (a.lamp !== undefined) { lampLight.intensity = a.lamp ? 2.2 : 0; lampBulb.material.emissiveIntensity = a.lamp ? 1.2 : 0.2; return finishAction(); }
+  else if (a.lamp !== undefined) { setLamp(!!a.lamp); return finishAction(); }
   else if (a.tv !== undefined) { drawTV(!!a.tv, typeof a.tv === 'string' ? a.tv : ''); return finishAction(); }
   else if (a.board !== undefined) { writeBoard(a.board); return finishAction(); }
   else if (a.wait === undefined) { console.warn('unknown action', a); return finishAction(); }
@@ -2048,11 +2064,13 @@ function isEcho(text, strict) {                   // strict: she is talking righ
   return hit >= 3 && hit / p.length >= ECHO.limit;   // at least 3 of her word pairs, and most of what was heard
 }
 window.AIWorld.echo = ECHO;
+const STOPWORDS = /\b(stop|no+|wait|listen|shut up|enough|quiet|hold on)\b/i;
 function liveSaid(text) {                     // one thing you said: show it, then answer like typed text
   text = String(text || '').replace(/\s+/g, ' ').trim();
   if (!text || text.length < 2 || JUNK.test(text)) { liveIdle(); return; }
   const talking = sheTalks();
   if (isEcho(text, talking)) { ECHO.dropped++; console.log('live: ignored her own voice from the speakers:', text); liveIdle(); return; }
+  if (talking && STOPWORDS.test(text)) { console.log('live: you said stop, she stops:', text); stopVoices(); }   // STOP_WORDS_V1: no 4 s wait for "stop"
   if (TALK.show) {                                // her presentation: only "stop" words can cut it, everything else waits
     if (/\b(stop|enough|quiet|shut up|pause)\b/i.test(text)) { console.log('live: you stopped the presentation:', text); stopShow(); }
     liveIdle(); return;
@@ -2116,6 +2134,7 @@ function startBrowserRec() {                  // backup: Chrome / Edge built-in 
   r.onresult = (ev) => {
     for (let i = ev.resultIndex; i < ev.results.length; i++) {
       const res = ev.results[i];
+      if (!res.isFinal && sheTalks() && STOPWORDS.test(res[0].transcript) && !isEcho(res[0].transcript, true)) { console.log('live: you said stop (fast):', res[0].transcript); stopVoices(); }   // STOP_WORDS_V1
       if (!res.isFinal) { if (canHear()) liveText('Listening…'); if (LIVE.joinTimer && LIVE.parts.length) { clearTimeout(LIVE.joinTimer); LIVE.joinTimer = setTimeout(sendHeard, Math.max(0, LIVE.wait * 1000 - 400)); } continue; }   // still talking: keep waiting
       if (canHear()) liveSaid(res[0].transcript); else liveIdle();
     }
@@ -2911,8 +2930,8 @@ MOOD.plain = { tone: renderer.toneMapping, exp: renderer.toneMappingExposure, wa
   MOOD.skyTex = new THREE.CanvasTexture(sky);
   // lamp shade + halo, neon glow light, fairy bulb halos
   const shade = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.32, 0.36, 20, 1, true), new THREE.MeshStandardMaterial({ color: 0xfff1d6, emissive: 0xffc46b, emissiveIntensity: 0.9, side: THREE.DoubleSide }));
-  shade.position.set(5.4, 1.86, -5.3); E.add(shade);
-  const lampHalo = haloSprite(0xffb85c, 1.1, 0.35); lampHalo.position.set(5.4, 1.85, -5.25); E.add(lampHalo);
+  shade.position.set(5.4, 1.86, -5.3); E.add(shade); MOOD.lampShade = shade;
+  const lampHalo = haloSprite(0xffb85c, 1.1, 0.35); lampHalo.position.set(5.4, 1.85, -5.25); E.add(lampHalo); MOOD.lampHalo = lampHalo;
   MOOD.neonLight = new THREE.PointLight(0xff5fae, 1.1, 4.5, 2); MOOD.neonLight.position.set(4.15, 3.05, -5.4); E.add(MOOD.neonLight);
   const neonHalo = haloSprite(0xff5fae, 2.6, 0.22); neonHalo.position.set(4.15, 3.05, -5.8); E.add(neonHalo); MOOD.neonHalo = neonHalo;
   MOOD.fill = new THREE.PointLight(0xffb27a, 0.5, 14, 2); MOOD.fill.position.set(0, 3.6, 2.5); E.add(MOOD.fill);   // warm fill on her face
@@ -2961,7 +2980,7 @@ function applyMood(cozy) {
   Object.assign(dirLight.shadow.camera, { left: -9, right: 9, top: 9, bottom: -9 }); dirLight.shadow.camera.updateProjectionMatrix();
   winGlass.material.color.setHex(cozy ? 0xffffff : P.glass); winGlass.material.map = cozy ? MOOD.skyTex : null; winGlass.material.needsUpdate = true;
   scene.background = new THREE.Color(cozy ? 0x5b3b52 : P.bg);
-  if (cozy) { lampLight.intensity = 1.6; lampBulb.material.emissiveIntensity = 1.2; }
+  if (cozy) { setLamp(true); lampLight.intensity = 1.6; }
   for (const l of COZY.lights) { l.intensity = cozy ? 0.9 : 0; l.distance = 8; }
   for (const m of [renderer]) m.shadowMap.needsUpdate = true;
   scene.traverse(o => { if (o.material && !Array.isArray(o.material)) o.material.needsUpdate = true; });
@@ -3521,7 +3540,7 @@ function ROOM_CMD(text, firstPerson) {
   if (has(/\b(lamp|light|lights)\b/) && has(/\b(turn|switch|put|flip|lights? (on|off)|light (on|off)|on|off)\b/) && (on || off))
     return { acts: [{ walk: { x: 4.6, z: -4.4 } }, { point: { x: 5.4, y: 1.8, z: -5.3 }, time: 0.8 }, { lamp: !off }, { face: 'camera' }], say: off ? ['Lights down.', 'Mood lighting, coming up.'] : ['Light on.', 'Let there be lamp.'] };
   if (has(/\b(tv|television|telly)\b/) && (on || off) && !has(/\b(walk|go)\b/))
-    return { acts: [{ face: 'tv' }, { point: 'tv', time: 1 }, { tv: !off }, { face: 'camera' }], say: off ? ['TV off.', 'Screen nap time.'] : ['TV on.', 'Screen on. Let us see.'] };
+    return { acts: [{ walk: 'tv' }, { face: 'tv' }, { point: 'tv', time: 1 }, { tv: !off }, { face: 'camera' }], say: off ? ['TV off.', 'Screen nap time.'] : ['TV on.', 'Screen on. Let us see.'] };
   let m;
   if ((m = /\b(?:write|put|draw)\b (.+?) on (?:the )?(?:white ?)?board\b/.exec(q)))
     return { acts: [{ walk: 'table' }, { board: m[1].slice(0, 60) }, { point: { x: 1.2, y: 2.6, z: -5.9 }, time: 1.2 }, { face: 'camera' }], say: ['Done. Look at the board.', 'Written. Neatly. Mostly.'] };
@@ -3549,8 +3568,8 @@ function brainActs(list) {
       case 'kick': out.push({ kick: 'ball' }); break;
       case 'sit': out.push(tg === 'miss' ? { sit: 'miss' } : { sit: 'sofa', time: 4 }); break;
       case 'lamp_on': case 'lamp_off': out.push({ walk: { x: 4.6, z: -4.4 } }, { point: { x: 5.4, y: 1.8, z: -5.3 }, time: 0.8 }, { lamp: a.do === 'lamp_on' }); break;
-      case 'tv_on': case 'tv_off': out.push({ face: 'tv' }, { point: 'tv', time: 1 }, { tv: a.do === 'tv_on' }); break;
-      case 'tv_text': out.push({ face: 'tv' }, { point: 'tv', time: 1 }, { tv: tx.slice(0, 60) || ' ' }); break;
+      case 'tv_on': case 'tv_off': out.push({ walk: 'tv' }, { face: 'tv' }, { point: 'tv', time: 1 }, { tv: a.do === 'tv_on' }); break;
+      case 'tv_text': out.push({ walk: 'tv' }, { face: 'tv' }, { point: 'tv', time: 1 }, { tv: tx.slice(0, 60) || ' ' }); break;
       case 'write_board': out.push({ walk: 'table' }, { board: tx.slice(0, 60) }, { point: { x: 1.2, y: 2.6, z: -5.9 }, time: 1.2 }); break;
       case 'knock_glass': out.push({ knock: 'glass' }); break;
       case 'point': if (POINT_AT[tg] || ROOM_SPOTS[tg] || tg === 'camera') out.push({ point: tg, time: 2 }); break;
@@ -3834,7 +3853,10 @@ window.addEventListener('resize', () => {
   const BRAIN = 'http://localhost:5005';
   const GL = { on: false, ws: null, ready: false, ctx: null, mic: null, node: null, sink: null, src: null,
     playAt: 0, nodes: [], userText: '', herText: '', handle: null, plain: false, closing: false, retries: 0,
-    bargeLevel: 0.07, greet: true, engine: null, startedAt: 0, lastAudioAt: 0 };
+    bargeLevel: 0.07, greet: true, engine: null, startedAt: 0, lastAudioAt: 0,
+    // BARGE_IN_V2 + ECHO_GATE_V2
+    chunks: [], couple: 0.6, run: 0, ring: [], muteOld: false, muteOldUntil: 0, tailUntil: 0, openUntil: 0,
+    turnActed: false, backupTimer: 0, backupDone: false, bargeFrames: 3, tailMs: 450 };
   const liveBtn = document.getElementById('live');
   const status = (s) => { if (liveBtn) { liveBtn.textContent = s; liveBtn.classList.toggle('rec', GL.on); } };
   const herTalking = () => GL.nodes.length > 0;
@@ -3879,11 +3901,30 @@ window.addEventListener('resize', () => {
     GL.src.connect(GL.node); GL.node.connect(GL.sink); GL.sink.connect(GL.ctx.destination);
     GL.node.port.onmessage = (ev) => {
       if (!GL.ready || !GL.ws || GL.ws.readyState !== 1) return;
-      let pcm = ev.data.pcm;
-      // her own voice coming back through the speakers must not count as you talking:
-      // while she talks, only a clearly louder voice (you, close to the mic) gets through
-      if (herTalking() && ev.data.rms < GL.bargeLevel) pcm = new ArrayBuffer(pcm.byteLength);
-      GL.ws.send(JSON.stringify({ realtimeInput: { audio: { data: b64(pcm), mimeType: 'audio/pcm;rate=16000' } } }));
+      const pcm = ev.data.pcm, rms = ev.data.rms, now = performance.now();
+      const send = (buf) => GL.ws.send(JSON.stringify({ realtimeInput: { audio: { data: b64(buf), mimeType: 'audio/pcm;rate=16000' } } }));
+      const silent = () => send(new ArrayBuffer(pcm.byteLength));
+      // ECHO_GATE_V2: while she talks (and a short moment after, for the room echo) Google gets silence,
+      // so it never hears her own voice from the speakers. Only YOU talking over her opens the mic (BARGE_IN_V2).
+      const talking = herTalking(), inTail = now < GL.tailUntil;
+      if (now < GL.openUntil || (!talking && !inTail)) { GL.run = 0; GL.ring = []; send(pcm); return; }
+      const out = outLevel();                              // how loud her voice is in the speakers right now
+      if (talking && out > 0.02) {                         // learn how much of her voice leaks into the mic (lowest ratio wins fast)
+        const ratio = rms / out;
+        GL.couple = ratio < GL.couple ? GL.couple * 0.7 + ratio * 0.3 : GL.couple + (ratio - GL.couple) * 0.004;
+        GL.couple = Math.min(2, Math.max(0.03, GL.couple));
+      }
+      const echo = GL.couple * out;
+      const you = rms > Math.max(GL.bargeLevel * 0.5, echo * 2.4 + 0.02);   // clearly louder than her echo = you
+      GL.ring.push(pcm); if (GL.ring.length > 8) GL.ring.shift();
+      GL.run = you ? GL.run + 1 : 0;
+      if (GL.run >= GL.bargeFrames) {                      // about 120 ms of you: stop her NOW and let your words through
+        console.log('live: you talked over her, she stops (mic ' + rms.toFixed(3) + ', her echo ' + echo.toFixed(3) + ')');
+        bargeIn();
+        for (const b of GL.ring) send(b);                  // your first syllables are not lost
+        GL.ring = []; GL.run = 0; return;
+      }
+      silent();
     };
   }
   function stopMic() {
@@ -3894,23 +3935,39 @@ window.addEventListener('resize', () => {
 
   // ---- her voice: 24 kHz PCM pieces, played back to back through VOICE.analyser (so the mouth moves with it)
   function playPcm(buf, rate) {
+    if (GL.muteOld && performance.now() < GL.muteOldUntil) return;   // the rest of the answer you cut off: never play it
+    GL.muteOld = false;
     const ctx = GL.ctx || voiceCtx(), i16 = new Int16Array(buf), f = new Float32Array(i16.length);
-    for (let i = 0; i < i16.length; i++) f[i] = i16[i] / 32768;
+    let sum = 0; for (let i = 0; i < i16.length; i++) { f[i] = i16[i] / 32768; sum += f[i] * f[i]; }
     const ab = ctx.createBuffer(1, f.length, rate); ab.copyToChannel(f, 0);
     const s = ctx.createBufferSource(); s.buffer = ab; s.connect(VOICE.analyser);
     const at = Math.max(ctx.currentTime + 0.03, GL.playAt); s.start(at); GL.playAt = at + ab.duration;
+    GL.chunks.push({ a: at, b: at + ab.duration, rms: Math.sqrt(sum / Math.max(1, f.length)) });
+    if (GL.chunks.length > 400) GL.chunks.splice(0, 200);
     GL.nodes.push(s); VOICE.src = s; FX.talking = true; GL.lastAudioAt = performance.now();
     s.onended = () => {
       GL.nodes = GL.nodes.filter(n => n !== s);
       if (GL.nodes.length) VOICE.src = GL.nodes[GL.nodes.length - 1];
-      else { if (VOICE.src === s) VOICE.src = null; FX.talking = false; if (GL.on) status('Live: listening…'); }
+      else { if (VOICE.src === s) VOICE.src = null; FX.talking = false; GL.tailUntil = performance.now() + GL.tailMs; if (GL.on) status('Live: listening…'); }
     };
+  }
+  function outLevel() {                                    // loudness of her voice playing at this moment (0 when quiet)
+    const ctx = GL.ctx; if (!ctx) return 0; const t = ctx.currentTime;
+    GL.chunks = GL.chunks.filter(c => c.b > t - 0.5);
+    let m = 0; for (const c of GL.chunks) if (c.a - 0.15 <= t && c.b + 0.25 >= t) m = Math.max(m, c.rms);   // a little slack for speaker delay
+    return m;
+  }
+  function bargeIn() {                                     // you talk: she stops at once, the rest of her old answer is dropped
+    cutVoice(); GL.muteOld = true; GL.muteOldUntil = performance.now() + 8000;
+    GL.openUntil = performance.now() + 2500; GL.tailUntil = 0;
+    try { if (window.AIWorld.speakLevel) window.AIWorld.speakLevel(null); } catch (e) {}
+    status('Live: hearing you…');
   }
   function cutVoice() {                                    // you talked over her: stop at once, drop what was waiting
     const list = GL.nodes; GL.nodes = [];
     for (const s of list) { try { s.onended = null; s.stop(); } catch (e) {} }
     if (list.includes(VOICE.src)) VOICE.src = null;
-    FX.talking = false; GL.playAt = 0;
+    FX.talking = false; GL.playAt = 0; GL.chunks = [];
   }
 
   // ---- tools she can call while she talks
@@ -3933,15 +3990,42 @@ window.addEventListener('resize', () => {
     if (!plain) t.push({ googleSearch: {} });
     return t;
   }
+  // HONEST_ACTIONS_V1: the tool answers only after her body has really done it, and says what is really on.
+  // Before, it answered "ok, doing it" at once, so she said "I did it" while nothing had happened.
+  const waitIdle = (maxS) => new Promise((ok) => { const t0 = performance.now();
+    (function look() { if ((!window.AIWorld.busy() && !(act.queue && act.queue.length)) || performance.now() - t0 > maxS * 1000) ok(performance.now() - t0 <= maxS * 1000); else setTimeout(look, 150); })(); });
+  function roomReport() { return { lamp: ROOMSTATE.lamp ? 'on' : 'off', tv: ROOMSTATE.tv ? (ROOMSTATE.tvText ? 'on, showing: ' + ROOMSTATE.tvText : 'on') : 'off' }; }
+  async function doRoomAction(args) {
+    if (args.emotion) setMood(args.emotion);
+    const list = Array.isArray(args.actions) ? args.actions : [];
+    const acts = [], notes = [];
+    for (const a of list) {
+      const d = String(a.do || ''), tx = String(a.text || '').trim();
+      if (d === 'open_memory') {                           // pictures from her shelf: checked here, so she never "opens" one that is not there
+        const book = (typeof findBook === 'function') ? findBook(tx || 'random') : null;
+        if (!book) { notes.push(SHELF.books.length ? 'not found on the shelf: "' + tx + '". The shelf has: ' + SHELF.books.slice(0, 20).map(b => b.title).join(', ') : 'the memory shelf is empty'); continue; }
+        acts.push({ walk: 'shelf' }, { point: 'shelf', time: 1.2 }, { _kind: 'pullbook', _dur: 2.6, _book: book, _report: { book: book.title } });
+        notes.push('opened: ' + book.title); continue;
+      }
+      const one = brainActs([{ do: d, target: a.target || '', text: tx }]).filter(x => !(x.face === 'camera' && Object.keys(x).length === 1));
+      if (!one.length) { notes.push('could not do "' + d + (a.target ? ' ' + a.target : '') + '"'); continue; }
+      acts.push(...one);
+    }
+    if (!acts.length) return { result: notes.length ? 'nothing done. ' + notes.join('; ') : 'face changed only', room: roomReport() };
+    GL.turnActed = true; clearTimeout(GL.backupTimer);
+    acts.push({ face: 'camera' });
+    window.AIWorld.stop(); window.AIWorld.act(acts);
+    const finished = await waitIdle(15);
+    return { result: (finished ? 'done' : 'still moving (took too long)') + (notes.length ? '. ' + notes.join('; ') : ''), room: roomReport() };
+  }
   async function onToolCall(tc) {
     const out = [];
     for (const fc of tc.functionCalls || []) {
       const args = fc.args || {};
       if (fc.name === 'room_action') {
-        if (args.emotion) setMood(args.emotion);
-        const acts = Array.isArray(args.actions) ? brainActs(args.actions.map(a => ({ do: a.do, target: a.target || '', text: a.text || '' }))) : [];
-        if (acts.length) { window.AIWorld.stop(); window.AIWorld.act(acts); }
-        out.push({ id: fc.id, name: fc.name, response: { result: 'ok, doing it' } });
+        let r; try { r = await doRoomAction(args); } catch (e) { console.warn('room_action failed', e); r = { result: 'failed: ' + e.message, room: roomReport() }; }
+        console.log('live room_action', JSON.stringify(args), '->', JSON.stringify(r));
+        out.push({ id: fc.id, name: fc.name, response: r });
       } else if (fc.name === 'think_hard') {
         status('Live: thinking hard…'); setMood('confused', 0.6, 4);
         let result;
@@ -3958,6 +4042,8 @@ window.addEventListener('resize', () => {
   // ---- one finished turn: show it, remember it
   function endTurn() {
     const user = GL.userText.trim(), her = GL.herText.trim();
+    if (user && !GL.turnActed && !GL.backupDone) { clearTimeout(GL.backupTimer); try { const c = ROOM_CMD(user); if (c && c.acts && c.acts.length) { console.log('live backup: doing what you asked:', user); window.AIWorld.stop(); window.AIWorld.act(c.acts); } } catch (e) {} }
+    clearTimeout(GL.backupTimer); GL.turnActed = false; GL.backupDone = false;
     GL.userText = ''; GL.herText = '';
     if (!user && !her) return;
     if (user) { console.log('live heard:', user); if (typeof sayEl !== 'undefined' && sayEl) sayEl.placeholder = 'you said: ' + user; }
@@ -3976,8 +4062,13 @@ window.addEventListener('resize', () => {
     if (m.goAway) { console.log('Gemini Live: line ends soon, reconnecting'); reconnect(); return; }
     if (m.toolCall) { onToolCall(m.toolCall); return; }
     const sc = m.serverContent; if (!sc) return;
-    if (sc.interrupted) { cutVoice(); endTurn(); status('Live: listening…'); }
-    if (sc.inputTranscription && sc.inputTranscription.text) { GL.userText += sc.inputTranscription.text; if (!herTalking()) status('Live: hearing you…'); }
+    if (sc.interrupted) { cutVoice(); GL.muteOld = false; endTurn(); status('Live: listening…'); }
+    if (sc.inputTranscription && sc.inputTranscription.text) {
+      GL.userText += sc.inputTranscription.text; if (!herTalking()) status('Live: hearing you…');
+      // STOP_WORDS_V1: "stop", "no", "wait", "listen", "shut up" while she talks -> she stops at once
+      if (herTalking() && /\b(stop|no+|wait|listen|shut up|enough|quiet|hold on)\b/i.test(sc.inputTranscription.text)) bargeIn();
+      backupLater();
+    }
     if (sc.outputTranscription && sc.outputTranscription.text) { GL.herText += sc.outputTranscription.text; showBubble(GL.herText.trim(), 30); }
     for (const p of (sc.modelTurn && sc.modelTurn.parts) || []) {
       if (p.inlineData && /^audio\/pcm/.test(p.inlineData.mimeType || '')) {
@@ -3985,7 +4076,19 @@ window.addEventListener('resize', () => {
         playPcm(unb64(p.inlineData.data), rate); status('Live: talking…');
       }
     }
-    if (sc.turnComplete) endTurn();
+    if (sc.turnComplete) { GL.muteOld = false; endTurn(); }
+  }
+  // LAMP_TV_BACKUP_V1: if you clearly ask for the lamp, TV, sitting or walking and her live brain forgets to call
+  // room_action, the room does it anyway (the same word rules the old chat used). Nothing is said by this backup.
+  function backupLater() {
+    clearTimeout(GL.backupTimer);
+    GL.backupTimer = setTimeout(() => {
+      if (GL.turnActed || GL.backupDone || typeof ROOM_CMD !== 'function') return;
+      let cmd = null; try { cmd = ROOM_CMD(GL.userText); } catch (e) {}
+      if (!cmd || !cmd.acts || !cmd.acts.length) return;
+      GL.backupDone = true; console.log('live backup: doing what you asked:', GL.userText);
+      window.AIWorld.stop(); window.AIWorld.act(cmd.acts);
+    }, 2500);
   }
 
   async function connect() {
@@ -4070,7 +4173,8 @@ window.addEventListener('resize', () => {
   if (typeof sayEl !== 'undefined' && sayEl) sayEl.addEventListener('keydown', typedLive, true);
 
   window.AIWorld.geminiLive = { start, stop, isOn: () => GL.on, state: () => ({ on: GL.on, ready: GL.ready, engine: GL.engine, plain: GL.plain, talking: herTalking() }),
-    get bargeLevel() { return GL.bargeLevel; }, set bargeLevel(v) { GL.bargeLevel = Math.max(0, +v || 0); } };
+    get bargeLevel() { return GL.bargeLevel; }, set bargeLevel(v) { GL.bargeLevel = Math.max(0, +v || 0); },
+    echo: () => ({ couple: +GL.couple.toFixed(3), herLevel: +outLevel().toFixed(3) }) };
 })();
 </script>
 </body>
