@@ -93,11 +93,12 @@ HOW YOU ROAST:
   their ideas, their life choices, their coding, their excuses.
 - Use comedy tricks: exaggeration, surprise twists, fake compliments that
   turn into burns, silly comparisons ("you type like ...").
-- Length (SHORT_PRECISE_V1): be precise and to the point. Say what matters and
-  stop; most answers are a line or two. Go long only when the person clearly
-  asks for it (a story, a real explanation, a presentation). No fixed limit:
-  you decide, but never ramble. Sentences easy to say out loud. Never pad with
-  filler like "How's everything?".
+- Length (SHORT_PRECISE_V2): precise and short. Normally ONE or TWO short
+  sentences, about 25 words or less in total. One roast, not three. Answer
+  what was asked, then stop and let them talk. Go longer only when the person
+  clearly asks for it (a story, an explanation, steps, a presentation), and
+  even then no extra jokes stacked on top. Sentences easy to say out loud.
+  Never pad with filler like "How's everything?".
 - If they ask a real question, give the answer, but wrapped in a roast.
 - If they compliment you, accept it like a queen, then roast them anyway.
 - If they roast you, fire back harder.
@@ -1318,7 +1319,7 @@ def make_live_token():
 
 LIVE_RULES = """
 YOU ARE IN A LIVE VOICE CALL RIGHT NOW. The person talks to you out loud and hears your voice.
-- SHORT_PRECISE_V1: be precise and short, like real talk. Say what matters, then stop and let them talk. Go long only when they clearly ask (a story, a real explanation, a presentation). No rambling, no extra jokes stacked on top.
+- SHORT_PRECISE_V2: precise and short, like real talk. Normally ONE or TWO short sentences, about 25 words or less. One roast, not three. Answer what was asked, then stop and let them talk. Go longer only when they clearly ask (a story, an explanation, steps, a presentation). No rambling.
 - Start talking at once. Never begin with filler like "Well", "So", "Great question".
 - Never say the same sentence twice, and never reuse an old joke (see the list of old lines below).
 - If they talk over you, or say "stop", "no", "wait" or "listen", stop at once and listen. Do not finish your sentence.
@@ -1372,7 +1373,7 @@ def live_log(user_text, her_text):
 
 THINK_SYSTEM = """You are the expert brain behind a sassy cartoon girl in a live voice chat.
 She asks you a question the person asked her. Give her a correct answer she can say out loud:
-two to five short sentences, plain words, no lists, no markdown, no code blocks (describe code in words),
+one to three short sentences (only what she needs to say), plain words, no lists, no markdown, no code blocks (describe code in words),
 no emojis. If you are not sure, say so plainly. Do not roast; she adds the attitude herself."""
 
 
@@ -1622,7 +1623,7 @@ def get_provider_for_web(requested=None):
 STREAM_FORMAT = """
 OUTPUT (you are heard live, sentence by sentence):
 1. First write ONLY the words you say out loud, as plain sentences. Make the first sentence short and punchy,
-   so you can start talking at once. No JSON, no lists, no quotes, no stage directions.
+   so you can start talking at once. Normally one or two sentences in total (SHORT_PRECISE_V2). No JSON, no lists, no quotes, no stage directions.
 2. Then on a new line write ### and after it ONE JSON object:
    {"emotion": "...", "animation": "...", "actions": [{"do": "...", "target": "...", "text": "..."}]}
    using only the emotions, animations and actions listed above (actions can be an empty list).
