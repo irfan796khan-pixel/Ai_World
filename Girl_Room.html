@@ -2099,7 +2099,7 @@ function sendHeard() {
   if (sayEl) sayEl.placeholder = 'you said: ' + text;
   liveIdle();
   if (typeof window.AIWorld.onHeard === 'function') { try { window.AIWorld.onHeard(text); } catch (e) {} }
-  return hear(text);
+  return (window.AIWorld.hear || hear)(text);   // HER_EARS_V1: Gemini Live takes it when its line is open
 }
 async function startVad() {                   // best way: Silero VAD + VoiceStudio Whisper
   if (!window.vad) {
@@ -3856,7 +3856,10 @@ window.addEventListener('resize', () => {
     bargeLevel: 0.07, greet: true, engine: null, startedAt: 0, lastAudioAt: 0,
     // BARGE_IN_V2 + ECHO_GATE_V2
     chunks: [], couple: 0.6, run: 0, ring: [], muteOld: false, muteOldUntil: 0, tailUntil: 0, openUntil: 0,
-    turnActed: false, backupTimer: 0, backupDone: false, bargeFrames: 3, tailMs: 450 };
+    turnActed: false, backupTimer: 0, backupDone: false, bargeFrames: 3, tailMs: 450,
+    // HER_EARS_V1: when her ears (Whisper large-v3-turbo on this laptop) are running, Gemini gets your words as text
+    // from Whisper instead of your raw voice. Her voice still comes from Gemini (fast). Console: AIWorld.geminiLive.ears = false
+    ears: false, earsWanted: (() => { try { return localStorage.getItem('aiworld_ears') !== 'off'; } catch (e) { return true; } })() };
   const liveBtn = document.getElementById('live');
   const status = (s) => { if (liveBtn) { liveBtn.textContent = s; liveBtn.classList.toggle('rec', GL.on); } };
   const herTalking = () => GL.nodes.length > 0;
@@ -3902,12 +3905,13 @@ window.addEventListener('resize', () => {
     GL.node.port.onmessage = (ev) => {
       if (!GL.ready || !GL.ws || GL.ws.readyState !== 1) return;
       const pcm = ev.data.pcm, rms = ev.data.rms, now = performance.now();
-      const send = (buf) => GL.ws.send(JSON.stringify({ realtimeInput: { audio: { data: b64(buf), mimeType: 'audio/pcm;rate=16000' } } }));
+      let send = (buf) => GL.ws.send(JSON.stringify({ realtimeInput: { audio: { data: b64(buf), mimeType: 'audio/pcm;rate=16000' } } }));
       const silent = () => send(new ArrayBuffer(pcm.byteLength));
       // ECHO_GATE_V2: while she talks (and a short moment after, for the room echo) Google gets silence,
       // so it never hears her own voice from the speakers. Only YOU talking over her opens the mic (BARGE_IN_V2).
       const talking = herTalking(), inTail = now < GL.tailUntil;
-      if (now < GL.openUntil || (!talking && !inTail)) { GL.run = 0; GL.ring = []; send(pcm); return; }
+      if (GL.ears) { if (!talking) { GL.run = 0; return; } send = () => {}; }   // HER_EARS_V1: Whisper does the listening
+      else if (now < GL.openUntil || (!talking && !inTail)) { GL.run = 0; GL.ring = []; send(pcm); return; }
       const out = outLevel();                              // how loud her voice is in the speakers right now
       if (talking && out > 0.02) {                         // learn how much of her voice leaks into the mic (lowest ratio wins fast)
         const ratio = rms / out;
@@ -4047,7 +4051,7 @@ window.addEventListener('resize', () => {
     GL.userText = ''; GL.herText = '';
     if (!user && !her) return;
     if (user) { console.log('live heard:', user); if (typeof sayEl !== 'undefined' && sayEl) sayEl.placeholder = 'you said: ' + user; }
-    if (her) { try { SAID3.add(her); } catch (e) {} }
+    if (her) { try { SAID3.add(her); } catch (e) {} try { herSaid(her); } catch (e) {} }   // her echo filter knows her words
     fetch(BRAIN + '/live_log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user, her }) }).catch(() => {});
   }
 
@@ -4069,7 +4073,8 @@ window.addEventListener('resize', () => {
       if (herTalking() && /\b(stop|no+|wait|listen|shut up|enough|quiet|hold on)\b/i.test(sc.inputTranscription.text)) bargeIn();
       backupLater();
     }
-    if (sc.outputTranscription && sc.outputTranscription.text) { GL.herText += sc.outputTranscription.text; showBubble(GL.herText.trim(), 30); }
+    if (sc.outputTranscription && sc.outputTranscription.text) { GL.herText += sc.outputTranscription.text; showBubble(GL.herText.trim(), 30);
+      if (/[.!?]\s*$/.test(GL.herText)) { try { herSaid(GL.herText.split(/(?<=[.!?])\s+/).slice(-2).join(' ')); } catch (e) {} } }
     for (const p of (sc.modelTurn && sc.modelTurn.parts) || []) {
       if (p.inlineData && /^audio\/pcm/.test(p.inlineData.mimeType || '')) {
         const rate = +(/rate=(\d+)/.exec(p.inlineData.mimeType) || [0, 24000])[1];
@@ -4131,7 +4136,7 @@ window.addEventListener('resize', () => {
     try { stopVoices(); } catch (e) {}
     try { await startMic(); }
     catch (e) { GL.on = false; status('Live chat'); sayMain("I need the microphone for live chat. Allow it in the browser."); return false; }
-    try { await connect(); }
+    try { await connect(); await startEars(); }
     catch (e) {
       console.warn('Gemini Live could not start:', e); stopMic(); GL.on = false; status('Live chat');
       showBubble('Gemini Live could not start: ' + e.message + ' — using the old live chat.', 8);
@@ -4139,7 +4144,19 @@ window.addEventListener('resize', () => {
     }
     return true;
   }
+  async function startEars() {                             // HER_EARS_V1
+    GL.ears = false;
+    if (!GL.earsWanted) return;
+    let ok = false; try { ok = (await fetch('v1/stt/health', { cache: 'no-store' })).ok; } catch (e) {}
+    if (!ok) { console.log('her ears: not running (setup_her_ears.bat) - Gemini listens by itself'); return; }
+    try { await window.AIWorld.live.start(); } catch (e) {}
+    GL.ears = window.AIWorld.live.isOn() && window.AIWorld.live.mode() === 'vad';
+    if (!GL.ears) { try { window.AIWorld.live.stop(); } catch (e) {} console.log('her ears: mic detector did not start - Gemini listens by itself'); return; }
+    console.log('her ears: Whisper is listening, Gemini gets your words as text');
+    status('Live: listening (Whisper)…');
+  }
   function stop() {
+    if (GL.ears) { GL.ears = false; try { window.AIWorld.live.stop(); } catch (e) {} }
     GL.closing = true; GL.on = false; GL.ready = false;
     endTurn(); cutVoice(); stopMic();
     try { GL.ws && GL.ws.close(); } catch (e) {} GL.ws = null;
@@ -4160,7 +4177,11 @@ window.addEventListener('resize', () => {
   // typed text while the live line is open goes into the same live talk (fast, same memory)
   const _hear = window.AIWorld.hear;
   window.AIWorld.hear = function (text) {
-    if (GL.on && GL.ready && GL.ws) { GL.userText += text; GL.ws.send(JSON.stringify({ realtimeInput: { text: String(text) } })); return null; }
+    if (GL.on && GL.ready && GL.ws) {
+      if (herTalking()) bargeIn();                         // you said something new: she stops and answers that
+      GL.userText += (GL.userText ? ' ' : '') + text; GL.ws.send(JSON.stringify({ realtimeInput: { text: String(text) } }));
+      backupLater(); return null;
+    }
     return _hear.apply(this, arguments);
   };
   function typedLive(ev) {                                 // Send button / Enter key while the live line is open
@@ -4174,7 +4195,8 @@ window.addEventListener('resize', () => {
 
   window.AIWorld.geminiLive = { start, stop, isOn: () => GL.on, state: () => ({ on: GL.on, ready: GL.ready, engine: GL.engine, plain: GL.plain, talking: herTalking() }),
     get bargeLevel() { return GL.bargeLevel; }, set bargeLevel(v) { GL.bargeLevel = Math.max(0, +v || 0); },
-    echo: () => ({ couple: +GL.couple.toFixed(3), herLevel: +outLevel().toFixed(3) }) };
+    echo: () => ({ couple: +GL.couple.toFixed(3), herLevel: +outLevel().toFixed(3) }),
+    get ears() { return GL.ears; }, set ears(v) { GL.earsWanted = !!v; try { localStorage.setItem('aiworld_ears', v ? 'on' : 'off'); } catch (e) {} console.log('her ears ' + (v ? 'on' : 'off') + ' - restart Live chat'); } };
 })();
 </script>
 </body>
