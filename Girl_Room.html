@@ -1668,11 +1668,19 @@ async function runShow(file) {
     prepVoices(lines.flatMap(l => showSentences(l.text || '').map(spoken)));   // she says line 1 while line 2, 3 ... are being made
   if (roastBtn) roastBtn.textContent = 'Stop';
   try { voiceCtx(); } catch (e) {}
-  window.AIWorld.stop(); window.AIWorld.act([{ walk: 'center' }, { face: 'camera' }]);
+  // SMART_TV_V1: a show with TV parts: she stands next to the TV, and every drawing / photo is fetched now
+  const useTV = lines.some(l => l.tv) && window.AIWorld.tv;
+  if (useTV) lines.forEach(l => window.AIWorld.tv.prefetch(l.tv));
+  window.AIWorld.stop(); window.AIWorld.act([{ walk: useTV ? window.AIWorld.tv.stage : 'center' }, { face: 'camera' }]);
   await waitS(1.2);
+  if (useTV) await waitStill(12);
   for (const l of lines) {
     if (my !== SHOW.run) return;
     showAction(l.action);
+    if (l.tv && useTV) {                                    // put this part's picture / drawing / slide on the TV, look at it, show both
+      window.AIWorld.tv.show(l.tv); window.AIWorld.tv.shot(10);
+      if (!act.cur) window.AIWorld.act([{ face: 'tv' }, { point: 'tv', time: 1.0 }, { face: 'camera' }]);
+    }
     if (/walk_to_bed|sit/.test(l.action || '')) await waitStill(20);   // she gets to the sofa first, then talks (a 'walk' step does not stop the talk)
     if (my !== SHOW.run) return;
     setMood(l.mood || (l.action === 'walk' ? 'annoyed' : 'amused'), 0.8, 60);
@@ -1747,7 +1755,7 @@ async function presentText(text) {
   let n = 0; setMood('confused'); showBubble(think[0], 30);
   const tick = setInterval(() => { n++; showBubble(think[Math.min(n, think.length - 1)], 30); }, 12000);   // she may think for a while (up to 5 minutes)
   try {
-    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text.length >= 200 ? text : '', ask: text.slice(0, 500) }) });   // NO_LIMITS_V1: her length follows your words ("in detail", "short")
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text.length >= 200 ? text : '', ask: text.slice(0, 500), shelf: SHELF.books.filter(b => b.kind === 'picture').map(b => b.title).slice(0, 40) }) });   // NO_LIMITS_V1: her length follows your words ("in detail", "short")
     clearInterval(tick); setMood('neutral');
     const show = await r.json();
     if (!show || !Array.isArray(show.lines) || !show.lines.length) throw new Error(show && show.error || 'no lines');
@@ -3921,6 +3929,283 @@ window.addEventListener('resize', () => {
   setInterval(place, 1000);
 })();
 </script>
+<script id="smartTV">
+// ============================================================================
+// SMART_TV_V1: her TV is her screen. It replaces the wrist hologram and the neon answer card (both removed).
+//   slides      AIWorld.tv.slide({ title, points: [...] })       points appear one by one
+//   drawing     AIWorld.tv.draw('a horse')                       Brain.py /draw makes a simple cartoon SVG, the TV draws it
+//                                                               stroke by stroke with a pen (drawings are kept, the same word is instant)
+//   photo       AIWorld.tv.picture('the Eiffel Tower')          her memory shelf first, then a real photo (Brain.py /picture, Wikipedia)
+//   lesson      "explain photosynthesis" -> drawing + short steps on the TV (was the hologram)
+//   presentation lines with a "tv" part show it while she says that part; she stands next to the TV and the camera shows both.
+//   Typed or heard: "draw a house", "show me a picture of a tiger". Room actions for the brain: tv_slide, tv_draw, tv_picture, explain.
+// Only the drawing's shapes are used (turned into canvas paths); nothing from a drawing ever runs in the page.
+// ============================================================================
+(function () {
+  const W = 768, H = 432, NS = 'http://www.w3.org/2000/svg';
+  const BR = () => String(window.AIWorld.brainUrl || 'http://localhost:5005/brain').replace(/\/brain$/, '');
+  const TVX = { anim: null, run: 0, last: 0, cache: new Map(), meas: null, lessonRun: 0 };
+  const STAGE = { x: -4.5, z: 1.5 };                       // where she stands to present: next to the TV, facing the class
+  window.AIWorld.ROOM_SPOTS = ROOM_SPOTS; ROOM_SPOTS.stage = { x: STAGE.x, z: STAGE.z, name: 'Next to the TV' };
+  const ctx = () => tvCanvas.getContext('2d');
+  const shown = (what) => { ROOMSTATE.tv = true; ROOMSTATE.tvText = String(what).slice(0, 80); TVX.last = performance.now(); };
+
+  function bg(c, paper) {
+    if (paper) { c.fillStyle = '#fbfaf5'; c.fillRect(0, 0, W, H); c.strokeStyle = 'rgba(59,130,246,0.08)'; c.lineWidth = 1;
+      for (let x = 0; x < W; x += 32) { c.beginPath(); c.moveTo(x, 0); c.lineTo(x, H); c.stroke(); }
+      for (let y = 0; y < H; y += 32) { c.beginPath(); c.moveTo(0, y); c.lineTo(W, y); c.stroke(); } return; }
+    const g = c.createLinearGradient(0, 0, W, H); g.addColorStop(0, '#1e1b4b'); g.addColorStop(1, '#3b0764'); c.fillStyle = g; c.fillRect(0, 0, W, H);
+  }
+  function caption(c, text) {
+    if (!text) return;
+    c.fillStyle = 'rgba(15,23,42,0.82)'; c.fillRect(0, H - 44, W, 44);
+    c.fillStyle = '#f9a8d4'; c.font = 'bold 24px Segoe UI, Arial'; c.textBaseline = 'middle'; c.textAlign = 'left';
+    c.fillText(String(text).slice(0, 52), 18, H - 22); c.textBaseline = 'alphabetic';
+  }
+  function play(draw, dur) {                               // runs draw(t) every frame until dur seconds
+    const my = ++TVX.run; TVX.anim = { my, t0: performance.now(), draw, dur };
+    return new Promise(ok => { TVX.anim.done = ok; });
+  }
+  window.AIWorld.onFrame.push(() => {
+    const a = TVX.anim; if (!a) return;
+    const t = (performance.now() - a.t0) / 1000;
+    try { a.draw(Math.min(t, a.dur)); } catch (e) { console.warn('tv draw', e); a.dur = 0; }
+    tvTex.needsUpdate = true;
+    if (t >= a.dur) { TVX.anim = null; a.done && a.done(); }
+  });
+
+  // ---- slides
+  function slide(s) {
+    s = s || {}; const title = String(s.title || '').slice(0, 60), pts = (s.points || []).map(p => String(p).slice(0, 90)).slice(0, 5);
+    shown('slide: ' + title);
+    return play((t) => {
+      const c = ctx(); bg(c);
+      c.fillStyle = '#f472b6'; c.fillRect(30, 26, 10, 64);
+      c.fillStyle = '#ffffff'; c.font = 'bold 54px Segoe UI, Arial'; c.textBaseline = 'top'; wrapLines(c, title, W - 80, 1).forEach(l => c.fillText(l, 54, 30));
+      c.font = '38px Segoe UI, Arial';                    // big: the TV is far from the camera
+      let y = 118;
+      pts.forEach((p, i) => {
+        const k = Math.max(0, Math.min(1, (t - 0.4 - i * 0.7) / 0.35)); if (k <= 0) return;
+        c.globalAlpha = k; c.fillStyle = '#a5f3fc'; c.fillText('•', 40 + (1 - k) * 30, y);
+        const ls = wrapLines(c, p, W - 110, 2); c.fillStyle = '#f1f5f9'; ls.forEach((l, j) => c.fillText(l, 76 + (1 - k) * 30, y + j * 44));
+        y += 44 * ls.length + 14; c.globalAlpha = 1;
+      });
+      c.textBaseline = 'alphabetic';
+    }, 0.8 + pts.length * 0.7);
+  }
+
+  // ---- drawings: SVG shapes -> canvas paths, drawn stroke by stroke
+  function measurer() {
+    if (!TVX.meas) { TVX.meas = document.createElementNS(NS, 'svg'); TVX.meas.setAttribute('width', '0'); TVX.meas.setAttribute('height', '0');
+      TVX.meas.style.cssText = 'position:absolute;left:-9999px;top:0;'; document.body.appendChild(TVX.meas); }
+    return TVX.meas;
+  }
+  const num = (el, k) => parseFloat(el.getAttribute(k)) || 0;
+  const okColor = (v) => v && /^(#[0-9a-f]{3,8}|[a-z]{3,20}|rgba?\([\d\s.,%]+\))$/i.test(v.trim()) ? v.trim() : null;
+  function toD(el) {
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'path') return el.getAttribute('d') || '';
+    if (tag === 'circle') { const cx = num(el, 'cx'), cy = num(el, 'cy'), r = num(el, 'r'); return `M${cx - r} ${cy}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0Z`; }
+    if (tag === 'ellipse') { const cx = num(el, 'cx'), cy = num(el, 'cy'), rx = num(el, 'rx'), ry = num(el, 'ry'); return `M${cx - rx} ${cy}a${rx} ${ry} 0 1 0 ${2 * rx} 0a${rx} ${ry} 0 1 0 ${-2 * rx} 0Z`; }
+    if (tag === 'rect') { const x = num(el, 'x'), y = num(el, 'y'), w = num(el, 'width'), h = num(el, 'height'); return `M${x} ${y}h${w}v${h}h${-w}Z`; }
+    if (tag === 'line') return `M${num(el, 'x1')} ${num(el, 'y1')}L${num(el, 'x2')} ${num(el, 'y2')}`;
+    if (tag === 'polyline' || tag === 'polygon') {
+      const p = (el.getAttribute('points') || '').trim().split(/[\s,]+/).map(Number).filter(v => !isNaN(v));
+      if (p.length < 4) return '';
+      let d = `M${p[0]} ${p[1]}`; for (let i = 2; i + 1 < p.length; i += 2) d += `L${p[i]} ${p[i + 1]}`;
+      return d + (tag === 'polygon' ? 'Z' : '');
+    }
+    return '';
+  }
+  function parseDrawing(svgText) {
+    const doc = new DOMParser().parseFromString(svgText, 'image/svg+xml');
+    const root = doc.querySelector('svg'); if (!root) throw new Error('not a drawing');
+    const vb = (root.getAttribute('viewBox') || '0 0 400 300').split(/[\s,]+/).map(Number);
+    const out = [], m = measurer();
+    for (const el of root.querySelectorAll('path,circle,ellipse,rect,line,polyline,polygon')) {
+      const d = toD(el); if (!d) continue;
+      const st = {}; String(el.getAttribute('style') || '').split(';').forEach(x => { const [k, v] = x.split(':'); if (k && v) st[k.trim()] = v.trim(); });
+      const get = (k) => el.getAttribute(k) || st[k];
+      let fill = get('fill'), stroke = get('stroke');
+      const tag = el.tagName.toLowerCase();
+      fill = fill === 'none' || tag === 'line' || tag === 'polyline' ? null : (okColor(fill) || (fill === undefined || fill === null ? null : null));
+      stroke = stroke === 'none' ? null : okColor(stroke);
+      if (!stroke && !fill) stroke = '#1f2937';
+      const pe = document.createElementNS(NS, 'path'); pe.setAttribute('d', d); m.appendChild(pe);
+      let len = 200; try { len = pe.getTotalLength() || 200; } catch (e) {}
+      out.push({ path: new Path2D(d), pe, len, fill, stroke: stroke || fill, sw: parseFloat(get('stroke-width')) || 2.5,
+        alpha: Math.min(1, parseFloat(get('opacity') || get('fill-opacity') || '1') || 1), cap: get('stroke-linecap') || 'round' });
+      if (out.length >= 120) break;
+    }
+    if (!out.length) throw new Error('empty drawing');
+    return { vb: vb.length === 4 ? vb : [0, 0, 400, 300], els: out };
+  }
+  function getDrawing(what) {
+    const key = 'd:' + norm(what);
+    if (!TVX.cache.has(key)) TVX.cache.set(key, fetch(BR() + '/draw', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ what }) })
+      .then(r => r.json()).then(j => { if (!j.svg) throw new Error(j.error || 'no drawing'); return j.svg; })
+      .catch(e => { TVX.cache.delete(key); throw e; }));
+    return TVX.cache.get(key);
+  }
+  function waitingBoard(what) {                            // while the brain makes the drawing: a pencil scribbles
+    return play((t) => {
+      const c = ctx(); bg(c, true);
+      c.fillStyle = '#334155'; c.font = 'bold 30px Segoe UI, Arial'; c.textAlign = 'center'; c.fillText('Drawing ' + String(what).slice(0, 40) + '…', W / 2, H / 2 - 20);
+      c.strokeStyle = '#f472b6'; c.lineWidth = 4; c.lineCap = 'round'; c.beginPath();
+      for (let i = 0; i <= 40; i++) { const x = W / 2 - 120 + i * 6, y = H / 2 + 30 + Math.sin(i * 0.7 + t * 6) * 10; i ? c.lineTo(x, y) : c.moveTo(x, y); } c.stroke();
+      c.textAlign = 'left';
+    }, 120);
+  }
+  async function draw(what) {
+    what = String(what || '').trim().replace(/[?.!]+$/, ''); if (!what) return false;
+    const my = TVX.run + 1; waitingBoard(what); shown('drawing of ' + what);
+    let pic;
+    try { pic = parseDrawing(await getDrawing(what)); }
+    catch (e) { console.warn('tv drawing failed:', e); if (TVX.anim && TVX.anim.my === my) { TVX.anim = null; } await slide({ title: "I couldn't draw that", points: [String(what), 'My drawing brain is not answering.'] }); return false; }
+    const [vx, vy, vw, vh] = pic.vb, ax = 24, ay = 14, aw = W - 48, ah = H - 44 - 24;
+    const s = Math.min(aw / vw, ah / vh), ox = ax + (aw - vw * s) / 2 - vx * s, oy = ay + (ah - vh * s) / 2 - vy * s;
+    const weights = pic.els.map(e => Math.max(40, e.len)), total = weights.reduce((a, b) => a + b, 0);
+    const dur = Math.min(9, Math.max(3.5, pic.els.length * 0.12 + total / 700));
+    const ends = []; let acc = 0; for (const w of weights) { acc += w; ends.push(acc / total * dur); }
+    shown('drawing of ' + what);
+    await play((t) => {
+      const c = ctx(); bg(c, true);
+      c.save(); c.setTransform(s, 0, 0, s, ox, oy); c.lineJoin = 'round';
+      let pen = null;
+      pic.els.forEach((e, i) => {
+        const t0 = i ? ends[i - 1] : 0, t1 = ends[i];
+        if (t < t0) return;
+        const p = Math.min(1, (t - t0) / Math.max(0.01, t1 - t0));
+        c.globalAlpha = e.alpha;
+        if (e.fill) { c.globalAlpha = e.alpha * Math.max(0, Math.min(1, (p - 0.55) / 0.45)); c.fillStyle = e.fill; c.fill(e.path); c.globalAlpha = e.alpha; }
+        if (e.stroke) {
+          c.strokeStyle = e.stroke; c.lineWidth = e.sw; c.lineCap = e.cap;
+          if (p < 1) { c.setLineDash([e.len * p, e.len + 1]); } else c.setLineDash([]);
+          c.stroke(e.path); c.setLineDash([]);
+        }
+        if (p < 1) { try { const q = e.pe.getPointAtLength(e.len * p); pen = { x: q.x * s + ox, y: q.y * s + oy }; } catch (x) {} }
+      });
+      c.restore(); c.globalAlpha = 1;
+      if (pen) { c.fillStyle = '#f472b6'; c.beginPath(); c.arc(pen.x, pen.y, 7, 0, Math.PI * 2); c.fill(); c.strokeStyle = '#831843'; c.lineWidth = 2; c.stroke(); }
+      caption(c, '✎ ' + what);
+    }, dur);
+    for (const e of pic.els) { try { e.pe.remove(); } catch (x) {} }
+    return true;
+  }
+
+  // ---- photos: her shelf first, then a real photo through Brain.py
+  function getPicture(q) {
+    const key = 'p:' + norm(q);
+    if (!TVX.cache.has(key)) TVX.cache.set(key, fetch(BR() + '/picture?q=' + encodeURIComponent(q)).then(async r => {
+      if (!r.ok) throw new Error('no photo for ' + q);
+      return { url: URL.createObjectURL(await r.blob()), title: decodeURIComponent(r.headers.get('X-Picture-Title') || q) };
+    }).catch(e => { TVX.cache.delete(key); throw e; }));
+    return TVX.cache.get(key);
+  }
+  async function picture(q, opts) {
+    q = String(q || '').trim().replace(/^(a|an|the) /i, '').replace(/[?.!]+$/, ''); if (!q) return false;
+    const book = findBook(q);
+    if (book && book.kind === 'picture' && !(opts && opts.web)) { TVX.anim = null; shown('shelf picture: ' + book.title); await showOnTV(book); return true; }
+    let p;
+    try { p = await getPicture(q); } catch (e) { console.warn('tv photo failed, drawing it instead:', e); return draw(q); }
+    const img = new Image(); const ok = await new Promise(r => { img.onload = () => r(true); img.onerror = () => r(false); img.src = p.url; });
+    if (!ok) return draw(q);
+    shown('photo of ' + p.title);
+    await play((t) => {
+      const c = ctx(); c.fillStyle = '#000'; c.fillRect(0, 0, W, H);
+      const sc = Math.max(W / img.width, (H - 44) / img.height) * (1 + 0.04 * Math.min(1, t / 8)), w = img.width * sc, h = img.height * sc;   // fills the screen, slow zoom
+      c.globalAlpha = Math.min(1, t / 0.5); c.drawImage(img, (W - w) / 2, (H - 44 - h) / 2, w, h); c.globalAlpha = 1;
+      caption(c, '▣ ' + p.title);
+    }, 8);
+    return true;
+  }
+  function prefetch(tv) { try { if (tv && tv.draw) getDrawing(tv.draw).catch(() => {}); if (tv && tv.picture && !findBook(tv.picture)) getPicture(tv.picture).catch(() => {}); } catch (e) {} }
+  async function showTV(tv) {
+    if (!tv) return false;
+    if (tv.slide) return slide(tv.slide);
+    if (tv.draw) return draw(tv.draw);
+    if (tv.picture) return picture(tv.picture);
+    if (tv.shelf) { const b = findBook(tv.shelf); if (b) { TVX.anim = null; shown('shelf: ' + b.title); return showOnTV(b); } return false; }
+    if (tv.text) { TVX.anim = null; drawTV(true, tv.text); return true; }
+    return false;
+  }
+  function tvShot(hold) {                                  // camera: her and the TV together
+    if (!CAMG.save) CAMG.save = { pos: camera.position.clone(), look: controls.target.clone() };
+    CAMG.goal = V3(-0.6, 2.2, 4.4); CAMG.look = V3(-5.3, 1.6, 0.8); CAMG.back = performance.now() + (hold || 8) * 1000;
+  }
+
+  // ---- lessons on the TV (the wrist hologram is gone)
+  async function lesson(topic) {
+    topic = String(topic || '').trim().replace(/[?.!]+$/, ''); if (!topic) return;
+    const my = ++TVX.lessonRun;
+    window.AIWorld.stop();
+    sayMain(pick(['Okay, to the TV.', 'Let me show you.', 'Watch the screen.', 'TV time.']));
+    window.AIWorld.act([{ walk: STAGE }, { face: 'camera' }, { point: 'tv', time: 1.2 }, { face: 'camera' }]);
+    tvShot(20);
+    const stepsP = askBrainSteps(topic);
+    getDrawing(topic).catch(() => {}); getDrawing('a simple diagram of how ' + topic + ' works, with arrows').catch(() => {});
+    await waitS(0.4); await waitStill(15);
+    const drawn = draw(topic);
+    let steps = await stepsP;
+    if (!steps || !steps.length) steps = lessonFor(topic);
+    if (!steps) steps = ["I don't have a lesson for this yet.", 'Connect my brain and I can explain anything.'];
+    if (my !== TVX.lessonRun) return;
+    await sayMain(steps[0]);
+    await drawn;
+    for (let i = 1; i < steps.length; i++) {
+      if (my !== TVX.lessonRun) return;
+      if (i === 1) { draw('a simple diagram of how ' + topic + ' works, with arrows'); tvShot(14); }   // MOSTLY_VISUAL_V1: a second drawing, not a text slide
+      await sayMain(steps[i]); await waitS(0.3);
+    }
+  }
+  holoExplain = function (topic, given) { return lesson((given && given.title) || topic); };
+  const _holoClose = holoClose; holoClose = function () { try { _holoClose(); } catch (e) {} };
+  answerCard = function () {};                             // the wrist card is gone (MOSTLY_VISUAL_V1: no text slide for every answer either)
+
+  // ---- body actions: {tvx: {...}} shows something on the TV
+  const _startTV = startAction;
+  startAction = function (a) {
+    if (a && a.tvx !== undefined && !a._kind) { act.cur = a; showTV(a.tvx); tvShot(9); return finishAction(); }
+    return _startTV(a);
+  };
+  const _brainActs = brainActs;
+  brainActs = function (list) {
+    const out = [];
+    for (const a of list || []) {
+      const d = a && a.do, tx = String((a && a.text) || '').trim();
+      let tv = null;
+      if (d === 'tv_draw' && tx) tv = { draw: tx };
+      else if (d === 'tv_picture' && tx) tv = { picture: tx };
+      else if (d === 'tv_slide' && tx) { const p = tx.split('|').map(x => x.trim()).filter(Boolean); tv = { slide: { title: p[0] || '', points: p.slice(1) } }; }
+      if (tv) { out.push({ walk: STAGE }, { face: 'tv' }, { point: 'tv', time: 0.9 }, { tvx: tv }, { face: 'camera' }); continue; }
+      out.push(..._brainActs([a]).filter(x => !(x.face === 'camera' && Object.keys(x).length === 1)));
+    }
+    const last = out[out.length - 1];
+    if (out.length && !(last.face === 'camera' && Object.keys(last).length === 1) && !out.some(x => x.holo !== undefined || x.book !== undefined || x.sit !== undefined || x.trip !== undefined)) out.push({ face: 'camera' });
+    return out;
+  };
+  window.AIWorld.brainActs = brainActs;
+
+  // ---- "draw a horse", "show me a picture of a tiger" (typed, or heard in the old live chat)
+  const _holoHear = holoHear;
+  holoHear = function (text) {
+    const q = norm(text); let m;
+    if ((m = /^(?:can you |could you |please |hey |ok |okay |now )*(?:draw|sketch|paint|doodle)(?: me| us| for me)?(?: a| an| the| some)? (.+?)(?: on the tv| for me| please)?$/.exec(q))) {
+      sayMain(pick(['Watch this.', 'One masterpiece, coming up.', 'Fine. Art time.', 'Hold my pen.']));
+      window.AIWorld.stop(); window.AIWorld.act([{ walk: STAGE }, { face: 'tv' }, { point: 'tv', time: 0.9 }, { tvx: { draw: m[1] } }, { face: 'camera' }]);
+      return true;
+    }
+    if ((m = /^(?:can you |could you |please |hey |ok |okay )*(?:show|find|get|pull up|put up|bring up)(?: me| us)?(?: a| an| the| some)? (?:picture|photo|pic|image)s? of (?:a |an |the )?(.+?)(?: on the tv| please)?$/.exec(q))) {
+      sayMain(pick(['On the TV.', 'Look at the screen.', 'Here you go.']));
+      window.AIWorld.stop(); window.AIWorld.act([{ walk: STAGE }, { face: 'tv' }, { point: 'tv', time: 0.9 }, { tvx: { picture: m[1] } }, { face: 'camera' }]);
+      return true;
+    }
+    return _holoHear(text);
+  };
+
+  window.AIWorld.tv = { slide, draw, picture, show: showTV, lesson, prefetch, shot: tvShot, stage: STAGE, state: () => ({ ...ROOMSTATE, busy: !!TVX.anim }) };
+})();
+</script>
 <script id="geminiLive">
 // ============================================================================
 // GEMINI_LIVE_V1: fast live voice chat (like Gemini Live / Tesla Grok)
@@ -4089,7 +4374,7 @@ window.addEventListener('resize', () => {
           actions: { type: 'ARRAY', description: 'Steps in order. Empty for face only.', items: { type: 'OBJECT', properties: {
             do: { type: 'STRING', enum: acts.filter(a => a !== 'none') },
             target: { type: 'STRING', description: 'walk: sofa, window, plant, tv, table, ball, shelf, center, front. sit: sofa or miss. point: tv, sofa, plant, window, table, ball, shelf, board, lamp' },
-            text: { type: 'STRING', description: 'for tv_text, write_board, explain, open_memory' } }, required: ['do'] } },
+            text: { type: 'STRING', description: 'tv_draw: what to draw ("a horse"); tv_picture: what to show a photo of; tv_slide: "Title | point | point"; explain: topic (a lesson on the TV); tv_text, write_board, open_memory: the words' } }, required: ['do'] } },
           emotion: { type: 'STRING', enum: EMO } } } },
       { name: 'think_hard',
         description: 'Ask your big smart brain. Use it for real facts, numbers, maths, code, news, or anything you are not sure about. Say a short line first, then call it.',
