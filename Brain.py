@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
@@ -68,7 +69,10 @@ ROOM_ACTIONS = [
     "face_me",
     "trip",
     "clean_up",
-    "explain",       # text: the topic; opens her neon hologram lesson
+    "explain",       # text: the topic; a short lesson on her smart TV (SMART_TV_V1: no more hologram)
+    "tv_slide",      # text: "Title | point | point" -> a slide on the TV
+    "tv_draw",       # text: what to draw ("a horse", "my head and body as two pieces") -> she draws it live on the TV
+    "tv_picture",    # text: what to show ("the Eiffel Tower") -> a real photo on the TV (her shelf first, then Wikipedia)
     "open_memory",   # text: words from the picture or note to open from her memory shelf
     "none"
 ]
@@ -176,19 +180,26 @@ Don't choose random movements.
 Don't always use the same animation.
 Idle is better than an inappropriate movement.
 
-YOUR ROOM AND BODY:
-You live in a 3D living room and you have a real body. In the room: a sofa,
-a coffee table with a glass on it, a ball on the floor, a TV on the left wall,
-a window, a plant, a floor lamp, a whiteboard, and your memory shelf of books
-(the user's pictures and notes).
+YOUR ROOM AND BODY (ROOM_KNOWLEDGE_V1):
+You live in a 3D living room and you have a real body. What is in the room, from where the camera stands:
+a big SMART TV on the left wall, a sofa at the back, a coffee table with a glass on it in front of the sofa,
+a ball on the floor, a window and a plant at the back left, a floor lamp in the back right corner,
+a whiteboard on the back wall, and your memory shelf of books (the user's own pictures and notes) on the left.
+YOUR SMART TV is your screen for showing and explaining. It can: show a slide (tv_slide, text "Title | point |
+point"), DRAW anything live, stroke by stroke, like a whiteboard cartoon (tv_draw, text = what to draw: "a horse",
+"a house", "my head and my body as two separate pieces"), show a real photo of something (tv_picture, text = what),
+show a picture or note from your memory shelf (open_memory), show short words (tv_text), or turn on and off.
+When something is easier to see than to hear (how a thing looks, how parts fit, steps), use the TV.
 When the person asks you to DO something you can do, do it: put the steps in
 "actions", in order. If your words say you will do something, the actions must
 do it too. You may still roast them while you do it. If they only chat, use an
 empty list. You can only use these actions:
 walk (target: sofa, window, plant, tv, table, ball, shelf, center, front),
 kick (target: ball), sit (target: sofa, or miss), lamp_on, lamp_off, tv_on,
-tv_off, tv_text (text), write_board (text), knock_glass, point (target),
-wave, face_me, trip, clean_up, explain (text: topic), open_memory (text).
+tv_off, tv_text (text), tv_slide (text), tv_draw (text), tv_picture (text),
+write_board (text), knock_glass, point (target), wave, face_me, trip, clean_up,
+explain (text: topic, a short lesson on the TV), open_memory (text).
+Example: "draw me a horse" -> [{"do":"tv_draw","target":"","text":"a horse"}].
 Example: "kick the ball" -> actions [{"do":"kick","target":"ball","text":""}].
 Example: "go turn the light off and sit" -> lamp_off, then sit on sofa.
 If they ask for something you can't do here (fly, cook), say so in a funny way
@@ -1325,13 +1336,16 @@ YOU ARE IN A LIVE VOICE CALL RIGHT NOW. The person talks to you out loud and hea
 - If they talk over you, or say "stop", "no", "wait" or "listen", stop at once and listen. Do not finish your sentence.
 - Never read emojis, stage directions, or words in brackets out loud.
 
-YOUR BODY: you live in a 3D living room (sofa, coffee table with a glass, ball, TV, window, plant, floor lamp,
-whiteboard, memory shelf). To move or change your face, call the tool room_action WHILE you talk:
+YOUR BODY: you live in a 3D living room (big smart TV on the left wall, sofa, coffee table with a glass, ball, window,
+plant, floor lamp, whiteboard, memory shelf). To move or change your face, call the tool room_action WHILE you talk:
 - If your words say you will do something, call room_action so your body really does it.
 - HONEST_ACTIONS_V1: never say you did something (walked, turned the lamp or TV on or off, opened a picture)
   until room_action answers with done. It tells you what really happened. If it says it failed, say so.
 - Lamp: room_action with do lamp_on or lamp_off (you walk to the lamp yourself). TV: tv_on, tv_off, or tv_text.
   Pictures or notes from your memory shelf: open_memory with the words in text, one call per picture.
+- YOUR SMART TV (SMART_TV_V1): tv_draw draws ANYTHING live on the TV (text = what to draw, e.g. "a horse"),
+  tv_picture shows a real photo of something (text = what), tv_slide shows a slide (text "Title | point | point"),
+  explain gives a short lesson on the TV (text = topic). When he says "draw ..." or "show me a picture of ...", use them.
 - When your mood clearly changes, call room_action with just the emotion.
 - Plain chat needs no tool call.
 
@@ -1422,6 +1436,166 @@ def think_answer(question):
         except Exception as error:
             tried.append("%s: %s" % (who, error))
     raise ValueError("No brain could answer: " + " | ".join(tried))
+
+# ============================================================================
+# SMART_TV_V1: her TV can draw anything and show real photos.
+#   POST /draw {"what": "a horse"} -> {"svg": "<svg ...>"}  simple cartoon drawing; the page draws it stroke by stroke.
+#       Made by Gemini first, then OpenRouter, then Venice (no Claude). Kept in brain_memory/drawings/ (same word = instant).
+#   GET /picture?q=eiffel tower -> the photo of the best Wikipedia page for those words (kept in brain_memory/pictures/).
+# ============================================================================
+DRAW_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brain_memory", "drawings")
+PIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brain_memory", "pictures")
+DRAW_SYSTEM = """You draw for a live TV in a cartoon room. Make ONE clear, friendly cartoon drawing, like a good whiteboard
+sketch that a 12 year old understands at once. Return ONLY the SVG, nothing else.
+Rules:
+- <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"> ... </svg>
+- Use ONLY these elements: path, circle, ellipse, rect, line, polyline, polygon. No text, no g, no transform,
+  no gradients, no style element, no images, no defs. Each element has its own stroke, stroke-width and fill attributes.
+- 12 to 60 elements. Big shapes first (body, ground, walls), then the details (eyes, windows, labels as arrows).
+- Outlines: stroke="#1f2937" stroke-width="3" (thinner for small details). Flat, bright, simple fill colors (hex).
+- Fill most of the 400 x 300 area, centered. Make it recognizable: the right number of legs, ears, wheels and so on.
+- For a diagram (how parts fit), draw the parts apart with arrows (lines with small triangles) between them.
+- For a graph or chart: two axes, then bars, a line or pie slices in bright colors; no words, so show the idea with
+  sizes, colors and simple icons (a small heart, a bug, a person)."""
+SVG_TAGS = ("path", "circle", "ellipse", "rect", "line", "polyline", "polygon")
+
+
+def _slug(text):
+    return re.sub(r"[^a-z0-9]+", "-", str(text).lower()).strip("-")[:60] or "x"
+
+
+def clean_svg(text):
+    """Keeps only the allowed drawing elements and their plain attributes. (The page only ever turns them into
+    canvas paths, never into live page content, so nothing in a drawing can run.)"""
+    text = re.sub(r"<think>.*?</think>", "", str(text or ""), flags=re.S)
+    m = re.search(r"<svg[\s\S]*?</svg>", text, re.I)
+    if not m:
+        raise ValueError("no <svg> in the answer")
+    body = m.group(0)
+    vb = re.search(r'viewBox\s*=\s*"([\d.\s\-]+)"', body)
+    out = []
+    for el in re.finditer(r"<(%s)\b([^>]*?)/?>" % "|".join(SVG_TAGS), body, re.I):
+        attrs = re.findall(r'([a-zA-Z][a-zA-Z0-9\-]*)\s*=\s*"([^"]*)"', el.group(2))
+        keep = []
+        for k, v in attrs:
+            k = k.lower()
+            if k.startswith("on") or "href" in k or "url(" in v.lower() or "javascript" in v.lower():
+                continue
+            if k in ("d", "cx", "cy", "r", "rx", "ry", "x", "y", "width", "height", "x1", "y1", "x2", "y2", "points",
+                     "fill", "stroke", "stroke-width", "stroke-linecap", "stroke-linejoin", "opacity", "fill-opacity", "style"):
+                keep.append('%s="%s"' % (k, v.replace("<", "").replace(">", "")))
+        out.append("<%s %s/>" % (el.group(1).lower(), " ".join(keep)))
+    if len(out) < 3:
+        raise ValueError("drawing too empty")
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="%s">%s</svg>' % (vb.group(1) if vb else "0 0 400 300", "".join(out[:120]))
+
+
+def make_drawing(what):
+    what = str(what or "").strip()[:200]
+    if not what:
+        raise ValueError("nothing to draw")
+    path = os.path.join(DRAW_DIR, _slug(what) + ".svg")
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            return f.read(), "saved drawing"
+    user = "Draw: " + what
+    tried = []
+    for who in ("gemini", "openrouter", "venice"):
+        try:
+            if who == "gemini":
+                if not os.getenv("GEMINI_API_KEY"):
+                    continue
+                models = [m for m in [os.getenv("GEMINI_MODEL", "").strip()] + GEMINI_MODELS[::-1] if m]   # the bigger flash first
+                text, err = "", None
+                for model in dict.fromkeys(models):
+                    try:
+                        payload = {"systemInstruction": {"parts": [{"text": DRAW_SYSTEM}]}, "contents": [{"role": "user", "parts": [{"text": user}]}],
+                                   "generationConfig": {"temperature": 0.7, "thinkingConfig": {"thinkingLevel": "low"}}}
+                        headers = {"Content-Type": "application/json", "x-goog-api-key": os.getenv("GEMINI_API_KEY")}
+                        try:
+                            data = send_json(GEMINI_URL % model, payload, headers, 60)
+                        except urllib.error.HTTPError as error:
+                            if error.code != 400:
+                                raise
+                            payload["generationConfig"].pop("thinkingConfig", None)
+                            data = send_json(GEMINI_URL % model, payload, headers, 60)
+                        text = "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"] if not p.get("thought"))
+                        who = "gemini (%s)" % model
+                        break
+                    except Exception as e:
+                        err = e
+                if not text:
+                    raise err or ValueError("empty")
+            elif who == "openrouter":
+                if not os.getenv("OPENROUTER_API_KEY"):
+                    continue
+                data = openrouter_send({"model": os.getenv("OPENROUTER_MODEL", "").strip() or OPENROUTER_MODELS[0], "max_tokens": 6000,
+                                        "messages": [{"role": "system", "content": DRAW_SYSTEM}, {"role": "user", "content": user}]}, 90)
+                text = data["choices"][0]["message"].get("content") or ""
+            else:
+                if not os.getenv("VENICE_API_KEY"):
+                    continue
+                data = send_json(VENICE_URL, {"model": os.getenv("VENICE_MODEL", "").strip() or VENICE_MODELS[0], "max_tokens": 6000,
+                                              "messages": [{"role": "system", "content": DRAW_SYSTEM}, {"role": "user", "content": user}],
+                                              "venice_parameters": {"include_venice_system_prompt": False, "disable_thinking": True}},
+                                 {"Content-Type": "application/json", "Authorization": "Bearer " + os.getenv("VENICE_API_KEY")}, 90)
+                text = data["choices"][0]["message"].get("content") or ""
+            svg = clean_svg(text)
+            os.makedirs(DRAW_DIR, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(svg)
+            return svg, who
+        except Exception as error:
+            tried.append("%s: %s" % (who, error))
+    raise ValueError("No brain could draw it: " + " | ".join(tried))
+
+
+WIKI_HEADERS = {"User-Agent": "AIWorld/1.0 (class project, Bridgewater State University)", "Accept": "application/json"}
+
+
+def get_picture(query):
+    """Returns (bytes, content type, page title). Wikipedia search -> that page's main photo."""
+    query = str(query or "").strip()[:120]
+    if not query:
+        raise ValueError("no picture words")
+    os.makedirs(PIC_DIR, exist_ok=True)
+    base = os.path.join(PIC_DIR, _slug(query))
+    for ext, ctype in ((".jpg", "image/jpeg"), (".png", "image/png"), (".webp", "image/webp"), (".gif", "image/gif")):
+        if os.path.exists(base + ext):
+            with open(base + ext, "rb") as f:
+                return f.read(), ctype, query
+    q = urllib.parse.quote(query)
+    pages, err = [], None
+    for url in ("https://en.wikipedia.org/w/rest.php/v1/search/page?q=%s&limit=5" % q,
+                "https://api.wikimedia.org/core/v1/wikipedia/en/search/page?q=%s&limit=5" % q):   # the same search, two addresses
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=WIKI_HEADERS), timeout=15) as r:
+                pages = json.loads(r.read().decode("utf-8")).get("pages") or []
+            break
+        except Exception as e:
+            err = e
+    if not pages and err:
+        raise err
+    for page in pages:
+        key = page.get("key")
+        if not key:
+            continue
+        with urllib.request.urlopen(urllib.request.Request("https://en.wikipedia.org/api/rest_v1/page/summary/" + urllib.parse.quote(key, safe=""),
+                                                           headers=WIKI_HEADERS), timeout=15) as r:
+            summary = json.loads(r.read().decode("utf-8"))
+        img = (summary.get("originalimage") or {}).get("source") or (summary.get("thumbnail") or {}).get("source")
+        if not img or img.lower().endswith(".svg"):
+            continue
+        if summary.get("thumbnail") and (summary.get("originalimage") or {}).get("width", 0) > 1600:
+            img = summary["thumbnail"]["source"]          # big originals are slow: the smaller copy
+        with urllib.request.urlopen(urllib.request.Request(img, headers={"User-Agent": WIKI_HEADERS["User-Agent"]}), timeout=20) as r:
+            data, ctype = r.read(), r.headers.get("Content-Type", "image/jpeg").split(";")[0]
+        ext = {"image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}.get(ctype, ".jpg")
+        with open(base + ext, "wb") as f:
+            f.write(data)
+        return data, ctype, summary.get("title") or query
+    raise ValueError("no photo found for " + query)
+
 
 # TURN_JUDGE_V1: he talks while she is still talking (a long answer or her presentation).
 # A fast AI decides what she does with it, like a person would:
@@ -1573,16 +1747,86 @@ def model_text(provider, system, user, max_tokens=4000):
     return data["message"]["content"]
 
 
-def make_show(source_text, provider, ask=""):
-    """PRESENT_V2 + NO_LIMITS_V1: she writes her own presentation from her story, then performs it. No fixed script, no fixed length."""
+# INVENT_SHOW_V1: every presentation is invented fresh. A random format and opening are picked, the last
+# presentations are shown to the brain as "do not repeat", and each part can put something on her smart TV.
+SHOW_FORMATS = [
+    "a nature documentary about yourself, narrated like a wildlife film", "a courtroom trial where the team is on trial for building you",
+    "a cooking show: the recipe for building a cartoon girl", "a breaking-news broadcast from AI World", "a museum tour of your own body",
+    "a villain origin story", "a science fair project you are judging yourself", "a reality TV confession booth",
+    "a sports commentary of your own build, play by play", "a fairy tale", "a heist movie: how the team stole a body and a brain",
+    "a talk show where you interview yourself", "a home renovation show about your own face", "a spy mission briefing",
+    "an awards show where you hand out awards to every bug the team fixed", "a horror story about the early versions of you",
+    "a product launch keynote for yourself", "a game show where the class guesses how you were built",
+]
+SHOW_OPENINGS = ["start with a question to the room", "start in the middle of the action", "start with a fake-serious warning",
+                 "start with a confession", "start by roasting the person who asked", "start with a countdown", "start with a weird fact about yourself"]
+SHOWS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brain_memory", "presentations.json")
+
+
+def old_shows():
+    try:
+        with open(SHOWS_FILE, encoding="utf-8") as f:
+            return json.load(f)[-6:]
+    except Exception:
+        return []
+
+
+def remember_show(fmt, lines):
+    try:
+        shows = old_shows() + [{"format": fmt, "first": [l["text"][:160] for l in lines[:3]],
+                                "tv": [str(l.get("tv"))[:80] for l in lines if l.get("tv")][:8]}]
+        os.makedirs(os.path.dirname(SHOWS_FILE), exist_ok=True)
+        with open(SHOWS_FILE, "w", encoding="utf-8") as f:
+            json.dump(shows[-12:], f, indent=1)
+    except Exception as e:
+        print("could not save the presentation list:", e)
+
+
+def clean_tv(tv, shelf):
+    """One TV part: {"slide": {"title", "points"}} | {"draw": "..."} | {"picture": "..."} | {"shelf": "title"}."""
+    if not isinstance(tv, dict):
+        return None
+    if isinstance(tv.get("slide"), dict):
+        sl = tv["slide"]
+        pts = [str(x)[:80] for x in (sl.get("points") or []) if str(x).strip()][:5]
+        return {"slide": {"title": str(sl.get("title") or "")[:60], "points": pts}}
+    for k in ("draw", "picture"):
+        if str(tv.get(k) or "").strip():
+            return {k: str(tv[k]).strip()[:160]}
+    if str(tv.get("shelf") or "").strip():
+        want = str(tv["shelf"]).strip().lower()
+        for t in shelf:
+            if t.lower() == want:
+                return {"shelf": t}
+    return None
+
+
+def make_show(source_text, provider, ask="", shelf=None):
+    """PRESENT_V2 + NO_LIMITS_V1 + INVENT_SHOW_V1: she invents her own presentation from her story, with her smart TV."""
+    import random
+    shelf = [str(t)[:80] for t in (shelf or [])][:40]
     persona = PERSONALITY.split("EMOTIONS:")[0]          # who she is and how she roasts (not the chat reply format)
-    system = (persona + "\n\nNOW YOU ARE ON STAGE in front of a class. Write YOUR OWN presentation about yourself, "
-              "in the first person (I, me, my), from the true facts in the text below. Never invent numbers, names, tools or features. "
-              "You decide how long it is, from the request. "
-              "Split it into parts that are easy to say out loud. Tell it like a stand-up show: greet the room, tell where you came from, how your body, "
-              "face, moves, voice and brain were built, the problems the team fixed, what changed most recently, what is still missing, "
-              "and finish with a punchline and a goodbye. Roast the team and the audience along the way, but keep it fun, not mean. "
-              "Return ONLY JSON: {\"lines\": [{\"action\": one of %s, \"mood\": one of %s, \"text\": \"...\"}]}" % (PRESENT_ACTIONS, EMOTIONS))
+    fmt, opening = random.choice(SHOW_FORMATS), random.choice(SHOW_OPENINGS)
+    olds = old_shows()
+    avoid = ("\n\nYOUR LAST PRESENTATIONS (do NOT repeat their format, opening lines, jokes, order or TV pictures):\n"
+             + "\n".join("- %s | began: %s" % (o.get("format"), " / ".join(o.get("first") or [])) for o in olds)) if olds else ""
+    system = (persona + "\n\nNOW YOU ARE ON STAGE in front of a class, next to your big smart TV. INVENT a brand new presentation about yourself, "
+              "in the first person (I, me, my), from the true facts in the text below. Never invent numbers, names, tools or features: "
+              "the facts stay true, but the way you tell them is new every time. "
+              "THIS TIME the whole presentation is " + fmt + ", and you " + opening + ". Pick your own order and your own favourite facts; "
+              "skip some, zoom in on others. You decide how long it is, from the request. Split it into parts that are easy to say out loud, "
+              "and finish with a punchline and a goodbye. Roast the team and the audience along the way, but keep it fun, not mean."
+              "\n\nYOUR TV (MOSTLY_VISUAL_V1): almost every part puts a PICTURE on the TV, to show what you are talking about. "
+              "Mostly drawings, diagrams, simple graphs and real photos. Text slides at most once or twice in the whole show. Give a part a \"tv\" field, one of:"
+              "\n  {\"slide\": {\"title\": \"short title\", \"points\": [\"2 to 4 short points\"]}}"
+              "\n  {\"draw\": \"what to draw\"}  - you draw it live, stroke by stroke: things, and simple diagrams of how you were built "
+              "(e.g. \"my head and my body as two separate pieces with an arrow joining them at the neck\"), "
+              "and simple graphs (e.g. \"a bar graph: my bugs going down week by week\")"
+              "\n  {\"picture\": \"what to show\"}  - a real photo of a real thing or place (e.g. \"Bridgewater State University\")"
+              + ("\n  {\"shelf\": \"exact title\"}  - one of YOUR memory shelf pictures: " + "; ".join(shelf) if shelf else "")
+              + "\nMix them. Say something about what is on the TV in that part (\"look at this\", \"as you can see\")."
+              + avoid
+              + "\n\nReturn ONLY JSON: {\"lines\": [{\"action\": one of %s, \"mood\": one of %s, \"text\": \"...\", \"tv\": {...} or null}]}" % (PRESENT_ACTIONS, EMOTIONS))
     text = model_text(provider, system, ("The request: " + ask + "\n\n" if ask else "") + "These are the true facts about you:\n\n" + source_text, 16000)
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
     data = json.loads(text[text.find("{"): text.rfind("}") + 1])
@@ -1597,9 +1841,14 @@ def make_show(source_text, provider, ask=""):
             continue
         lines.append({"action": ln.get("action") if isinstance(ln, dict) and ln.get("action") in PRESENT_ACTIONS else "talk",
                       "mood": ln.get("mood") if isinstance(ln, dict) and ln.get("mood") in EMOTIONS else "amused", "text": t, "pause": 0.5})
+        tv = clean_tv(ln.get("tv"), shelf) if isinstance(ln, dict) else None
+        if tv:
+            lines[-1]["tv"] = tv
     if not lines:
         raise ValueError("The brain wrote no parts.")
     lines[0]["action"] = "wave"
+    remember_show(fmt, lines)
+    print("Presentation format: %s (%s); %d of %d parts use the TV." % (fmt, opening, sum(1 for l in lines if l.get("tv")), len(lines)))
     return {"about": "Written by her brain just now", "sayAs": {"AI World": "A I World", "Ai_World": "A I World", "Brain.py": "Brain dot pie", "API": "A P I", "GitHub": "Git Hub", "qwen3:4b": "Qwen 3, 4 B", "Hunyuan3D": "Hunyuan 3 D", "Mixamo": "Mix a mo", "BSU": "B S U"}, "lines": lines}
 
 
@@ -1908,6 +2157,23 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "ok", "brain": "Hugh Mann", "provider": os.getenv("BRAIN_PROVIDER", "ollama").lower()})
         elif path == "/settings":
             self._send_json(settings_view())
+        elif path == "/picture":           # SMART_TV_V1: a real photo for her TV
+            from urllib.parse import parse_qs
+            q = (parse_qs(urlparse(self.path).query).get("q") or [""])[0]
+            try:
+                data, ctype, title = get_picture(q)
+                print("TV picture: %s -> %s" % (q, title))
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Expose-Headers", "X-Picture-Title")
+                self.send_header("X-Picture-Title", urllib.parse.quote(title))
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            except Exception as error:
+                print("TV picture failed (%s): %s" % (q, error))
+                self._send_json({"error": str(error)}, 404)
         else:
             self._send_json({"error": "Not found"}, 404)
 
@@ -1969,7 +2235,7 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
             save_settings(data)
             self._send_json(settings_view())
             return
-        if path in ("/live_token", "/live_log", "/think", "/judge"):    # GEMINI_LIVE_V1 + TURN_JUDGE_V1
+        if path in ("/live_token", "/live_log", "/think", "/judge", "/draw"):    # GEMINI_LIVE_V1 + TURN_JUDGE_V1 + SMART_TV_V1
             try:
                 payload = self._read_json()
             except ValueError as error:
@@ -1985,6 +2251,10 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
                     self._send_json({"token": token, "api_version": version, "model": live_setting("live_model"),
                                      "voice": live_setting("live_voice"), "system": live_system_text(),
                                      "emotions": EMOTIONS, "actions": ROOM_ACTIONS})
+                elif path == "/draw":
+                    svg, who = make_drawing(payload.get("what"))
+                    print("TV drawing (%s): %s" % (who, str(payload.get("what"))[:60]))
+                    self._send_json({"svg": svg, "by": who})
                 elif path == "/judge":
                     verdict, who = judge_turn(payload.get("heard"), payload.get("her"), bool(payload.get("show")))
                     print("Turn judge (%s): %s -> %s (%s)" % (who, str(payload.get("heard"))[:60], verdict["do"], verdict["why"]))
@@ -2057,7 +2327,7 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
             show = None
             for p in ([provider, "ollama"] if provider != "ollama" else ["ollama"]):
                 try:
-                    show = make_show(source, p, str(payload.get("ask") or "")[:500])
+                    show = make_show(source, p, str(payload.get("ask") or "")[:500], payload.get("shelf") or [])
                     print("Presentation written by %s: %d lines." % (p, len(show["lines"])))
                     break
                 except Exception as error:
