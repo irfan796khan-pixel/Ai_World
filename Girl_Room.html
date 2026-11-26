@@ -2054,14 +2054,27 @@ async function whisper(f32) {                 // VoiceStudio speech-to-text (Ope
 // Tune in the console: AIWorld.echo.limit = 0.5 (share of heard word pairs that are hers; lower drops more), AIWorld.echo.seconds = 45
 const ECHO = { lines: [], limit: 0.5, seconds: 45, dropped: 0 };
 const echoPairs = (t) => { const w = norm(t).split(' ').filter(Boolean), out = []; for (let i = 1; i < w.length; i++) out.push(w[i - 1] + ' ' + w[i]); return out; };   // word pairs in order: an echo copies her phrases, you do not
+// ECHO_V3: short echoes ("okay I'm talking") used to always get through (under 3 word pairs were never checked).
+// Now every word she says is remembered for 12 s; a short piece the mic hears is her echo when nearly all its
+// words are her recent words AND she is talking or stopped less than 4 s ago.
+ECHO.words = []; ECHO.lastTalk = 0;
+function herWords(text) { const now = Date.now(); for (const w of norm(text).split(' ')) if (w) ECHO.words.push({ w, t: now }); ECHO.words = ECHO.words.filter(x => now - x.t < 12000).slice(-300); }
+window.AIWorld.onFrame.push(() => { if (sheTalks()) ECHO.lastTalk = Date.now(); });
 function herSaid(text) {
+  herWords(text);
   const p = echoPairs(text), now = Date.now();
   if (p.length) ECHO.lines.push({ t: now, p: new Set(p) });
   ECHO.lines = ECHO.lines.filter(x => now - x.t < ECHO.seconds * 1000).slice(-40);
 }
 function isEcho(text, strict) {                   // strict: she is talking right now, so a smaller match already counts as her echo
   const p = echoPairs(text), now = Date.now();
-  if (p.length < 3) return false;                 // "stop", "yes", "hey you" always get through
+  if (p.length < 3) {                             // ECHO_V3: short piece: check her recent words
+    const ws = norm(text).split(' ').filter(Boolean);
+    if (!ws.length || now - ECHO.lastTalk > 4000) return false;
+    if (ws.length <= 2 && STOPWORDS.test(text)) return false;   // "stop", "wait" always get through
+    const mine = new Set(ECHO.words.filter(x => now - x.t < 12000).map(x => x.w));
+    return ws.filter(w => mine.has(w)).length / ws.length >= 0.75;
+  }
   const mine = new Set();
   for (const x of ECHO.lines) if (now - x.t < ECHO.seconds * 1000) x.p.forEach(y => mine.add(y));
   if (!mine.size) return false;
@@ -3929,8 +3942,8 @@ window.addEventListener('resize', () => {
     playAt: 0, nodes: [], userText: '', herText: '', handle: null, plain: false, closing: false, retries: 0,
     bargeLevel: 0.07, greet: true, engine: null, startedAt: 0, lastAudioAt: 0,
     // BARGE_IN_V2 + ECHO_GATE_V2
-    chunks: [], couple: 0.6, run: 0, ring: [], muteOld: false, muteOldUntil: 0, tailUntil: 0, openUntil: 0,
-    turnActed: false, backupTimer: 0, backupDone: false, bargeFrames: 3, tailMs: 450,
+    chunks: [], couple: 1.0, run: 0, ring: [], muteOld: false, muteOldUntil: 0, tailUntil: 0, openUntil: 0,
+    turnActed: false, backupTimer: 0, backupDone: false, bargeFrames: 4, tailMs: 600,
     // HER_EARS_V1: when her ears (Whisper large-v3-turbo on this laptop) are running, Gemini gets your words as text
     // from Whisper instead of your raw voice. Her voice still comes from Gemini (fast). Console: AIWorld.geminiLive.ears = false
     ears: false, earsWanted: (() => { try { return localStorage.getItem('aiworld_ears') !== 'off'; } catch (e) { return true; } })() };
@@ -4020,11 +4033,15 @@ window.addEventListener('resize', () => {
     if (GL.muteOld && performance.now() < GL.muteOldUntil) return;   // the rest of the answer you cut off: never play it
     GL.muteOld = false;
     const ctx = GL.ctx || voiceCtx(), i16 = new Int16Array(buf), f = new Float32Array(i16.length);
-    let sum = 0; for (let i = 0; i < i16.length; i++) { f[i] = i16[i] / 32768; sum += f[i] * f[i]; }
+    // ECHO_V3: her loudness in 40 ms steps (a whole piece's average hid her loud syllables, which then looked like you)
+    const step = Math.max(1, Math.round(rate * 0.04)), lv = [];
+    for (let i = 0; i < i16.length; i++) f[i] = i16[i] / 32768;
+    for (let i = 0; i < f.length; i += step) { let q = 0, n = Math.min(step, f.length - i); for (let k = 0; k < n; k++) q += f[i + k] * f[i + k]; lv.push(Math.sqrt(q / n)); }
     const ab = ctx.createBuffer(1, f.length, rate); ab.copyToChannel(f, 0);
     const s = ctx.createBufferSource(); s.buffer = ab; s.connect(duckNode(ctx));
     const at = Math.max(ctx.currentTime + 0.03, GL.playAt); s.start(at); GL.playAt = at + ab.duration;
-    GL.chunks.push({ a: at, b: at + ab.duration, rms: Math.sqrt(sum / Math.max(1, f.length)) });
+    if (!GL.nodes.length) GL.openUntil = 0;            // ECHO_V3: a new answer starts: the mic is no longer held open for you
+    GL.chunks.push({ a: at, b: at + ab.duration, lv, step: step / rate });
     if (GL.chunks.length > 400) GL.chunks.splice(0, 200);
     GL.nodes.push(s); VOICE.src = s; FX.talking = true; GL.lastAudioAt = performance.now();
     s.onended = () => {
@@ -4041,7 +4058,12 @@ window.addEventListener('resize', () => {
   function outLevel() {                                    // loudness of her voice playing at this moment (0 when quiet)
     const ctx = GL.ctx; if (!ctx) return 0; const t = ctx.currentTime;
     GL.chunks = GL.chunks.filter(c => c.b > t - 0.5);
-    let m = 0; for (const c of GL.chunks) if (c.a - 0.15 <= t && c.b + 0.25 >= t) m = Math.max(m, c.rms);   // a little slack for speaker delay
+    let m = 0;                                           // loudest 40 ms of her voice from 0.25 s ago to now (speaker + mic delay)
+    for (const c of GL.chunks) {
+      if (c.b < t - 0.25 || c.a > t + 0.05) continue;
+      const i0 = Math.max(0, Math.floor((t - 0.25 - c.a) / c.step)), i1 = Math.min(c.lv.length - 1, Math.ceil((t + 0.05 - c.a) / c.step));
+      for (let i = i0; i <= i1; i++) m = Math.max(m, c.lv[i]);
+    }
     return m;
   }
   function bargeIn() {                                     // you talk: she stops at once, the rest of her old answer is dropped
@@ -4157,6 +4179,7 @@ window.addEventListener('resize', () => {
       backupLater();
     }
     if (sc.outputTranscription && sc.outputTranscription.text) { GL.herText += sc.outputTranscription.text; showBubble(GL.herText.trim(), 30);
+      try { herWords(sc.outputTranscription.text); } catch (e) {}   // ECHO_V3: her words are known the moment she says them
       if (/[.!?]\s*$/.test(GL.herText)) { try { herSaid(GL.herText.split(/(?<=[.!?])\s+/).slice(-2).join(' ')); } catch (e) {} } }
     for (const p of (sc.modelTurn && sc.modelTurn.parts) || []) {
       if (p.inlineData && /^audio\/pcm/.test(p.inlineData.mimeType || '')) {
