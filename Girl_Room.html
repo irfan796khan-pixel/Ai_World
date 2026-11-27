@@ -2056,40 +2056,40 @@ async function whisper(f32) {                 // VoiceStudio speech-to-text (Ope
   if (!r.ok) throw new Error('transcription ' + r.status + ': ' + (await r.text()).slice(0, 200));
   const j = await r.json(); return String(j.text || '').trim();
 }
-// ECHO_FILTER_V1: on laptop speakers the mic hears HER voice, and speech-to-text often finishes after she stops,
-// so her own line came back as "you said ..." and she roasted you for repeating her.
-// Now: everything she said in the last 45 s is remembered; if what the mic heard is mostly her words, it is dropped.
-// Tune in the console: AIWorld.echo.limit = 0.5 (share of heard word pairs that are hers; lower drops more), AIWorld.echo.seconds = 45
-const ECHO = { lines: [], limit: 0.5, seconds: 45, dropped: 0 };
-const echoPairs = (t) => { const w = norm(t).split(' ').filter(Boolean), out = []; for (let i = 1; i < w.length; i++) out.push(w[i - 1] + ' ' + w[i]); return out; };   // word pairs in order: an echo copies her phrases, you do not
-// ECHO_V3: short echoes ("okay I'm talking") used to always get through (under 3 word pairs were never checked).
-// Now every word she says is remembered for 12 s; a short piece the mic hears is her echo when nearly all its
-// words are her recent words AND she is talking or stopped less than 4 s ago.
-ECHO.words = []; ECHO.lastTalk = 0;
-function herWords(text) { const now = Date.now(); for (const w of norm(text).split(' ')) if (w) ECHO.words.push({ w, t: now }); ECHO.words = ECHO.words.filter(x => now - x.t < 12000).slice(-300); }
+// ONE_EAR_V1: the mic hears everything, her voice and yours. Every word she says is remembered (in order, for 30 s).
+// What the mic hears is cleaned: her words are taken out, only the words that are NOT hers are kept.
+//   - words that come in the same order as she said them (2 or more in a row) are hers
+//   - a short piece (1 to 3 words) made only of her words, while she talks or just after, is hers
+//   - "stop", "wait"... always stay; if only "um", "the", "okay"... is left, it is dropped
+// Console: AIWorld.echo.log() shows what was heard and what was kept.
+const ECHO = { words: [], lastTalk: 0, dropped: 0, trimmed: 0, last: [] };
+const FILLER = /^(um+|uh+|hmm+|ah+|oh|eh|the|a|an|and|so|like|okay|ok|yeah|but|i|you|it|is)$/;
+function herWords(text) { const now = Date.now(); for (const w of norm(text).split(' ')) if (w) ECHO.words.push({ w, t: now }); ECHO.words = ECHO.words.filter(x => now - x.t < 30000).slice(-500); }
+function herSaid(text) { herWords(text); }
 window.AIWorld.onFrame.push(() => { if (sheTalks()) ECHO.lastTalk = Date.now(); });
-function herSaid(text) {
-  herWords(text);
-  const p = echoPairs(text), now = Date.now();
-  if (p.length) ECHO.lines.push({ t: now, p: new Set(p) });
-  ECHO.lines = ECHO.lines.filter(x => now - x.t < ECHO.seconds * 1000).slice(-40);
-}
-function isEcho(text, strict) {                   // strict: she is talking right now, so a smaller match already counts as her echo
-  const p = echoPairs(text), now = Date.now();
-  if (p.length < 3) {                             // ECHO_V3: short piece: check her recent words
-    const ws = norm(text).split(' ').filter(Boolean);
-    if (!ws.length || now - ECHO.lastTalk > 4000) return false;
-    if (ws.length <= 2 && STOPWORDS.test(text)) return false;   // "stop", "wait" always get through
-    const mine = new Set(ECHO.words.filter(x => now - x.t < 12000).map(x => x.w));
-    return ws.filter(w => mine.has(w)).length / ws.length >= 0.75;
+function stripHer(text) {
+  const now = Date.now(), hw = norm(text).split(' ').filter(Boolean), n = hw.length;
+  if (!n) return '';
+  const her = ECHO.words.filter(x => now - x.t < 30000).map(x => x.w);
+  if (!her.length) return text;
+  const herSet = new Set(her), herPairs = new Set();
+  for (let i = 1; i < her.length; i++) herPairs.add(her[i - 1] + ' ' + her[i]);
+  const mark = new Array(n).fill(false), recent = now - ECHO.lastTalk < 5000;
+  for (let i = 0; i + 1 < n; i++) if (herPairs.has(hw[i] + ' ' + hw[i + 1])) mark[i] = mark[i + 1] = true;   // her words in her order
+  for (let i = 1; i + 1 < n; i++) if (!mark[i] && mark[i - 1] && mark[i + 1] && herSet.has(hw[i])) mark[i] = true;   // a word Whisper changed in the middle of her line
+  if (n <= 3 && recent && hw.every(w => herSet.has(w) && !STOPWORDS.test(w))) mark.fill(true);   // a short bit of her line ("stop" alone stays yours)
+  if (!mark.some(Boolean)) {                                              // nothing of hers: keep your words exactly
+    if (recent && hw.every(w => FILLER.test(w))) { ECHO.dropped++; return ''; }   // only "um", "okay"... while she talks: nothing for her
+    return text;
   }
-  const mine = new Set();
-  for (const x of ECHO.lines) if (now - x.t < ECHO.seconds * 1000) x.p.forEach(y => mine.add(y));
-  if (!mine.size) return false;
-  const hit = p.filter(y => mine.has(y)).length;
-  if (strict) return hit >= 2 && hit / p.length >= ECHO.limit * 0.6;
-  return hit >= 3 && hit / p.length >= ECHO.limit;   // at least 3 of her word pairs, and most of what was heard
+  const kept = hw.filter((w, i) => !mark[i]);
+  const out = kept.every(w => FILLER.test(w)) ? '' : kept.join(' ');
+  if (out) ECHO.trimmed++; else ECHO.dropped++;
+  ECHO.last.push({ t: new Date().toLocaleTimeString(), heard: text, kept: out }); ECHO.last = ECHO.last.slice(-20);
+  console.log('live: heard "' + text + '" -> her words removed -> ' + (out ? '"' + out + '"' : '(nothing of yours)'));
+  return out;
 }
+ECHO.log = () => ECHO.last.slice();
 window.AIWorld.echo = ECHO;
 const STOPWORDS = /\b(stop|no+|wait|listen|shut up|enough|quiet|hold on)\b/i;
 // ============================================================================
@@ -2144,11 +2144,10 @@ async function judgeAndAct(text) {
   const d = await judgeDecide(text);
   JUDGE.log.push({ t: new Date().toLocaleTimeString(), heard: text, do: d.do, why: d.why || '', by: d.by || '' }); JUDGE.log = JUDGE.log.slice(-30);
   console.log('turn judge: "' + text + '" -> ' + d.do + (d.why ? ' (' + d.why + ')' : '') + ' [' + (d.by || '') + ']');
-  const gl = window.AIWorld.geminiLive;
-  if (!sheTalks() && d.do !== 'stop') { if (gl && gl.unduck) gl.unduck(); if (d.do !== 'ignore') return deliverHeard(text); liveIdle(); return; }   // she finished meanwhile
-  if (d.do === 'ignore') { if (gl && gl.unduck) gl.unduck(); liveIdle(); return; }
+  if (!sheTalks() && d.do !== 'stop') { if (d.do !== 'ignore') return deliverHeard(text); liveIdle(); return; }   // she finished meanwhile
+  if (d.do === 'ignore') { liveIdle(); return; }
   if (d.do === 'stop') { if (SHOW.on) stopShow(); else stopVoices(); liveIdle(); return; }
-  if (d.do === 'later') { if (gl && gl.unduck) gl.unduck(); JUDGE.later.push(text); liveText('Got it - after this…'); setTimeout(liveIdle, 2500); return; }
+  if (d.do === 'later') { JUDGE.later.push(text); liveText('Got it - after this…'); setTimeout(liveIdle, 2500); return; }
   if (SHOW.on) return interruptShow(text);            // now
   stopVoices(); return deliverHeard(text);
 }
@@ -2166,7 +2165,8 @@ function liveSaid(text) {                     // one thing you said: show it, th
   text = String(text || '').replace(/\s+/g, ' ').trim();
   if (!text || text.length < 2 || JUNK.test(text)) { liveIdle(); return; }
   const talking = sheTalks();
-  if (isEcho(text, talking)) { ECHO.dropped++; console.log('live: ignored her own voice from the speakers:', text); liveIdle(); return; }
+  text = stripHer(text);                          // ONE_EAR_V1: only the words that are not hers
+  if (!text || text.length < 2) { liveIdle(); return; }
   if (talking && JUDGE.on) return judgeAndAct(text);   // TURN_JUDGE_V1: an AI decides now / later / ignore / stop
   if (talking && STOPWORDS.test(text)) { console.log('live: you said stop, she stops:', text); stopVoices(); }   // STOP_WORDS_V1: no 4 s wait for "stop"
   if (TALK.show) {                                // her presentation: only "stop" words can cut it, everything else waits
@@ -2229,7 +2229,7 @@ function startBrowserRec() {                  // backup: Chrome / Edge built-in 
   r.onresult = (ev) => {
     for (let i = ev.resultIndex; i < ev.results.length; i++) {
       const res = ev.results[i];
-      if (!res.isFinal && sheTalks() && STOPWORDS.test(res[0].transcript) && !isEcho(res[0].transcript, true)) { console.log('live: you said stop (fast):', res[0].transcript); stopVoices(); }   // STOP_WORDS_V1
+      if (!res.isFinal && sheTalks() && STOPWORDS.test(res[0].transcript) && STOPWORDS.test(stripHer(res[0].transcript))) { console.log('live: you said stop (fast):', res[0].transcript); stopVoices(); }   // STOP_WORDS_V1
       if (!res.isFinal) { if (canHear()) liveText('Listening…'); if (LIVE.joinTimer && LIVE.parts.length) { clearTimeout(LIVE.joinTimer); LIVE.joinTimer = setTimeout(sendHeard, Math.max(0, LIVE.wait * 1000 - 400)); } continue; }   // still talking: keep waiting
       if (canHear()) liveSaid(res[0].transcript); else liveIdle();
     }
@@ -4209,8 +4209,10 @@ window.addEventListener('resize', () => {
 <script id="geminiLive">
 // ============================================================================
 // GEMINI_LIVE_V1: fast live voice chat (like Gemini Live / Tesla Grok)
-//   One open line to Google's Gemini Live: your voice goes up while you talk, her voice comes back
-//   while it is being made. No "speech -> text -> brain -> voice" waiting. Talk over her and she stops.
+//   One open line to Google's Gemini Live; her voice comes back while it is being made.
+//   ONE_EAR_V1 (simple): Gemini never gets raw sound. One listener (Whisper "her ears", or the browser's speech
+//   recognition if her ears are not running) hears EVERYTHING, her voice and yours. Then her own words are taken
+//   out (stripHer), and only the words that are not hers go to Gemini as text.
 //   - Brain.py /live_token gives a short-lived Google token (the real key never comes to this page)
 //     plus her personality, today's memory and her old lines (so she stays the same girl and does not repeat).
 //   - Her voice plays through the same sound path as before, so her mouth follows the real sound.
@@ -4219,19 +4221,14 @@ window.addEventListener('resize', () => {
 //     then Venice, Ollama only last); she says the answer.
 //   - Every finished turn goes to Brain.py /live_log (day memory + no-repeat list).
 //   Turn it on/off in the API key box: "Live chat engine". The old engine (mic -> Whisper -> brain) still works.
-//   Console: AIWorld.geminiLive.start() / .stop() / .bargeLevel = 0.06 (lower = easier to interrupt her)
+//   Console: AIWorld.geminiLive.start() / .stop()
 // ============================================================================
 (function () {
   const BRAIN = 'http://localhost:5005';
-  const GL = { on: false, ws: null, ready: false, ctx: null, mic: null, node: null, sink: null, src: null,
+  const GL = { on: false, ws: null, ready: false, ctx: null,
     playAt: 0, nodes: [], userText: '', herText: '', handle: null, plain: false, closing: false, retries: 0,
-    bargeLevel: 0.07, greet: true, engine: null, startedAt: 0, lastAudioAt: 0,
-    // BARGE_IN_V2 + ECHO_GATE_V2
-    chunks: [], couple: 1.0, run: 0, ring: [], muteOld: false, muteOldUntil: 0, tailUntil: 0, openUntil: 0,
-    turnActed: false, backupTimer: 0, backupDone: false, bargeFrames: 4, tailMs: 600,
-    // HER_EARS_V1: when her ears (Whisper large-v3-turbo on this laptop) are running, Gemini gets your words as text
-    // from Whisper instead of your raw voice. Her voice still comes from Gemini (fast). Console: AIWorld.geminiLive.ears = false
-    ears: false, earsWanted: (() => { try { return localStorage.getItem('aiworld_ears') !== 'off'; } catch (e) { return true; } })() };
+    greet: true, engine: null, startedAt: 0, lastAudioAt: 0, muteOld: false, muteOldUntil: 0,
+    turnActed: false, backupTimer: 0, backupDone: false };
   const liveBtn = document.getElementById('live');
   const status = (s) => { if (liveBtn) { liveBtn.textContent = s; liveBtn.classList.toggle('rec', GL.on); } };
   const herTalking = () => GL.nodes.length > 0;
@@ -4245,123 +4242,30 @@ window.addEventListener('resize', () => {
     return GL.engine;
   }
 
-  // ---- mic: 16 kHz, 16-bit PCM in small pieces (about 40 ms), made in an AudioWorklet (its own audio thread)
-  const WORKLET = `
-  class MicPcm extends AudioWorkletProcessor {
-    constructor() { super(); this.step = sampleRate / 16000; this.pos = 0; this.buf = new Int16Array(640); this.n = 0; this.sum = 0; }
-    process(inputs) {
-      const ch = inputs[0] && inputs[0][0]; if (!ch) return true;
-      for (; this.pos < ch.length; this.pos += this.step) {
-        const s = Math.max(-1, Math.min(1, ch[Math.floor(this.pos)]));
-        this.sum += s * s; this.buf[this.n++] = s < 0 ? s * 0x8000 : s * 0x7fff;
-        if (this.n === this.buf.length) {
-          this.port.postMessage({ pcm: this.buf.buffer, rms: Math.sqrt(this.sum / this.n) }, [this.buf.buffer]);
-          this.buf = new Int16Array(640); this.n = 0; this.sum = 0;
-        }
-      }
-      this.pos -= ch.length; return true;
-    }
-  }
-  registerProcessor('mic-pcm', MicPcm);`;
-  const b64 = (buf) => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
-  const unb64 = (str) => { const s = atob(str), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u.buffer; };
-
-  async function startMic() {
-    GL.ctx = voiceCtx();                                   // the same audio system as her voice (face follows it)
-    GL.mic = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-    if (!GL.ctx.__micPcm) { await GL.ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' }))); GL.ctx.__micPcm = true; }
-    GL.src = GL.ctx.createMediaStreamSource(GL.mic);
-    GL.node = new AudioWorkletNode(GL.ctx, 'mic-pcm');
-    GL.sink = GL.ctx.createGain(); GL.sink.gain.value = 0;   // the worklet must be in the graph to run; this keeps it silent
-    GL.src.connect(GL.node); GL.node.connect(GL.sink); GL.sink.connect(GL.ctx.destination);
-    GL.node.port.onmessage = (ev) => {
-      if (!GL.ready || !GL.ws || GL.ws.readyState !== 1) return;
-      const pcm = ev.data.pcm, rms = ev.data.rms, now = performance.now();
-      let send = (buf) => GL.ws.send(JSON.stringify({ realtimeInput: { audio: { data: b64(buf), mimeType: 'audio/pcm;rate=16000' } } }));
-      const silent = () => send(new ArrayBuffer(pcm.byteLength));
-      // ECHO_GATE_V2: while she talks (and a short moment after, for the room echo) Google gets silence,
-      // so it never hears her own voice from the speakers. Only YOU talking over her opens the mic (BARGE_IN_V2).
-      const talking = herTalking(), inTail = now < GL.tailUntil;
-      if (GL.ears) { if (!talking) { GL.run = 0; return; } send = () => {}; }   // HER_EARS_V1: Whisper does the listening
-      else if (now < GL.openUntil || (!talking && !inTail)) { GL.run = 0; GL.ring = []; send(pcm); return; }
-      const out = outLevel();                              // how loud her voice is in the speakers right now
-      if (talking && out > 0.02) {                         // learn how much of her voice leaks into the mic (lowest ratio wins fast)
-        const ratio = rms / out;
-        GL.couple = ratio < GL.couple ? GL.couple * 0.7 + ratio * 0.3 : GL.couple + (ratio - GL.couple) * 0.004;
-        GL.couple = Math.min(2, Math.max(0.03, GL.couple));
-      }
-      const echo = GL.couple * out;
-      const you = rms > Math.max(GL.bargeLevel * 0.5, echo * 2.4 + 0.02);   // clearly louder than her echo = you
-      GL.ring.push(pcm); if (GL.ring.length > 8) GL.ring.shift();
-      GL.run = you ? GL.run + 1 : 0;
-      if (GL.ears && GL.run >= GL.bargeFrames) {           // TURN_JUDGE_V1: Whisper + the judge decide; until then she just gets quieter
-        if (!GL.duckUntil) console.log('live: you are talking - she gets quieter while the judge listens');
-        duck(0.3); GL.duckUntil = now + 7000; GL.run = 0; return;
-      }
-      if (GL.run >= GL.bargeFrames) {                      // about 120 ms of you: stop her NOW and let your words through
-        console.log('live: you talked over her, she stops (mic ' + rms.toFixed(3) + ', her echo ' + echo.toFixed(3) + ')');
-        bargeIn();
-        for (const b of GL.ring) send(b);                  // your first syllables are not lost
-        GL.ring = []; GL.run = 0; return;
-      }
-      silent();
-    };
-  }
-  function stopMic() {
-    try { GL.node && (GL.node.port.onmessage = null); GL.src && GL.src.disconnect(); GL.node && GL.node.disconnect(); GL.sink && GL.sink.disconnect(); } catch (e) {}
-    try { GL.mic && GL.mic.getTracks().forEach(t => t.stop()); } catch (e) {}
-    GL.mic = GL.src = GL.node = GL.sink = null;
-  }
-
   // ---- her voice: 24 kHz PCM pieces, played back to back through VOICE.analyser (so the mouth moves with it)
   function playPcm(buf, rate) {
-    if (GL.muteOld && performance.now() < GL.muteOldUntil) return;   // the rest of the answer you cut off: never play it
+    if (GL.muteOld && performance.now() < GL.muteOldUntil) return;   // the rest of an answer you cut off: never play it
     GL.muteOld = false;
-    const ctx = GL.ctx || voiceCtx(), i16 = new Int16Array(buf), f = new Float32Array(i16.length);
-    // ECHO_V3: her loudness in 40 ms steps (a whole piece's average hid her loud syllables, which then looked like you)
-    const step = Math.max(1, Math.round(rate * 0.04)), lv = [];
+    const ctx = GL.ctx || (GL.ctx = voiceCtx()), i16 = new Int16Array(buf), f = new Float32Array(i16.length);
     for (let i = 0; i < i16.length; i++) f[i] = i16[i] / 32768;
-    for (let i = 0; i < f.length; i += step) { let q = 0, n = Math.min(step, f.length - i); for (let k = 0; k < n; k++) q += f[i + k] * f[i + k]; lv.push(Math.sqrt(q / n)); }
     const ab = ctx.createBuffer(1, f.length, rate); ab.copyToChannel(f, 0);
-    const s = ctx.createBufferSource(); s.buffer = ab; s.connect(duckNode(ctx));
+    const s = ctx.createBufferSource(); s.buffer = ab; s.connect(VOICE.analyser);
     const at = Math.max(ctx.currentTime + 0.03, GL.playAt); s.start(at); GL.playAt = at + ab.duration;
-    if (!GL.nodes.length) GL.openUntil = 0;            // ECHO_V3: a new answer starts: the mic is no longer held open for you
-    GL.chunks.push({ a: at, b: at + ab.duration, lv, step: step / rate });
-    if (GL.chunks.length > 400) GL.chunks.splice(0, 200);
     GL.nodes.push(s); VOICE.src = s; FX.talking = true; GL.lastAudioAt = performance.now();
     s.onended = () => {
       GL.nodes = GL.nodes.filter(n => n !== s);
       if (GL.nodes.length) VOICE.src = GL.nodes[GL.nodes.length - 1];
-      else { if (VOICE.src === s) VOICE.src = null; FX.talking = false; GL.tailUntil = performance.now() + GL.tailMs; if (GL.on) status('Live: listening…'); }
+      else { if (VOICE.src === s) VOICE.src = null; FX.talking = false; if (GL.on) status('Live: listening…'); }
     };
   }
-  // TURN_JUDGE_V1: while the judge decides, her voice goes quieter instead of stopping (Whisper-ears mode)
-  function duckNode(ctx) { if (!GL.duck || GL.duck.context !== ctx) { GL.duck = ctx.createGain(); GL.duck.connect(VOICE.analyser); } return GL.duck; }
-  function duck(v) { if (!GL.duck) return; const t = GL.duck.context.currentTime; GL.duck.gain.cancelScheduledValues(t); GL.duck.gain.setTargetAtTime(v, t, 0.06); }
-  function unduck() { GL.duckUntil = 0; duck(1); }
-  setInterval(() => { if (GL.duckUntil && performance.now() > GL.duckUntil) unduck(); }, 250);   // no decision came: back to normal
-  function outLevel() {                                    // loudness of her voice playing at this moment (0 when quiet)
-    const ctx = GL.ctx; if (!ctx) return 0; const t = ctx.currentTime;
-    GL.chunks = GL.chunks.filter(c => c.b > t - 0.5);
-    let m = 0;                                           // loudest 40 ms of her voice from 0.25 s ago to now (speaker + mic delay)
-    for (const c of GL.chunks) {
-      if (c.b < t - 0.25 || c.a > t + 0.05) continue;
-      const i0 = Math.max(0, Math.floor((t - 0.25 - c.a) / c.step)), i1 = Math.min(c.lv.length - 1, Math.ceil((t + 0.05 - c.a) / c.step));
-      for (let i = i0; i <= i1; i++) m = Math.max(m, c.lv[i]);
-    }
-    return m;
-  }
-  function bargeIn() {                                     // you talk: she stops at once, the rest of her old answer is dropped
-    cutVoice(); unduck(); GL.muteOld = true; GL.muteOldUntil = performance.now() + 8000;
-    GL.openUntil = performance.now() + 2500; GL.tailUntil = 0;
-    try { if (window.AIWorld.speakLevel) window.AIWorld.speakLevel(null); } catch (e) {}
-    status('Live: hearing you…');
+  function bargeIn() {                                     // the judge said "now" (or you typed): she stops, the rest of her old answer is dropped
+    cutVoice(); GL.muteOld = true; GL.muteOldUntil = performance.now() + 8000;
   }
   function cutVoice() {                                    // you talked over her: stop at once, drop what was waiting
     const list = GL.nodes; GL.nodes = [];
     for (const s of list) { try { s.onended = null; s.stop(); } catch (e) {} }
     if (list.includes(VOICE.src)) VOICE.src = null;
-    FX.talking = false; GL.playAt = 0; GL.chunks = [];
+    FX.talking = false; GL.playAt = 0;
   }
 
   // ---- tools she can call while she talks
@@ -4457,15 +4361,8 @@ window.addEventListener('resize', () => {
     if (m.toolCall) { onToolCall(m.toolCall); return; }
     const sc = m.serverContent; if (!sc) return;
     if (sc.interrupted) { cutVoice(); GL.muteOld = false; endTurn(); status('Live: listening…'); }
-    if (sc.inputTranscription && sc.inputTranscription.text) {
-      GL.userText += sc.inputTranscription.text; if (!herTalking()) status('Live: hearing you…');
-      // STOP_WORDS_V1: "stop", "no", "wait", "listen", "shut up" while she talks -> she stops at once
-      if (herTalking() && /\b(stop|no+|wait|listen|shut up|enough|quiet|hold on)\b/i.test(sc.inputTranscription.text)) bargeIn();
-      backupLater();
-    }
     if (sc.outputTranscription && sc.outputTranscription.text) { GL.herText += sc.outputTranscription.text; showBubble(GL.herText.trim(), 30);
-      try { herWords(sc.outputTranscription.text); } catch (e) {}   // ECHO_V3: her words are known the moment she says them
-      if (/[.!?]\s*$/.test(GL.herText)) { try { herSaid(GL.herText.split(/(?<=[.!?])\s+/).slice(-2).join(' ')); } catch (e) {} } }
+      try { herWords(sc.outputTranscription.text); } catch (e) {} }   // ONE_EAR_V1: her words are known the moment she says them
     for (const p of (sc.modelTurn && sc.modelTurn.parts) || []) {
       if (p.inlineData && /^audio\/pcm/.test(p.inlineData.mimeType || '')) {
         const rate = +(/rate=(\d+)/.exec(p.inlineData.mimeType) || [0, 24000])[1];
@@ -4498,7 +4395,7 @@ window.addEventListener('resize', () => {
     const setup = { model: 'models/' + j.model,
       generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: j.voice } } } },
       systemInstruction: { parts: [{ text: j.system }] }, tools: tools(j.actions || [], GL.plain),
-      inputAudioTranscription: {}, outputAudioTranscription: {}, sessionResumption: GL.handle ? { handle: GL.handle } : {} };
+      outputAudioTranscription: {}, sessionResumption: GL.handle ? { handle: GL.handle } : {} };
     if (!GL.plain) { setup.contextWindowCompression = { slidingWindow: {} };
       setup.realtimeInputConfig = { automaticActivityDetection: { silenceDurationMs: Math.round(((typeof LIVE !== 'undefined' && LIVE.wait) || 4) * 1000) } };   // WAIT_FOR_ME_V1: Gemini waits for you to finish too
     }
@@ -4525,31 +4422,22 @@ window.addEventListener('resize', () => {
     if (GL.on) return true;
     GL.on = true; GL.closing = false; GL.greet = true; GL.handle = null; GL.plain = false; GL.retries = 0; GL.startedAt = Date.now();
     try { stopVoices(); } catch (e) {}
-    try { await startMic(); }
-    catch (e) { GL.on = false; status('Live chat'); sayMain("I need the microphone for live chat. Allow it in the browser."); return false; }
     try { await connect(); await startEars(); }
     catch (e) {
-      console.warn('Gemini Live could not start:', e); stopMic(); GL.on = false; status('Live chat');
+      console.warn('Gemini Live could not start:', e); try { window.AIWorld.live.stop(); } catch (x) {} GL.on = false; status('Live chat');
       showBubble('Gemini Live could not start: ' + e.message + ' — using the old live chat.', 8);
       try { return await window.AIWorld.live.start(); } catch (e2) { return false; }
     }
     return true;
   }
-  async function startEars() {                             // HER_EARS_V1
-    GL.ears = false;
-    if (!GL.earsWanted) return;
-    let ok = false; try { ok = (await fetch('v1/stt/health', { cache: 'no-store' })).ok; } catch (e) {}
-    if (!ok) { console.log('her ears: not running (setup_her_ears.bat) - Gemini listens by itself'); return; }
-    try { await window.AIWorld.live.start(); } catch (e) {}
-    GL.ears = window.AIWorld.live.isOn() && window.AIWorld.live.mode() === 'vad';
-    if (!GL.ears) { try { window.AIWorld.live.stop(); } catch (e) {} console.log('her ears: mic detector did not start - Gemini listens by itself'); return; }
-    console.log('her ears: Whisper is listening, Gemini gets your words as text');
-    status('Live: listening (Whisper)…');
+  async function startEars() {                             // ONE_EAR_V1: one listener for everything (Whisper, else the browser's)
+    if (!(await window.AIWorld.live.start())) throw new Error('no microphone');
+    console.log('live: one ear (' + window.AIWorld.live.mode() + ') hears everything; her own words are taken out, the rest goes to Gemini');
   }
   function stop() {
-    if (GL.ears) { GL.ears = false; try { window.AIWorld.live.stop(); } catch (e) {} }
+    try { window.AIWorld.live.stop(); } catch (e) {}
     GL.closing = true; GL.on = false; GL.ready = false;
-    endTurn(); cutVoice(); stopMic();
+    endTurn(); cutVoice();
     try { GL.ws && GL.ws.close(); } catch (e) {} GL.ws = null;
     status('Live chat');
   }
@@ -4585,10 +4473,7 @@ window.addEventListener('resize', () => {
   if (typeof sayEl !== 'undefined' && sayEl) sayEl.addEventListener('keydown', typedLive, true);
 
   window.AIWorld.geminiLive = { start, stop, isOn: () => GL.on, state: () => ({ on: GL.on, ready: GL.ready, engine: GL.engine, plain: GL.plain, talking: herTalking() }),
-    get bargeLevel() { return GL.bargeLevel; }, set bargeLevel(v) { GL.bargeLevel = Math.max(0, +v || 0); },
-    echo: () => ({ couple: +GL.couple.toFixed(3), herLevel: +outLevel().toFixed(3) }),
-    duck, unduck,
-    get ears() { return GL.ears; }, set ears(v) { GL.earsWanted = !!v; try { localStorage.setItem('aiworld_ears', v ? 'on' : 'off'); } catch (e) {} console.log('her ears ' + (v ? 'on' : 'off') + ' - restart Live chat'); } };
+    bargeIn };
 })();
 </script>
 </body>
