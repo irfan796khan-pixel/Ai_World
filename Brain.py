@@ -7,7 +7,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 
@@ -276,6 +276,7 @@ history = []
 # Fast: each reply sends only the last 20 back-and-forths + the summary, not the whole day.
 import datetime
 import threading
+CHAT_LOCK = threading.RLock()   # BRAIN_THREADS_V1: chat requests that change her memory, one at a time
 MEMORY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brain_memory")
 SUMMARY_EVERY = 10          # update the summary after every 10 new messages
 SUMMARY_MAX_LINES = 20      # FAST: the summary reads at most the last 20 new lines (it used to grow without end and time out)
@@ -2177,7 +2178,19 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
         else:
             self._send_json({"error": "Not found"}, 404)
 
+    # BRAIN_THREADS_V1: the brain answers many requests at once. Before, one slow job (writing a presentation,
+    # a TV drawing, a hard question) made every other request wait, even the page's "are you there?" check every
+    # 5 s, so the room showed "Brain: off" in the middle of talking. Chat requests that change her memory still go
+    # one at a time (CHAT_LOCK), so her chat history and files never get mixed up.
+    PARALLEL = ("/judge", "/draw", "/think", "/present", "/settings")
+
     def do_POST(self):
+        if urlparse(self.path).path in self.PARALLEL:
+            return self._do_post()
+        with CHAT_LOCK:
+            return self._do_post()
+
+    def _do_post(self):
         path = urlparse(self.path).path
         if path == "/settings":            # API_KEY_V1: save key / brain choice from the room
             try:
@@ -2387,7 +2400,8 @@ def serve_brain(host="0.0.0.0", port=5005, provider=None):
         os.environ["BRAIN_PROVIDER"] = provider
 
     print(f"Hugh Mann brain server listening on http://{host}:{port}/brain")
-    httpd = HTTPServer((host, port), BrainHTTPHandler)
+    httpd = ThreadingHTTPServer((host, port), BrainHTTPHandler)   # BRAIN_THREADS_V1
+    httpd.daemon_threads = True
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
