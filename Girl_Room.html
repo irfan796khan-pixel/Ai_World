@@ -424,8 +424,56 @@ function voiceCtx() {
   if (VOICE.ctx.state === 'suspended') VOICE.ctx.resume();
   return VOICE.ctx;
 }
+// ============================================================================
+// ECHO_LOOP_V1: why she heard herself. Chrome's echo canceller only removes sound that came in through a WebRTC call
+// (a "remote peer"); her voice was played straight from Web Audio, so Chrome never removed it from the mic.
+// Fix, the way call apps do it: her voice goes through a tiny WebRTC call inside this page (pc1 -> pc2) and is played
+// from that call. Now Chrome's own echo canceller knows her voice and takes it out of the mic.
+// The mic also asks for echoCancellation "all" (newer Chrome: remove ALL sound this computer plays; older: same as true).
+// If the call cannot start, her voice plays the old way. Console: AIWorld.echoLoop() shows the state.
+// ============================================================================
+const LOOP = { mode: 'direct', pc1: null, pc2: null, el: null, dest: null, starting: false, mic: '' };
+async function startEchoLoop() {
+  if (LOOP.starting || LOOP.mode === 'loop' || !window.RTCPeerConnection) return;
+  LOOP.starting = true;
+  try {
+    const ctx = voiceCtx();
+    LOOP.dest = ctx.createMediaStreamDestination();
+    const pc1 = new RTCPeerConnection(), pc2 = new RTCPeerConnection();
+    LOOP.pc1 = pc1; LOOP.pc2 = pc2;
+    pc1.onicecandidate = (e) => { if (e.candidate) pc2.addIceCandidate(e.candidate).catch(() => {}); };
+    pc2.onicecandidate = (e) => { if (e.candidate) pc1.addIceCandidate(e.candidate).catch(() => {}); };
+    const got = new Promise((ok) => { pc2.ontrack = (e) => ok(e.streams[0] || new MediaStream([e.track])); });
+    const tr = LOOP.dest.stream.getAudioTracks()[0]; pc1.addTrack(tr, LOOP.dest.stream);
+    const hq = (sdp) => sdp.replace(/a=fmtp:(\d+) (.*useinbandfec=1.*)/, (m, pt, rest) => 'a=fmtp:' + pt + ' ' + rest + ';maxaveragebitrate=128000;stereo=0');   // clear voice (Opus 128 kbit/s)
+    const offer = await pc1.createOffer(); offer.sdp = hq(offer.sdp); await pc1.setLocalDescription(offer); await pc2.setRemoteDescription(offer);
+    const answer = await pc2.createAnswer(); answer.sdp = hq(answer.sdp); await pc2.setLocalDescription(answer); await pc1.setRemoteDescription(answer);
+    const stream = await Promise.race([got, new Promise((_, no) => setTimeout(() => no(new Error('no call audio in 5 s')), 5000))]);
+    const el = document.createElement('audio'); el.autoplay = true; el.style.display = 'none'; el.srcObject = stream; document.body.appendChild(el);
+    await el.play();
+    LOOP.el = el;
+    VOICE.analyser.connect(LOOP.dest);                        // her voice now goes through the call ...
+    try { VOICE.analyser.disconnect(ctx.destination); } catch (e) {}   // ... and no longer straight to the speakers
+    LOOP.mode = 'loop';
+    console.log('echo loop: her voice plays through a WebRTC call, so Chrome removes it from the mic');
+  } catch (e) {
+    console.warn('echo loop could not start, her voice plays the old way:', e);
+    try { LOOP.pc1 && LOOP.pc1.close(); LOOP.pc2 && LOOP.pc2.close(); } catch (x) {}
+    LOOP.mode = 'direct';
+  }
+  LOOP.starting = false;
+}
+async function echoMic() {                                 // the mic for listening, with the strongest echo removal Chrome has
+  const base = { channelCount: 1, autoGainControl: true, noiseSuppression: true };
+  let st;
+  try { st = await navigator.mediaDevices.getUserMedia({ audio: Object.assign({ echoCancellation: 'all' }, base) }); }
+  catch (e) { st = await navigator.mediaDevices.getUserMedia({ audio: Object.assign({ echoCancellation: true }, base) }); }
+  try { const s = st.getAudioTracks()[0].getSettings(); LOOP.mic = String(s.echoCancellation); console.log('mic echo removal:', s.echoCancellation, s.echoCancellationType || ''); } catch (e) {}
+  return st;
+}
+const echoLoopState = () => ({ mode: LOOP.mode, micEcho: LOOP.mic, playing: !!(LOOP.el && !LOOP.el.paused) });   // AIWorld.echoLoop()
 // browsers only allow sound after the person clicks or presses a key once
-['pointerdown', 'keydown'].forEach(ev => window.addEventListener(ev, () => { try { voiceCtx(); } catch (e) {} }, { once: true }));
+['pointerdown', 'keydown'].forEach(ev => window.addEventListener(ev, () => { try { voiceCtx(); startEchoLoop(); } catch (e) {} }, { once: true }));
 
 async function speak(audio) {             // audio: a URL, a Blob (e.g. from ElevenLabs), or an ArrayBuffer
   const ctx = voiceCtx();
@@ -2203,6 +2251,7 @@ async function startVad() {                   // best way: Silero VAD + VoiceStu
   }
   LIVE.vad = await window.vad.MicVAD.new({
     model: 'v5', positiveSpeechThreshold: 0.6, negativeSpeechThreshold: 0.4, redemptionMs: Math.round(Math.min(LIVE.wait, 0.8) * 1000), minSpeechMs: 300,   /* WAIT_FOR_ME_V1: silence before your turn ends */ preSpeechPadMs: 300,
+    getStream: echoMic, resumeStream: echoMic,               // ECHO_LOOP_V1: our mic with the strongest echo removal
     onnxWASMBasePath: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/',
     baseAssetPath: 'https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/',
     onSpeechRealStart: () => { if (canHear()) liveText('Listening…'); if (LIVE.joinTimer && LIVE.parts.length) { clearTimeout(LIVE.joinTimer); LIVE.joinTimer = setTimeout(sendHeard, Math.max(0, LIVE.wait * 1000 - 800)); } },   // still talking: keep waiting   // LISTEN_WHILE_TALK_V1: she is not cut on any sound (it may be her own echo); she stops when your words come in and are not hers
@@ -2243,7 +2292,7 @@ function stopBrowserRec() { const r = LIVE.rec; LIVE.rec = null; try { r && r.st
 async function liveOn(prefer) {
   if (LIVE.on) return true;
   LIVE.on = true; liveText('Starting mic…');
-  try { voiceCtx(); } catch (e) {}
+  try { voiceCtx(); await startEchoLoop(); } catch (e) {}
   let ok = false;
   if (prefer !== 'browser') {                    // VoiceStudio does the speech-to-text: is it running? if not, use the browser at once
     let stt = false; try { stt = (await fetch('v1/stt/health')).ok; } catch (e) {}
@@ -2264,7 +2313,7 @@ window.AIWorld.live = { start: liveOn, stop: liveOff, isOn: () => LIVE.on, mode:
   said: liveSaid };
 window.AIWorld.body = (name, secs) => startBody(name, secs);
 window.AIWorld.bodyGestures = () => Object.keys(GESTURES);
-Object.assign(window.AIWorld, { hear, learn, say, record, quick: QUICK, brainUrl: null, onUnmatched: null, afterRender: [],
+Object.assign(window.AIWorld, { echoLoop: echoLoopState, hear, learn, say, record, quick: QUICK, brainUrl: null, onUnmatched: null, afterRender: [],
   quickList: () => [...QUICK.learned, ...QUICK.lib], forgetLearned() { QUICK.learned = []; localStorage.removeItem('aiworld_quick_learned'); } });
 
 // ============================================================================
