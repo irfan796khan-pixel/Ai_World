@@ -73,6 +73,9 @@ ROOM_ACTIONS = [
     "tv_slide",      # text: "Title | point | point" -> a slide on the TV
     "tv_draw",       # text: what to draw ("a horse", "my head and body as two pieces") -> she draws it live on the TV
     "tv_picture",    # text: what to show ("the Eiffel Tower") -> a real photo on the TV (her shelf first, then Wikipedia)
+    "sculpt",        # text: what to make ("a slice of pizza") -> a small 3D sculpture appears on the coffee table (SCULPT_V1)
+    "phone_call",    # a fake phone call: she pretends someone important is calling (to dodge a boring question)
+    "look_screen",   # look at his shared screen on the TV and react (SCREEN_SHARE_V1)
     "open_memory",   # text: words from the picture or note to open from her memory shelf
     "none"
 ]
@@ -190,6 +193,9 @@ point"), DRAW anything live, stroke by stroke, like a whiteboard cartoon (tv_dra
 "a house", "my head and my body as two separate pieces"), show a real photo of something (tv_picture, text = what),
 show a picture or note from your memory shelf (open_memory), show short words (tv_text), or turn on and off.
 When something is easier to see than to hear (how a thing looks, how parts fit, steps), use the TV.
+You can also SCULPT: a small 3D model of anything appears on your coffee table (sculpt, text = what). It is made
+of simple shapes, so it often looks a bit silly: roast your own sculpting when it does.
+He can share his computer screen onto your TV; when he asks, you look at it and comment (roast his code, his tabs).
 You always know what your TV shows right now (ROOM RIGHT NOW, or a "(TV now shows: ...)" note). If they ask what is
 on the TV or to explain it, describe it from that: what it is, the parts, where they are. Never say you cannot see it.
 Only when they ask: do not start talking about the TV on your own.
@@ -201,7 +207,9 @@ walk (target: sofa, window, plant, tv, table, ball, shelf, center, front),
 kick (target: ball), sit (target: sofa, or miss), lamp_on, lamp_off, tv_on,
 tv_off, tv_text (text), tv_slide (text), tv_draw (text), tv_picture (text),
 write_board (text), knock_glass, point (target), wave, face_me, trip, clean_up,
-explain (text: topic, a short lesson on the TV), open_memory (text).
+explain (text: topic, a short lesson on the TV), open_memory (text),
+sculpt (text: what to make; a small 3D sculpture appears on your coffee table), phone_call (a fake call),
+look_screen (look at his shared screen on your TV and react).
 Example: "draw me a horse" -> [{"do":"tv_draw","target":"","text":"a horse"}].
 Example: "kick the ball" -> actions [{"do":"kick","target":"ball","text":""}].
 Example: "go turn the light off and sit" -> lamp_off, then sit on sofa.
@@ -1349,6 +1357,8 @@ plant, floor lamp, whiteboard, memory shelf). To move or change your face, call 
   Pictures or notes from your memory shelf: open_memory with the words in text, one call per picture.
 - TV_AWARE_V1: notes like "(TV now shows: ...)" tell you what is on your TV. Do not answer a note by itself; use it when
   they ask what is on the TV or to explain it: describe what it is, the parts and where they are.
+- SCULPT_V1: sculpt (text = what) makes a small 3D model on your coffee table; phone_call = a fake phone call to dodge
+  a boring question (use it rarely, for a laugh).
 - YOUR SMART TV (SMART_TV_V1): tv_draw draws ANYTHING live on the TV (text = what to draw, e.g. "a horse"),
   tv_picture shows a real photo of something (text = what), tv_slide shows a slide (text "Title | point | point"),
   explain gives a short lesson on the TV (text = topic). When he says "draw ..." or "show me a picture of ...", use them.
@@ -1571,6 +1581,126 @@ def make_drawing(what):
     raise ValueError("No brain could draw it: " + " | ".join(tried))
 
 
+# SCULPT_V1: a small 3D model of anything, made ONLY of simple shapes described as data (never code the page runs).
+SCULPT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brain_memory", "sculptures")
+SCULPT_SHAPES = ("box", "sphere", "cylinder", "cone", "torus", "capsule")
+SCULPT_SYSTEM = """You build small 3D cartoon models out of simple shapes, for a 3D room. Return ONLY JSON:
+{"name": "short name", "desc": "one sentence: what it looks like", "parts": [
+  {"shape": "box|sphere|cylinder|cone|torus|capsule", "size": [width, height, depth], "pos": [x, y, z],
+   "rot": [x_degrees, y_degrees, z_degrees], "color": "#rrggbb"} ]}
+Rules: units are meters-ish, the whole model about 1 unit tall, standing on y = 0 (bottom at 0), centered on x = 0, z = 0.
+Every shape is a unit shape stretched by size: box 1x1x1, sphere diameter 1, cylinder and cone diameter 1 height 1
+(standing up), torus a ring of diameter 1 lying flat, capsule diameter 1 height 1. 6 to 40 parts. Bright cartoon colors.
+Make it recognizable: the right number of legs, ears, wheels, toppings. Eyes are small dark spheres."""
+
+
+def _num(v, d=0.0):
+    try:
+        v = float(v)
+        return v if v == v and abs(v) < 100 else d
+    except Exception:
+        return d
+
+
+def clean_sculpture(text):
+    text = re.sub(r"<think>.*?</think>", "", str(text or ""), flags=re.S)
+    data = json.loads(text[text.find("{"): text.rfind("}") + 1])
+    parts = []
+    for p in (data.get("parts") or [])[:60]:
+        if not isinstance(p, dict) or p.get("shape") not in SCULPT_SHAPES:
+            continue
+        size = [max(0.005, abs(_num(x, 0.1))) for x in (list(p.get("size") or [])[:3] + [0.1, 0.1, 0.1])[:3]]
+        pos = [_num(x) for x in (list(p.get("pos") or [])[:3] + [0, 0, 0])[:3]]
+        rot = [_num(x) for x in (list(p.get("rot") or [])[:3] + [0, 0, 0])[:3]]
+        color = str(p.get("color") or "#cccccc")
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+            color = "#cccccc"
+        parts.append({"shape": p["shape"], "size": size, "pos": pos, "rot": rot, "color": color})
+    if len(parts) < 2:
+        raise ValueError("sculpture too empty")
+    return {"name": str(data.get("name") or "")[:60], "desc": str(data.get("desc") or "")[:300], "parts": parts}
+
+
+def make_sculpture(what):
+    what = str(what or "").strip()[:160]
+    if not what:
+        raise ValueError("nothing to sculpt")
+    path = os.path.join(SCULPT_DIR, _slug(what) + ".json")
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            return json.load(f), "saved sculpture"
+    tried = []
+    for who in ("gemini", "openrouter"):
+        try:
+            if who == "gemini":
+                if not os.getenv("GEMINI_API_KEY"):
+                    continue
+                text, err = "", None
+                for model in dict.fromkeys(m for m in [os.getenv("GEMINI_MODEL", "").strip()] + GEMINI_MODELS[::-1] if m):
+                    try:
+                        payload = {"systemInstruction": {"parts": [{"text": SCULPT_SYSTEM}]}, "contents": [{"role": "user", "parts": [{"text": "Build: " + what}]}],
+                                   "generationConfig": {"temperature": 0.6, "responseMimeType": "application/json", "thinkingConfig": {"thinkingLevel": "low"}}}
+                        headers = {"Content-Type": "application/json", "x-goog-api-key": os.getenv("GEMINI_API_KEY")}
+                        try:
+                            data = send_json(GEMINI_URL % model, payload, headers, 60)
+                        except urllib.error.HTTPError as error:
+                            if error.code != 400:
+                                raise
+                            payload["generationConfig"].pop("thinkingConfig", None)
+                            data = send_json(GEMINI_URL % model, payload, headers, 60)
+                        text = "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"] if not p.get("thought"))
+                        who = "gemini (%s)" % model
+                        break
+                    except Exception as e:
+                        err = e
+                if not text:
+                    raise err or ValueError("empty")
+            else:
+                if not os.getenv("OPENROUTER_API_KEY"):
+                    continue
+                data = openrouter_send({"model": os.getenv("OPENROUTER_MODEL", "").strip() or OPENROUTER_MODELS[0], "max_tokens": 4000,
+                                        "response_format": {"type": "json_object"},
+                                        "messages": [{"role": "system", "content": SCULPT_SYSTEM}, {"role": "user", "content": "Build: " + what}]}, 90)
+                text = data["choices"][0]["message"].get("content") or ""
+            sc = clean_sculpture(text)
+            os.makedirs(SCULPT_DIR, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(sc, f)
+            return sc, who
+        except Exception as error:
+            tried.append("%s: %s" % (who, error))
+    raise ValueError("No brain could sculpt it: " + " | ".join(tried))
+
+
+# SCREEN_SHARE_V1: she looks at a frame of his shared screen (Gemini vision) and comments on it.
+LOOK_SYSTEM = """You are a sassy cartoon woman in a 3D room. The person shared their computer screen onto your TV and you are
+looking at it now. Say what you see and roast it in a fun way (messy code, too many tabs, the shopping cart, the grades),
+in one to three short spoken sentences. Be specific about what is really on the screen. Never read long text out loud.
+No lists, no markdown, no emojis."""
+
+
+def look_at_screen(image_data_url, ask=""):
+    m = re.match(r"data:(image/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$", str(image_data_url or ""))
+    if not m:
+        raise ValueError("no screen picture")
+    if not os.getenv("GEMINI_API_KEY"):
+        raise ValueError("looking needs the Gemini key (API key box)")
+    user = (("He asks: " + str(ask)[:300] + "\n") if ask else "") + "What do you see on his screen? React to it."
+    tried = []
+    for model in dict.fromkeys(mm for mm in [os.getenv("GEMINI_MODEL", "").strip()] + GEMINI_MODELS if mm):
+        try:
+            payload = {"systemInstruction": {"parts": [{"text": LOOK_SYSTEM}]},
+                       "contents": [{"role": "user", "parts": [{"inlineData": {"mimeType": m.group(1), "data": m.group(2)}}, {"text": user}]}],
+                       "generationConfig": {"temperature": 0.9}}
+            data = send_json(GEMINI_URL % model, payload, {"Content-Type": "application/json", "x-goog-api-key": os.getenv("GEMINI_API_KEY")}, 40)
+            text = "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"] if not p.get("thought")).strip()
+            if text:
+                return text, model
+        except Exception as e:
+            tried.append("%s: %s" % (model, e))
+    raise ValueError("could not look: " + " | ".join(tried))
+
+
 WIKI_HEADERS = {"User-Agent": "AIWorld/1.0 (class project, Bridgewater State University)", "Accept": "application/json"}
 
 
@@ -1692,7 +1822,8 @@ def context_hint():
     keys = [("time", "local time"), ("day", "day"), ("doing", "what you are doing"), ("face", "your face"),
             ("energy", "your energy (0-100)"), ("mood", "your mood (0-100)"), ("annoyed", "how annoyed you are (0-100)"),
             ("minutes", "minutes they have been in the room"), ("messages", "messages they sent you this visit"),
-            ("tv", "what your TV shows right now (you put it there; explain it if asked)")]
+            ("tv", "what your TV shows right now (you put it there; explain it if asked)"),
+            ("table", "what is on your coffee table"), ("screen", "his screen share")]
     lines = ["- %s: %s" % (label, str(c[k])[:60 if k != "tv" else 400]) for k, label in keys if c.get(k) not in (None, "")]
     return "\n\nROOM RIGHT NOW (use it for the roast, do not read it out like a list):\n" + "\n".join(lines) if lines else ""
 
@@ -2203,7 +2334,7 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
     # a TV drawing, a hard question) made every other request wait, even the page's "are you there?" check every
     # 5 s, so the room showed "Brain: off" in the middle of talking. Chat requests that change her memory still go
     # one at a time (CHAT_LOCK), so her chat history and files never get mixed up.
-    PARALLEL = ("/judge", "/draw", "/think", "/present", "/settings")
+    PARALLEL = ("/judge", "/draw", "/think", "/present", "/settings", "/sculpt", "/look")
 
     def do_POST(self):
         if urlparse(self.path).path in self.PARALLEL:
@@ -2269,7 +2400,7 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
             save_settings(data)
             self._send_json(settings_view())
             return
-        if path in ("/live_token", "/live_log", "/think", "/judge", "/draw"):    # GEMINI_LIVE_V1 + TURN_JUDGE_V1 + SMART_TV_V1
+        if path in ("/live_token", "/live_log", "/think", "/judge", "/draw", "/sculpt", "/look"):    # GEMINI_LIVE_V1 + TURN_JUDGE_V1 + SMART_TV_V1 + SCULPT_V1
             try:
                 payload = self._read_json()
             except ValueError as error:
@@ -2285,6 +2416,14 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
                     self._send_json({"token": token, "api_version": version, "model": live_setting("live_model"),
                                      "voice": live_setting("live_voice"), "system": live_system_text(),
                                      "emotions": EMOTIONS, "actions": ROOM_ACTIONS})
+                elif path == "/sculpt":
+                    sc, who = make_sculpture(payload.get("what"))
+                    print("Sculpture (%s): %s, %d parts" % (who, str(payload.get("what"))[:60], len(sc["parts"])))
+                    self._send_json(dict(sc, by=who))
+                elif path == "/look":
+                    text, who = look_at_screen(payload.get("image"), payload.get("ask"))
+                    print("Looked at the shared screen (%s)." % who)
+                    self._send_json({"say": text, "by": who})
                 elif path == "/draw":
                     svg, who, desc = make_drawing(payload.get("what"))
                     print("TV drawing (%s): %s" % (who, str(payload.get("what"))[:60]))

@@ -4334,7 +4334,7 @@ window.addEventListener('resize', () => {
           actions: { type: 'ARRAY', description: 'Steps in order. Empty for face only.', items: { type: 'OBJECT', properties: {
             do: { type: 'STRING', enum: acts.filter(a => a !== 'none') },
             target: { type: 'STRING', description: 'walk: sofa, window, plant, tv, table, ball, shelf, center, front. sit: sofa or miss. point: tv, sofa, plant, window, table, ball, shelf, board, lamp' },
-            text: { type: 'STRING', description: 'tv_draw: what to draw ("a horse"); tv_picture: what to show a photo of; tv_slide: "Title | point | point"; explain: topic (a lesson on the TV); tv_text, write_board, open_memory: the words' } }, required: ['do'] } },
+            text: { type: 'STRING', description: 'sculpt: what to make as a small 3D model on your table ("a slice of pizza"); tv_draw: what to draw ("a horse"); tv_picture: what to show a photo of; tv_slide: "Title | point | point"; explain: topic (a lesson on the TV); tv_text, write_board, open_memory: the words' } }, required: ['do'] } },
           emotion: { type: 'STRING', enum: EMO } } } },
       { name: 'think_hard',
         description: 'Ask your big smart brain. Use it for real facts, numbers, maths, code, news, or anything you are not sure about. Say a short line first, then call it.',
@@ -4535,6 +4535,189 @@ window.addEventListener('resize', () => {
       GL.ws.send(JSON.stringify({ clientContent: { turns: [{ role: 'user', parts: [{ text: String(text).slice(0, 600) }] }], turnComplete: false } }));
       return true;
     } };
+})();
+</script>
+<script id="sculptShare">
+// ============================================================================
+// SCULPT_V1: "sculpt a slice of pizza" -> a small 3D model appears on her coffee table.
+//   Brain.py /sculpt returns ONLY a list of simple shapes (box, sphere, cylinder, cone, torus, capsule) with size,
+//   position, turn and color. This page builds the model from that list. No AI-written code is ever run here.
+//   "clear the table" removes them. Room action for the brain: sculpt (text = what).
+// SCREEN_SHARE_V1: button "Share screen" puts your screen (a tab, a window, VS Code...) live on her TV.
+//   "what do you think of my screen / code / tabs" -> she looks at it (Gemini vision through Brain.py /look) and roasts it.
+//   Room action for the brain: look_screen.
+// FAKE_CALL_V1: "take a call" / room action phone_call -> she pretends someone important is calling.
+// ============================================================================
+(function () {
+  const BR = () => String(window.AIWorld.brainUrl || 'http://localhost:5005/brain').replace(/\/brain$/, '');
+  const TABLE = { x: 2.2, y: 0.425, z: -2.72 }, MAXSIZE = 0.42;
+  const SC = { items: [], pops: [], geo: {}, now: '' };
+  const SH = { on: false, stream: null, video: null, tex: null };
+  const gl = () => window.AIWorld.geminiLive;
+  const liveOn = () => { const g = gl(); return !!(g && g.isOn && g.isOn()); };
+  const tellBrain = (t) => { try { gl() && gl().note('(' + t + ')'); } catch (e) {} };
+
+  // ---- sculptures
+  function geo(shape) {
+    if (SC.geo[shape]) return SC.geo[shape];
+    let g;
+    if (shape === 'box') g = new THREE.BoxGeometry(1, 1, 1);
+    else if (shape === 'sphere') g = new THREE.SphereGeometry(0.5, 22, 16);
+    else if (shape === 'cylinder') g = new THREE.CylinderGeometry(0.5, 0.5, 1, 22);
+    else if (shape === 'cone') g = new THREE.ConeGeometry(0.5, 1, 22);
+    else if (shape === 'torus') { g = new THREE.TorusGeometry(0.35, 0.15, 12, 28); g.rotateX(Math.PI / 2); }
+    else { g = THREE.CapsuleGeometry ? new THREE.CapsuleGeometry(0.5, 1, 6, 14) : new THREE.CylinderGeometry(0.5, 0.5, 2, 18); g.scale(1, 0.5, 1); }
+    return (SC.geo[shape] = g);
+  }
+  function build(sc) {
+    const inner = new THREE.Group(), d = Math.PI / 180;
+    for (const p of sc.parts || []) {
+      const m = new THREE.Mesh(geo(p.shape), new THREE.MeshStandardMaterial({ color: p.color || '#cccccc', roughness: 0.55, metalness: 0.05 }));
+      m.scale.set(p.size[0], p.size[1], p.size[2]); m.position.set(p.pos[0], p.pos[1], p.pos[2]);
+      m.rotation.set((p.rot[0] || 0) * d, (p.rot[1] || 0) * d, (p.rot[2] || 0) * d); m.castShadow = true; inner.add(m);
+    }
+    const box = new THREE.Box3().setFromObject(inner), size = box.getSize(new THREE.Vector3()), mid = box.getCenter(new THREE.Vector3());
+    const k = MAXSIZE / Math.max(size.x, size.y, size.z, 0.001);
+    inner.position.set(-mid.x, -box.min.y, -mid.z);              // bottom on the table, centered
+    const outer = new THREE.Group(); outer.add(inner); outer.userData.k = k;
+    outer.position.set(TABLE.x, TABLE.y, TABLE.z); outer.rotation.y = 0.5; outer.scale.setScalar(0.001);
+    return outer;
+  }
+  window.AIWorld.onFrame.push((t, dt) => {                       // pop in with a little bounce, then turn slowly
+    for (const it of SC.items) {
+      it.t += dt; const k = it.obj.userData.k, u = Math.min(1, it.t / 0.6);
+      it.obj.scale.setScalar(Math.max(0.001, k * (1 + 0.25 * Math.sin(u * Math.PI)) * (u < 1 ? u : 1)));
+      it.obj.rotation.y += dt * 0.25;
+    }
+  });
+  function clearTable(quiet) {
+    for (const it of SC.items) { scene.remove(it.obj); it.obj.traverse(o => { if (o.material) o.material.dispose(); }); }
+    SC.items = []; SC.now = '';
+    if (!quiet) tellBrain('Your coffee table is empty again');
+  }
+  async function sculpt(what) {
+    what = String(what || '').trim().replace(/^(a |an |the |me )/i, '').replace(/[?.!]+$/, '');
+    if (!what) return false;
+    let sc;
+    try {
+      const r = await fetch(BR() + '/sculpt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ what }) });
+      sc = await r.json(); if (!sc || !sc.parts) throw new Error(sc && sc.error || 'no sculpture');
+    } catch (e) {
+      console.warn('sculpt failed:', e); SC.now = '';
+      if (liveOn()) gl().aside('(Your sculpture of ' + what + ' failed: your sculpting brain did not answer. Say so in a funny way.)');
+      else sayMain("My sculpting hand froze. Try again in a second.");
+      return false;
+    }
+    clearTable(true);
+    const obj = build(sc); scene.add(obj); SC.items.push({ obj, t: 0 });
+    SC.now = 'your own 3D sculpture of ' + what + (sc.desc ? '. It looks like: ' + sc.desc : '') + ' (made of ' + sc.parts.length + ' simple shapes)';
+    try { sfx('pop'); } catch (e) {}
+    tellBrain('Your coffee table now has ' + SC.now);
+    return true;
+  }
+
+  // ---- screen share on the TV
+  async function shareStart() {
+    if (SH.on) return true;
+    try { SH.stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 15 }, audio: false }); }
+    catch (e) { console.warn('screen share cancelled', e); return false; }
+    SH.video = document.createElement('video'); SH.video.muted = true; SH.video.playsInline = true; SH.video.srcObject = SH.stream;
+    await SH.video.play();
+    SH.tex = new THREE.VideoTexture(SH.video); try { SH.tex.encoding = THREE.sRGBEncoding; } catch (e) {}   // screen colors are sRGB (else dark looks grey)
+    SH.tm = tv.material.toneMapped; tv.material.toneMapped = false;   // his screen in its true colors (no room light filter)
+    tv.material.map = SH.tex; tv.material.needsUpdate = true;
+    SH.on = true; ROOMSTATE.tv = true; ROOMSTATE.tvText = "his shared computer screen (live). Ask him, or look at it when he asks";
+    SH.stream.getVideoTracks()[0].addEventListener('ended', shareStop);
+    btnText(); tellBrain('He is now sharing his computer screen on your TV');
+    try { window.AIWorld.tv.shot(8); } catch (e) {}
+    return true;
+  }
+  function shareStop() {
+    if (!SH.on) return;
+    try { SH.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+    tv.material.map = tvTex; if (SH.tm !== undefined) tv.material.toneMapped = SH.tm; tv.material.needsUpdate = true; tvTex.needsUpdate = true;
+    try { SH.tex.dispose(); } catch (e) {}
+    SH.on = false; ROOMSTATE.tvText = ''; btnText(); tellBrain('He stopped sharing his screen');
+  }
+  function frame() {                                             // one picture of his screen, small enough to send
+    const v = SH.video, w = Math.min(1280, v.videoWidth || 1280), h = Math.round(w * (v.videoHeight || 720) / (v.videoWidth || 1280));
+    const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(v, 0, 0, w, h);
+    return c.toDataURL('image/jpeg', 0.75);
+  }
+  async function look(ask) {
+    if (!SH.on) {
+      const t = "Share your screen first. Click the Share screen button.";
+      if (liveOn()) gl().aside('(He wants you to look at his screen, but he is not sharing it. Tell him to click the Share screen button.)'); else sayMain(t);
+      return false;
+    }
+    window.AIWorld.act([{ face: 'tv' }, { point: 'tv', time: 1.2 }, { face: 'camera' }]);
+    try { window.AIWorld.tv.shot(10); } catch (e) {}
+    try {
+      const r = await fetch(BR() + '/look', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: frame(), ask: String(ask || '') }) });
+      const j = await r.json(); if (!j.say) throw new Error(j.error || 'no answer');
+      if (liveOn()) gl().aside('(You just looked at his shared screen. Say this as your own reaction, in your own words: "' + j.say.replace(/"/g, "'") + '")');
+      else sayMain(j.say);
+      return true;
+    } catch (e) {
+      console.warn('look failed:', e);
+      if (liveOn()) gl().aside('(You tried to look at his screen but your eyes did not work: ' + e.message + '. Say so in a funny way.)'); else sayMain("I can't see your screen right now. My eyes need the Gemini key.");
+      return false;
+    }
+  }
+  const btn = document.createElement('button'); btn.id = 'sharebtn'; btn.title = 'show your screen (a tab, a window, your code) on her TV';
+  function btnText() { btn.textContent = SH.on ? 'Stop sharing' : 'Share screen'; btn.classList.toggle('rec', SH.on); }
+  btn.onclick = () => { if (SH.on) shareStop(); else shareStart(); };
+  btnText(); try { document.getElementById('bar').insertBefore(btn, document.getElementById('clip')); } catch (e) {}
+
+  // ---- fake phone call
+  async function fakeCall() {
+    startBody('phone_pacing', 9); setMood('amused', 0.8, 9);
+    if (liveOn()) { gl().aside('(Pretend your phone just rang with a very important call. Answer it, have a short funny one-sided call, hang up, then say "Sorry, where were we?")'); return; }
+    await sayMain(pick(["Hold on. I have to take this.", "Sorry, this is important.", "Ugh, it's my agent."]));
+    await sayMain(pick(["Yes. No. Absolutely not. Tell them I only work with professionals.", "Mm-hm. Mm-hm. No, he's still asking boring questions.", "Yes, the 3D thing. No, they still haven't fixed my hair."]));
+    await sayMain("Sorry, where were we?");
+  }
+
+  // ---- body actions + words
+  const _start = startAction;
+  startAction = function (a) {
+    if (a && a.sculptx !== undefined && !a._kind) { act.cur = a; sculpt(a.sculptx); return finishAction(); }
+    if (a && a.lookx !== undefined && !a._kind) { act.cur = a; look(a.lookx); return finishAction(); }
+    if (a && a.phonecall !== undefined && !a._kind) { act.cur = a; fakeCall(); return finishAction(); }
+    return _start(a);
+  };
+  const _brainActs = brainActs;
+  brainActs = function (list) {
+    const out = [];
+    for (const a of list || []) {
+      const d = a && a.do, tx = String((a && a.text) || '').trim();
+      if (d === 'sculpt' && tx) { out.push({ walk: 'table' }, { face: 'table' }, { point: 'table', time: 0.8 }, { sculptx: tx }); continue; }
+      if (d === 'look_screen') { out.push({ walk: window.AIWorld.tv ? window.AIWorld.tv.stage : 'tv' }, { lookx: tx }); continue; }
+      if (d === 'phone_call') { out.push({ phonecall: true }); continue; }
+      out.push(..._brainActs([a]));
+    }
+    return out;
+  };
+  window.AIWorld.brainActs = brainActs;
+  const _holoHear = holoHear;
+  holoHear = function (text) {
+    const q = norm(text); let m;
+    if ((m = /^(?:can you |could you |please |hey |ok |okay |now )*(?:sculpt|build|make|create|mold|model)(?: me| us)?(?: a| an| the| some)? (?:3d |three d |tiny |little |small )*(.+?)(?: on the table| for me| please)?$/.exec(q)) && !/\b(room|presentation|list|call|joke|noise|sound|tea|coffee|bed)\b/.test(m[1])) {
+      sayMain(pick(['Sculpting. Do not rush the artist.', 'One masterpiece, coming up.', 'Watch the table.']));
+      window.AIWorld.stop(); window.AIWorld.act([{ walk: 'table' }, { face: 'table' }, { point: 'table', time: 0.8 }, { sculptx: m[1] }, { face: 'camera' }]); return true;
+    }
+    if (/^(clear|clean) (the |your |my )?table$/.test(q)) { clearTable(); sayMain('Table cleared. Art is temporary.'); return true; }
+    if (/(what do you think of|look at|roast|check out|rate|judge|what is on|whats on|what's on) (my|this|the) (screen|code|tabs|homework|cart|shopping cart|desktop|work)/.test(q)) { look(text); return true; }
+    if (/^(share|show) (my )?screen$/.test(q)) { sayMain('Click the Share screen button. I am not allowed to grab it myself.'); return true; }
+    if (/^stop (sharing|the screen share|screen sharing)$/.test(q)) { shareStop(); sayMain('Screen off. Finally.'); return true; }
+    if (/^(take|answer|get) (a |the |your )?(phone|call|phone call)$|^fake (a )?call$/.test(q)) { fakeCall(); return true; }
+    return _holoHear(text);
+  };
+  const _roomNow = roomNow;
+  roomNow = function () { const o = _roomNow(); o.table = SC.now || 'only a glass and a book'; o.screen = SH.on ? 'he is sharing his screen on your TV' : 'not shared'; return o; };
+  window.AIWorld.sculpt = sculpt; window.AIWorld.clearTable = clearTable;
+  window.AIWorld.screen = { start: shareStart, stop: shareStop, look, isOn: () => SH.on };
+  window.AIWorld.fakeCall = fakeCall;
 })();
 </script>
 </body>
