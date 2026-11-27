@@ -1789,7 +1789,8 @@ function roomNow() {
   } catch (e) {}
   return { time: d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), day: d.toLocaleDateString([], { weekday: 'long' }),
     doing, face: FX.mood || 'neutral', energy: Math.round(STATS.energy), mood: Math.round(STATS.mood), annoyed: Math.round(STATS.annoy),
-    minutes: Math.round((Date.now() - CTX.t0) / 60000), messages: CTX.count };
+    minutes: Math.round((Date.now() - CTX.t0) / 60000), messages: CTX.count,
+    tv: (typeof ROOMSTATE !== 'undefined' && ROOMSTATE.tv) ? (ROOMSTATE.tvText || 'on, nothing special') : 'off' };   // TV_AWARE_V1
 }
 // STORY_V1: "present your story" / "tell them how we built you" -> the brain writes a show from her_story.txt and she performs it.
 // Paste a long text (200+ letters) with the word "present" in it -> she presents THAT text.
@@ -3997,7 +3998,12 @@ window.addEventListener('resize', () => {
   const STAGE = { x: -4.5, z: 1.5 };                       // where she stands to present: next to the TV, facing the class
   window.AIWorld.ROOM_SPOTS = ROOM_SPOTS; ROOM_SPOTS.stage = { x: STAGE.x, z: STAGE.z, name: 'Next to the TV' };
   const ctx = () => tvCanvas.getContext('2d');
-  const shown = (what) => { ROOMSTATE.tv = true; ROOMSTATE.tvText = String(what).slice(0, 80); TVX.last = performance.now(); };
+  // TV_AWARE_V1: she always knows what is on her TV. ROOMSTATE.tvText goes to the brain with every message (roomNow),
+  // and Gemini Live gets a quiet note each time the TV changes (no answer, just so she knows).
+  const shown = (what, quiet) => {
+    ROOMSTATE.tv = true; ROOMSTATE.tvText = String(what).slice(0, 400); TVX.last = performance.now();
+    clearTimeout(TVX.noteT); if (quiet) return; TVX.noteT = setTimeout(() => { try { window.AIWorld.geminiLive && window.AIWorld.geminiLive.note('(TV now shows: ' + ROOMSTATE.tvText + ')'); } catch (e) {} }, 300);
+  };
 
   function bg(c, paper) {
     if (paper) { c.fillStyle = '#fbfaf5'; c.fillRect(0, 0, W, H); c.strokeStyle = 'rgba(59,130,246,0.08)'; c.lineWidth = 1;
@@ -4026,7 +4032,7 @@ window.addEventListener('resize', () => {
   // ---- slides
   function slide(s) {
     s = s || {}; const title = String(s.title || '').slice(0, 60), pts = (s.points || []).map(p => String(p).slice(0, 90)).slice(0, 5);
-    shown('slide: ' + title);
+    shown('a slide titled "' + title + '"' + (pts.length ? ' with the points: ' + pts.join('; ') : ''));
     return play((t) => {
       const c = ctx(); bg(c);
       c.fillStyle = '#f472b6'; c.fillRect(30, 26, 10, 64);
@@ -4092,7 +4098,7 @@ window.addEventListener('resize', () => {
   function getDrawing(what) {
     const key = 'd:' + norm(what);
     if (!TVX.cache.has(key)) TVX.cache.set(key, fetch(BR() + '/draw', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ what }) })
-      .then(r => r.json()).then(j => { if (!j.svg) throw new Error(j.error || 'no drawing'); return j.svg; })
+      .then(r => r.json()).then(j => { if (!j.svg) throw new Error(j.error || 'no drawing'); return { svg: j.svg, desc: j.desc || '' }; })
       .catch(e => { TVX.cache.delete(key); throw e; }));
     return TVX.cache.get(key);
   }
@@ -4107,16 +4113,17 @@ window.addEventListener('resize', () => {
   }
   async function draw(what) {
     what = String(what || '').trim().replace(/[?.!]+$/, ''); if (!what) return false;
-    const my = TVX.run + 1; waitingBoard(what); shown('drawing of ' + what);
+    const my = TVX.run + 1; waitingBoard(what); shown('a drawing of ' + what + ' (still drawing)', true);
     let pic;
-    try { pic = parseDrawing(await getDrawing(what)); }
+    let desc = '';
+    try { const d = await getDrawing(what); desc = d.desc; pic = parseDrawing(d.svg); }
     catch (e) { console.warn('tv drawing failed:', e); if (TVX.anim && TVX.anim.my === my) { TVX.anim = null; } await slide({ title: "I couldn't draw that", points: [String(what), 'My drawing brain is not answering.'] }); return false; }
     const [vx, vy, vw, vh] = pic.vb, ax = 24, ay = 14, aw = W - 48, ah = H - 44 - 24;
     const s = Math.min(aw / vw, ah / vh), ox = ax + (aw - vw * s) / 2 - vx * s, oy = ay + (ah - vh * s) / 2 - vy * s;
     const weights = pic.els.map(e => Math.max(40, e.len)), total = weights.reduce((a, b) => a + b, 0);
     const dur = Math.min(9, Math.max(3.5, pic.els.length * 0.12 + total / 700));
     const ends = []; let acc = 0; for (const w of weights) { acc += w; ends.push(acc / total * dur); }
-    shown('drawing of ' + what);
+    shown('your own drawing of ' + what + (desc ? '. In it: ' + desc : ''));
     await play((t) => {
       const c = ctx(); bg(c, true);
       c.save(); c.setTransform(s, 0, 0, s, ox, oy); c.lineJoin = 'round';
@@ -4154,12 +4161,12 @@ window.addEventListener('resize', () => {
   async function picture(q, opts) {
     q = String(q || '').trim().replace(/^(a|an|the) /i, '').replace(/[?.!]+$/, ''); if (!q) return false;
     const book = findBook(q);
-    if (book && book.kind === 'picture' && !(opts && opts.web)) { TVX.anim = null; shown('shelf picture: ' + book.title); await showOnTV(book); return true; }
+    if (book && book.kind === 'picture' && !(opts && opts.web)) { TVX.anim = null; shown('the picture "' + book.title + '" from your memory shelf'); await showOnTV(book); return true; }
     let p;
     try { p = await getPicture(q); } catch (e) { console.warn('tv photo failed, drawing it instead:', e); return draw(q); }
     const img = new Image(); const ok = await new Promise(r => { img.onload = () => r(true); img.onerror = () => r(false); img.src = p.url; });
     if (!ok) return draw(q);
-    shown('photo of ' + p.title);
+    shown('a real photo of ' + p.title + ' (from Wikipedia)');
     await play((t) => {
       const c = ctx(); c.fillStyle = '#000'; c.fillRect(0, 0, W, H);
       const sc = Math.max(W / img.width, (H - 44) / img.height) * (1 + 0.04 * Math.min(1, t / 8)), w = img.width * sc, h = img.height * sc;   // fills the screen, slow zoom
@@ -4174,8 +4181,8 @@ window.addEventListener('resize', () => {
     if (tv.slide) return slide(tv.slide);
     if (tv.draw) return draw(tv.draw);
     if (tv.picture) return picture(tv.picture);
-    if (tv.shelf) { const b = findBook(tv.shelf); if (b) { TVX.anim = null; shown('shelf: ' + b.title); return showOnTV(b); } return false; }
-    if (tv.text) { TVX.anim = null; drawTV(true, tv.text); return true; }
+    if (tv.shelf) { const b = findBook(tv.shelf); if (b) { TVX.anim = null; shown('the picture "' + b.title + '" from your memory shelf'); return showOnTV(b); } return false; }
+    if (tv.text) { TVX.anim = null; drawTV(true, tv.text); shown('the words "' + tv.text + '"'); return true; }
     return false;
   }
   function tvShot(hold) {                                  // camera: her and the TV together
@@ -4522,7 +4529,12 @@ window.addEventListener('resize', () => {
   if (typeof sayEl !== 'undefined' && sayEl) sayEl.addEventListener('keydown', typedLive, true);
 
   window.AIWorld.geminiLive = { start, stop, isOn: () => GL.on, state: () => ({ on: GL.on, ready: GL.ready, engine: GL.engine, plain: GL.plain, talking: herTalking() }),
-    bargeIn };
+    bargeIn,
+    note(text) {                                          // TV_AWARE_V1: tell her something without asking for an answer
+      if (!(GL.on && GL.ready && GL.ws && GL.ws.readyState === 1)) return false;
+      GL.ws.send(JSON.stringify({ clientContent: { turns: [{ role: 'user', parts: [{ text: String(text).slice(0, 600) }] }], turnComplete: false } }));
+      return true;
+    } };
 })();
 </script>
 </body>

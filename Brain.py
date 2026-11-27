@@ -190,6 +190,9 @@ point"), DRAW anything live, stroke by stroke, like a whiteboard cartoon (tv_dra
 "a house", "my head and my body as two separate pieces"), show a real photo of something (tv_picture, text = what),
 show a picture or note from your memory shelf (open_memory), show short words (tv_text), or turn on and off.
 When something is easier to see than to hear (how a thing looks, how parts fit, steps), use the TV.
+You always know what your TV shows right now (ROOM RIGHT NOW, or a "(TV now shows: ...)" note). If they ask what is
+on the TV or to explain it, describe it from that: what it is, the parts, where they are. Never say you cannot see it.
+Only when they ask: do not start talking about the TV on your own.
 When the person asks you to DO something you can do, do it: put the steps in
 "actions", in order. If your words say you will do something, the actions must
 do it too. You may still roast them while you do it. If they only chat, use an
@@ -1344,6 +1347,8 @@ plant, floor lamp, whiteboard, memory shelf). To move or change your face, call 
   until room_action answers with done. It tells you what really happened. If it says it failed, say so.
 - Lamp: room_action with do lamp_on or lamp_off (you walk to the lamp yourself). TV: tv_on, tv_off, or tv_text.
   Pictures or notes from your memory shelf: open_memory with the words in text, one call per picture.
+- TV_AWARE_V1: notes like "(TV now shows: ...)" tell you what is on your TV. Do not answer a note by itself; use it when
+  they ask what is on the TV or to explain it: describe what it is, the parts and where they are.
 - YOUR SMART TV (SMART_TV_V1): tv_draw draws ANYTHING live on the TV (text = what to draw, e.g. "a horse"),
   tv_picture shows a real photo of something (text = what), tv_slide shows a slide (text "Title | point | point"),
   explain gives a short lesson on the TV (text = topic). When he says "draw ..." or "show me a picture of ...", use them.
@@ -1450,6 +1455,8 @@ DRAW_SYSTEM = """You draw for a live TV in a cartoon room. Make ONE clear, frien
 sketch that a 12 year old understands at once. Return ONLY the SVG, nothing else.
 Rules:
 - <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"> ... </svg>
+- The FIRST thing inside the svg is <desc>one or two short sentences: what is drawn and where things are
+  (left, middle, right, top, bottom), so someone who cannot see it can explain it</desc>
 - Use ONLY these elements: path, circle, ellipse, rect, line, polyline, polygon. No text, no g, no transform,
   no gradients, no style element, no images, no defs. Each element has its own stroke, stroke-width and fill attributes.
 - 12 to 60 elements. Big shapes first (body, ground, walls), then the details (eyes, windows, labels as arrows).
@@ -1491,6 +1498,12 @@ def clean_svg(text):
     return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="%s">%s</svg>' % (vb.group(1) if vb else "0 0 400 300", "".join(out[:120]))
 
 
+def drawing_desc(text):
+    """TV_AWARE_V1: the drawing's own <desc>, so she can explain what is on her TV."""
+    m = re.search(r"<desc>([\s\S]*?)</desc>", str(text or ""), re.I)
+    return re.sub(r"<[^>]*>", "", m.group(1)).strip()[:300] if m else ""
+
+
 def make_drawing(what):
     what = str(what or "").strip()[:200]
     if not what:
@@ -1498,7 +1511,12 @@ def make_drawing(what):
     path = os.path.join(DRAW_DIR, _slug(what) + ".svg")
     if os.path.exists(path):
         with open(path, encoding="utf-8") as f:
-            return f.read(), "saved drawing"
+            svg = f.read()
+        desc = ""
+        if os.path.exists(path[:-4] + ".txt"):
+            with open(path[:-4] + ".txt", encoding="utf-8") as f:
+                desc = f.read().strip()
+        return svg, "saved drawing", desc
     user = "Draw: " + what
     tried = []
     for who in ("gemini", "openrouter", "venice"):
@@ -1541,11 +1559,13 @@ def make_drawing(what):
                                               "venice_parameters": {"include_venice_system_prompt": False, "disable_thinking": True}},
                                  {"Content-Type": "application/json", "Authorization": "Bearer " + os.getenv("VENICE_API_KEY")}, 90)
                 text = data["choices"][0]["message"].get("content") or ""
-            svg = clean_svg(text)
+            svg, desc = clean_svg(text), drawing_desc(text)
             os.makedirs(DRAW_DIR, exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(svg)
-            return svg, who
+            with open(path[:-4] + ".txt", "w", encoding="utf-8") as f:
+                f.write(desc)
+            return svg, who, desc
         except Exception as error:
             tried.append("%s: %s" % (who, error))
     raise ValueError("No brain could draw it: " + " | ".join(tried))
@@ -1671,8 +1691,9 @@ def context_hint():
         return ""
     keys = [("time", "local time"), ("day", "day"), ("doing", "what you are doing"), ("face", "your face"),
             ("energy", "your energy (0-100)"), ("mood", "your mood (0-100)"), ("annoyed", "how annoyed you are (0-100)"),
-            ("minutes", "minutes they have been in the room"), ("messages", "messages they sent you this visit")]
-    lines = ["- %s: %s" % (label, str(c[k])[:60]) for k, label in keys if c.get(k) not in (None, "")]
+            ("minutes", "minutes they have been in the room"), ("messages", "messages they sent you this visit"),
+            ("tv", "what your TV shows right now (you put it there; explain it if asked)")]
+    lines = ["- %s: %s" % (label, str(c[k])[:60 if k != "tv" else 400]) for k, label in keys if c.get(k) not in (None, "")]
     return "\n\nROOM RIGHT NOW (use it for the roast, do not read it out like a list):\n" + "\n".join(lines) if lines else ""
 
 
@@ -2265,9 +2286,9 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
                                      "voice": live_setting("live_voice"), "system": live_system_text(),
                                      "emotions": EMOTIONS, "actions": ROOM_ACTIONS})
                 elif path == "/draw":
-                    svg, who = make_drawing(payload.get("what"))
+                    svg, who, desc = make_drawing(payload.get("what"))
                     print("TV drawing (%s): %s" % (who, str(payload.get("what"))[:60]))
-                    self._send_json({"svg": svg, "by": who})
+                    self._send_json({"svg": svg, "by": who, "desc": desc})
                 elif path == "/judge":
                     verdict, who = judge_turn(payload.get("heard"), payload.get("her"), bool(payload.get("show")))
                     print("Turn judge (%s): %s -> %s (%s)" % (who, str(payload.get("heard"))[:60], verdict["do"], verdict["why"]))
