@@ -784,6 +784,7 @@ def ask_openrouter(user_text, reminder=None, model=None):
 #   FAST talking brain = council_fast (default gemini). Hard questions (/think) = council_smart (default claude).
 #   If AI Council Chat is closed, she uses free OpenRouter. No Ollama: nothing heavy runs on this PC.
 COUNCIL_URL = "http://127.0.0.1:8765/api/chat"
+COUNCIL_STREAM_URL = "http://127.0.0.1:8765/api/chat_stream"   # COUNCIL_STREAM_V1: AI Council Chat keeps Claude / Gemini open and streams
 COUNCIL_MODES = ["gemini", "claude", "deepseek", "grok"]
 COUNCIL_DATA = os.path.join(os.path.expanduser("~"), "Documents", "ai-council", "app-data")
 
@@ -2192,6 +2193,26 @@ def _sse_json(response):
 
 def stream_tokens(provider, system, messages):
     """Yields text pieces from the brain as they are written. Raises if this brain cannot stream."""
+    if provider == "council":                   # COUNCIL_STREAM_V1: words come from AI Council Chat as they are written
+        key = council_key()
+        if not key:
+            raise ValueError("AI Council Chat isn't configured on this PC.")
+        lines = [message_text(m) for m in messages]
+        prompt = system + "\n\nCHAT SO FAR (the last line is the new message):\n" + "\n".join(lines)
+        req = urllib.request.Request(COUNCIL_STREAM_URL, data=json.dumps(
+            {"project": "Ai_World", "mode": council_mode("fast"), "message": prompt}).encode("utf-8"),
+            headers={"Content-Type": "application/json", "X-API-Key": key}, method="POST")
+        with urllib.request.urlopen(req, timeout=300) as res:
+            for raw in res:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line:
+                    continue
+                d = json.loads(line)
+                if d.get("error"):
+                    raise ValueError("AI Council Chat: " + str(d["error"]))
+                if d.get("delta"):
+                    yield d["delta"]
+        return
     if provider in ("openrouter", "venice") or provider in FAST_OR_MODELS:
         if provider != "venice":
             key = os.getenv("OPENROUTER_API_KEY")
@@ -2371,7 +2392,7 @@ def stream_brain(user_text, provider, emit):
     """The chosen brain streams; if it fails before saying anything, slow Ollama streams; last, the normal brain."""
     if provider == "council":                   # FAST_TALK_V1: stream from Gemini / OpenRouter directly when we can
         direct = fast_direct()
-        order = [direct] if direct else []
+        order = [direct] if direct else ["council"]   # COUNCIL_STREAM_V1: Claude streams through AI Council Chat too
     else:
         order = [provider]                      # COUNCIL_V1: no Ollama
     reminder = None
