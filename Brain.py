@@ -351,7 +351,7 @@ def message_text(m):
 
 
 def update_summary():
-    # runs in the background. Ollama does one job at a time, so it waits until she has been
+    # runs in the background (free OpenRouter). It waits until she has been
     # quiet for 25 seconds (a reply never waits behind it), reads at most 20 new lines,
     # and if it fails it skips those lines instead of trying again with an even longer text.
     if not summary_busy.acquire(blocking=False):
@@ -371,14 +371,16 @@ def update_summary():
                   "\n\nWrite the new summary of today: at most 12 short lines. Keep facts about him "
                   "(name, what he works on, what he likes and hates, plans), running jokes, roasts that landed, "
                   "and promises. Drop small talk. Plain text, no intro.")
-        data = send_json(OLLAMA_URL, {
-            "model": OLLAMA_MODEL,
+        # COUNCIL_V1: the summary runs on free OpenRouter in the cloud, not Ollama on this PC
+        if not os.getenv("OPENROUTER_API_KEY"):
+            raise ValueError("no OpenRouter key for the day summary")
+        data = openrouter_send({
+            "model": os.getenv("OPENROUTER_MODEL", "").strip() or OPENROUTER_MODELS[0],
             "messages": [{"role": "system", "content": "You keep a short, factual memory summary of a chat."},
                          {"role": "user", "content": prompt}],
-            "stream": False, "think": False, "keep_alive": KEEP_ALIVE,
-            "options": {"temperature": 0.2, "num_ctx": 4096, "num_predict": 300}
-        }, {"Content-Type": "application/json"})
-        text = (data.get("message") or {}).get("content", "").strip()
+            "temperature": 0.2, "max_tokens": 600
+        }, 60)
+        text = re.sub(r"<think>.*?</think>", "", data["choices"][0]["message"].get("content") or "", flags=re.S).strip()
         summary_done[0] += skipped + len(new)
         if text:
             day_summary[0] = text
@@ -777,6 +779,55 @@ def ask_openrouter(user_text, reminder=None):
     return reply
 
 
+# COUNCIL_V1 (Imran, 27 Nov): AI Council Chat on this laptop (http://127.0.0.1:8765) is her main brain.
+#   It runs Gemini or Claude on Imran's own subscriptions (no API bill), or DeepSeek / Grok free on OpenRouter.
+#   FAST talking brain = council_fast (default gemini). Hard questions (/think) = council_smart (default claude).
+#   If AI Council Chat is closed, she uses free OpenRouter. No Ollama: nothing heavy runs on this PC.
+COUNCIL_URL = "http://127.0.0.1:8765/api/chat"
+COUNCIL_MODES = ["gemini", "claude", "deepseek", "grok"]
+COUNCIL_DATA = os.path.join(os.path.expanduser("~"), "Documents", "ai-council", "app-data")
+
+
+def council_key():
+    try:
+        with open(os.path.join(COUNCIL_DATA, "api_key.txt"), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def council_mode(kind="fast"):
+    default = "gemini" if kind == "fast" else "claude"
+    mode = os.getenv("COUNCIL_FAST" if kind == "fast" else "COUNCIL_SMART", "").strip().lower() or default
+    return mode if mode in COUNCIL_MODES else default
+
+
+def council_text(prompt, kind="fast", timeout=300):
+    key = council_key()
+    if not key:
+        raise ValueError("AI Council Chat isn't configured on this PC (no api_key.txt).")
+    data = send_json(COUNCIL_URL, {"project": "Ai_World", "mode": council_mode(kind), "message": prompt},
+                     {"Content-Type": "application/json", "X-API-Key": key}, timeout)
+    if data.get("error"):
+        raise ValueError("AI Council Chat: " + str(data["error"]))
+    return re.sub(r"<think>.*?</think>", "", data["replies"][-1].get("text") or "", flags=re.S).strip()
+
+
+def ask_council(user_text, reminder=None):
+    system = (PERSONALITY + day_summary_text() + said_hint() + context_hint() + story_hint()
+              + "\n\nReturn ONLY one JSON object with the keys response, emotion, animation, actions. No other text.")
+    lines = [message_text(m) for m in messages_for(user_text, reminder)]
+    text = council_text(system + "\n\nCHAT SO FAR (the last line is the new message):\n" + "\n".join(lines), "fast")
+    reply = json.loads(text[text.find("{"): text.rfind("}") + 1])
+    if not isinstance(reply.get("actions"), list):
+        reply["actions"] = []
+    if reply.get("emotion") not in EMOTIONS:
+        reply["emotion"] = "amused"
+    if reply.get("animation") not in ANIMATIONS:
+        reply["animation"] = "idle"
+    return reply
+
+
 def ask_claude(user_text, reminder=None):
 
     # We don't need Claude yet, but when we do,
@@ -1028,10 +1079,11 @@ CLOUD_FAIL = [None]
 
 def ask_brain(user_text, provider):
     CLOUD_FAIL[0] = None
-    reply = _ask_brain(user_text, provider, 2 if provider in ("gemini", "vertex", "venice", "openrouter", "claude") else MAX_ATTEMPTS)
-    if reply is None and provider != "ollama" and CLOUD_FAIL[0]:
-        print("%s could not answer (%s). Using the free Ollama brain for this reply." % (provider, CLOUD_FAIL[0]))
-        reply = _ask_brain(user_text, "ollama", MAX_ATTEMPTS)
+    reply = _ask_brain(user_text, provider, 2 if provider in ("council", "gemini", "vertex", "venice", "openrouter", "claude") else MAX_ATTEMPTS)
+    backup = "openrouter" if provider != "openrouter" else None   # COUNCIL_V1: free OpenRouter backup, never Ollama (slow PC)
+    if reply is None and backup and CLOUD_FAIL[0] and os.getenv("OPENROUTER_API_KEY"):
+        print("%s could not answer (%s). Using free OpenRouter for this reply." % (provider, CLOUD_FAIL[0]))
+        reply = _ask_brain(user_text, backup, 2)
     return reply
 
 
@@ -1046,7 +1098,9 @@ def _ask_brain(user_text, provider, max_attempts):
 
             # We use the selected provider, but everything after
             # this point works exactly the same for either model.
-            if provider == "claude":
+            if provider == "council":
+                reply = ask_council(user_text, reminder)
+            elif provider == "claude":
                 reply = ask_claude(user_text, reminder)
             elif provider == "gemini":
                 reply = ask_gemini(user_text, reminder)
@@ -1233,6 +1287,10 @@ def load_settings():
         os.environ["OPENROUTER_API_KEY"] = data["openrouter_api_key"]
     if data.get("openrouter_model"):
         os.environ["OPENROUTER_MODEL"] = data["openrouter_model"]
+    if data.get("council_fast"):
+        os.environ["COUNCIL_FAST"] = data["council_fast"]
+    if data.get("council_smart"):
+        os.environ["COUNCIL_SMART"] = data["council_smart"]
     for k, env in LIVE_SETTING_ENV.items():    # GEMINI_LIVE_V1
         if data.get(k):
             os.environ[env] = str(data[k])
@@ -1264,7 +1322,11 @@ def save_settings(data):
 def settings_view():
     key = os.getenv("ANTHROPIC_API_KEY", "")
     return {
-        "provider": os.getenv("BRAIN_PROVIDER", "ollama").lower(),
+        "provider": get_provider_for_web(),
+        "council_fast": council_mode("fast"),          # COUNCIL_V1
+        "council_smart": council_mode("smart"),
+        "council_modes": COUNCIL_MODES,
+        "council_ready": bool(council_key()),
         "ollama_model": OLLAMA_MODEL,
         "claude_model": CLAUDE_MODEL,
         "key_set": bool(key),
@@ -1300,7 +1362,7 @@ LIVE_MODELS = ["gemini-3.1-flash-live-preview", "gemini-3.8-live", "gemini-2.5-f
 LIVE_VOICES = ["Leda", "Aoede", "Kore", "Zephyr", "Callirrhoe", "Despina"]
 LIVE_DEFAULTS = {"live_engine": "gemini", "live_model": LIVE_MODELS[0], "live_voice": "Leda"}
 LIVE_SETTING_ENV = {"live_engine": "LIVE_ENGINE", "live_model": "LIVE_MODEL", "live_voice": "LIVE_VOICE"}
-THINK_ORDER = ["openrouter", "gemini", "venice", "ollama"]   # hard questions: free OpenRouter first, slow Ollama only as the very last backup. No Claude (Imran, 12 Nov).
+THINK_ORDER = ["council", "openrouter"]   # COUNCIL_V1 (Imran, 27 Nov): hard questions go to the smart council brain (Claude by default), free OpenRouter if it is closed
 AUTH_TOKEN_URLS = [("v1beta", "https://generativelanguage.googleapis.com/v1beta/auth_tokens"),
                    ("v1alpha", "https://generativelanguage.googleapis.com/v1alpha/auth_tokens")]
 
@@ -1449,7 +1511,12 @@ def think_answer(question):
     tried = []
     for who in THINK_ORDER:
         try:
-            if who == "openrouter":
+            if who == "council":
+                if not council_key():
+                    continue
+                model = council_mode("smart")
+                text = council_text(THINK_SYSTEM + "\n\n" + user, "smart", 120)
+            elif who == "openrouter":
                 if not os.getenv("OPENROUTER_API_KEY"):
                     continue
                 model = os.getenv("OPENROUTER_MODEL", "").strip() or OPENROUTER_MODELS[0]
@@ -1886,6 +1953,8 @@ PRESENT_ACTIONS = ["idle", "wave", "talk", "cross", "thumbs", "point_camera"]   
 
 def model_text(provider, system, user, max_tokens=4000):
     """One plain call to the chosen brain; returns its text. Used for writing presentation shows."""
+    if provider == "council":
+        return council_text(system + "\n\n" + user + "\n\nReturn ONLY the JSON object.", "smart", 300)
     if provider == "venice":
         payload = {"model": os.getenv("VENICE_MODEL", "").strip() or VENICE_MODELS[0], "temperature": 0.9, "max_tokens": max_tokens,
                    "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -2040,8 +2109,8 @@ def get_provider_for_web(requested=None):
     if requested:
         return requested.lower()
 
-    provider = os.getenv("BRAIN_PROVIDER", "ollama")
-    return provider.lower()
+    provider = os.getenv("BRAIN_PROVIDER", "council").lower()
+    return provider if provider in ("council", "openrouter") else "council"   # COUNCIL_V1: only these two brains
 
 
 # ============================================================================
@@ -2278,7 +2347,7 @@ def stream_reply(user_text, provider, emit, reminder=None, allow_old=False):
 
 def stream_brain(user_text, provider, emit):
     """The chosen brain streams; if it fails before saying anything, slow Ollama streams; last, the normal brain."""
-    order = [provider] if provider == "ollama" else [provider, "ollama"]
+    order = [] if provider == "council" else [provider]   # COUNCIL_V1: council answers whole (normal brain below), no Ollama
     reminder = None
     for p in order:
         for attempt in range(2):
@@ -2297,7 +2366,7 @@ def stream_brain(user_text, provider, emit):
                             + " . Answer my last message again with completely new words and a new joke.")
                 continue
             break
-    reply = ask_brain(user_text, provider)        # NEVER_SILENT_V1: the normal brain (it has its own Ollama backup)
+    reply = ask_brain(user_text, provider)        # NEVER_SILENT_V1: the normal brain (it has its own OpenRouter backup)
     if reply:
         for sent in re.split(r"(?<=[.!?…])\s+", reply["response"].strip()):
             if sent.strip():
@@ -2337,7 +2406,7 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         if path in ("/", "/health"):
-            self._send_json({"status": "ok", "brain": "Hugh Mann", "provider": os.getenv("BRAIN_PROVIDER", "ollama").lower()})
+            self._send_json({"status": "ok", "brain": "Hugh Mann", "provider": get_provider_for_web()})
         elif path == "/settings":
             self._send_json(settings_view())
         elif path == "/picture":           # SMART_TV_V1: a real photo for her TV
@@ -2424,7 +2493,11 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
                 if payload.get(k):
                     data[k] = str(payload[k]).strip()
                     os.environ[env] = data[k]
-            if payload.get("provider") in ("ollama", "claude", "gemini", "vertex", "venice", "openrouter"):
+            for k, env in (("council_fast", "COUNCIL_FAST"), ("council_smart", "COUNCIL_SMART")):   # COUNCIL_V1
+                if str(payload.get(k) or "").lower() in COUNCIL_MODES:
+                    data[k] = str(payload[k]).lower()
+                    os.environ[env] = data[k]
+            if payload.get("provider") in ("council", "openrouter"):   # COUNCIL_V1: only these two brains now
                 data["provider"] = payload["provider"]
                 os.environ["BRAIN_PROVIDER"] = payload["provider"]
             save_settings(data)
@@ -2528,7 +2601,7 @@ class BrainHTTPHandler(BaseHTTPRequestHandler):
                 return
             provider = get_provider_for_web(payload.get("provider"))
             show = None
-            for p in ([provider, "ollama"] if provider != "ollama" else ["ollama"]):
+            for p in ([provider, "openrouter"] if provider != "openrouter" else ["openrouter"]):   # COUNCIL_V1: no Ollama
                 try:
                     show = make_show(source, p, str(payload.get("ask") or "")[:500], payload.get("shelf") or [])
                     print("Presentation written by %s: %d lines." % (p, len(show["lines"])))
@@ -2695,7 +2768,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Hugh Mann brain")
     parser.add_argument("--serve", action="store_true", help="Run the HTTP brain endpoint for the web app")
     parser.add_argument("--port", type=int, default=5005, help="Port for the brain web server")
-    parser.add_argument("--provider", choices=["ollama", "claude"], default=None, help="Model provider for the web endpoint")
+    parser.add_argument("--provider", choices=["council", "openrouter"], default=None, help="Model provider for the web endpoint")
     args = parser.parse_args()
 
     if args.serve:
