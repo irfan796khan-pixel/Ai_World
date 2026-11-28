@@ -3865,8 +3865,8 @@ controls.addEventListener('start', () => { CINE.userUntil = performance.now() + 
 
 
 // ---------------------------------------------------------------- API_KEY_V1 + GEMINI_V1 + COUNCIL_V1: "API key" button
-// COUNCIL_V1 (Imran, 27 Nov): only two brains now. AI Council Chat (Gemini / Claude on his own plans, DeepSeek / Grok free)
-// and free OpenRouter as backup. The Gemini key stays only for the Gemini Live voice. Keys live in brain_settings.json (not on GitHub).
+// COUNCIL_V1 + GEMINI_ONLY_V1 (Imran, 27 Nov): her brain is Gemini only (direct with the Gemini key, or through AI Council Chat; free OpenRouter only as backup)
+// The Gemini key is her fastest brain and the Gemini Live voice. Keys live in brain_settings.json (not on GitHub).
 {
   const BRAIN_SET = 'http://localhost:5005/settings';
   const btn = document.createElement('button'); btn.id = 'apikeybtn'; btn.textContent = 'API key'; btn.title = 'API keys and brain choice';
@@ -3874,14 +3874,10 @@ controls.addEventListener('start', () => { CINE.userUntil = performance.now() + 
   const box = document.createElement('div'); box.id = 'apikeybox';
   box.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:50;background:#1d2230;color:#fff;padding:16px 18px;border-radius:12px;font:14px system-ui;width:min(440px,92vw);box-shadow:0 8px 30px #0008;display:none';
   const keyRow = (id, ph) => '<div style="display:flex;gap:6px"><input id="' + id + '" type="password" autocomplete="off" placeholder="' + ph + '" style="flex:1;padding:6px"><button data-show="' + id + '">Show</button></div>';
-  const modeOpts = '<option value="gemini">Gemini (your Google AI plan)</option><option value="claude">Claude (your Claude plan)</option><option value="deepseek">DeepSeek (free, OpenRouter)</option><option value="grok">Grok (free, OpenRouter)</option>';
   box.innerHTML = '<b>Brain + API keys</b>'
     + '<div style="margin:10px 0 4px">Brain</div>'
-    + '<select id="ak_prov" style="width:100%;padding:6px"><option value="council">AI Council Chat on this laptop (recommended)</option><option value="openrouter">OpenRouter only (free models)</option></select>'
-    + '<div style="margin:10px 0 4px">Fast talking brain (answers first)</div>'
-    + '<select id="ak_cfast" style="width:100%;padding:6px">' + modeOpts + '</select>'
-    + '<div style="margin:10px 0 4px">Smart brain (hard questions, presentations)</div>'
-    + '<select id="ak_csmart" style="width:100%;padding:6px">' + modeOpts + '</select>'
+    + '<select id="ak_prov" style="width:100%;padding:6px"><option value="council">Gemini (recommended)</option><option value="openrouter">OpenRouter only (free models)</option></select>'
+    + '<div style="margin:6px 0 0;font-size:12px;opacity:.75">GEMINI_ONLY_V1: her brain is Gemini only. With the Gemini key below she streams straight from Google (fastest); without it, Gemini runs through AI Council Chat (your Google AI plan). Free OpenRouter is only a backup.</div>'
     + '<div id="ak_cstat" style="margin:6px 0 0;font-size:12px;opacity:.75"></div>'
     + '<div style="margin:10px 0 4px">OpenRouter model (backup, openrouter/free = free models only)</div>'
     + '<input id="ak_omodel" type="text" autocomplete="off" placeholder="openrouter/free" style="width:100%;padding:6px;box-sizing:border-box">'
@@ -3889,7 +3885,7 @@ controls.addEventListener('start', () => { CINE.userUntil = performance.now() + 
     + '<div style="margin:14px 0 4px">Live chat engine</div>'   // GEMINI_LIVE_V1
     + '<select id="ak_live" style="width:100%;padding:6px"><option value="gemini">Gemini Live: fastest, talks back while it thinks (needs Gemini key)</option><option value="old">Old: mic, then Whisper, then the brain above</option></select>'
     + '<div style="display:flex;gap:6px;margin-top:6px"><select id="ak_lmodel" style="flex:1;padding:6px" title="Gemini Live model"></select><select id="ak_lvoice" style="width:120px;padding:6px" title="her live voice"></select></div>'
-    + '<div style="margin:10px 0 4px">Gemini key (only for the Gemini Live voice)</div>' + keyRow('ak_gkey', 'AIza...')
+    + '<div style="margin:10px 0 4px">Gemini key (fastest brain + Gemini Live voice)</div>' + keyRow('ak_gkey', 'AIza...')
     + '<div id="ak_msg" style="margin:8px 0;opacity:.8;font-size:12px"></div>'
     + '<div style="display:flex;gap:8px;justify-content:flex-end"><button id="ak_close">Close</button><button id="ak_save">Save</button></div>';
   document.body.appendChild(box);
@@ -3899,13 +3895,12 @@ controls.addEventListener('start', () => { CINE.userUntil = performance.now() + 
   const tail = (k) => k ? '...' + String(k).slice(-4) : 'none';
   function fill(j) {
     $('ak_prov').value = j.provider === 'openrouter' ? 'openrouter' : 'council';
-    $('ak_cfast').value = j.council_fast || 'gemini'; $('ak_csmart').value = j.council_smart || 'claude';
     $('ak_cstat').textContent = j.council_ready ? 'AI Council Chat found on this laptop. Keep it running.' : 'AI Council Chat is not set up on this laptop: she uses OpenRouter until it is.';
     $('ak_orkey').value = j.openrouter_key || ''; $('ak_omodel').value = j.openrouter_model || 'openrouter/free';
     $('ak_gkey').value = j.gemini_key || '';
     const opts = (el, list, cur) => { el.innerHTML = (list || [cur]).map(v => '<option value="' + v + '">' + v + '</option>').join(''); el.value = cur; };   // GEMINI_LIVE_V1
     $('ak_live').value = j.live_engine === 'old' ? 'old' : 'gemini'; opts($('ak_lmodel'), j.live_models, j.live_model || 'gemini-3.1-flash-live-preview'); opts($('ak_lvoice'), j.live_voices, j.live_voice || 'Leda');
-    msg('Brain now: ' + j.provider + (j.provider === 'council' ? ' (fast ' + (j.council_fast || '') + ', smart ' + (j.council_smart || '') + ')' : ' (' + (j.openrouter_model || '') + ')') + '  |  OpenRouter key: ' + tail(j.openrouter_key) + '  |  Gemini Live key: ' + tail(j.gemini_key));
+    msg('Brain now: ' + j.provider + (j.provider === 'council' ? ' (Gemini' + (j.gemini_key ? ', direct with your key' : ', through AI Council Chat') + ')' : ' (' + (j.openrouter_model || '') + ')') + '  |  OpenRouter key: ' + tail(j.openrouter_key) + '  |  Gemini Live key: ' + tail(j.gemini_key));
   }
   btn.onclick = () => {
     box.style.display = box.style.display === 'none' ? 'block' : 'none';
@@ -3913,7 +3908,7 @@ controls.addEventListener('start', () => { CINE.userUntil = performance.now() + 
   };
   $('ak_close').onclick = () => { box.style.display = 'none'; };
   $('ak_save').onclick = () => {
-    const provider = $('ak_prov').value, council_fast = $('ak_cfast').value, council_smart = $('ak_csmart').value, gemini_api_key = $('ak_gkey').value.trim(), openrouter_api_key = $('ak_orkey').value.trim(), openrouter_model = $('ak_omodel').value.trim() || 'openrouter/free';
+    const provider = $('ak_prov').value, council_fast = 'gemini', council_smart = 'gemini', gemini_api_key = $('ak_gkey').value.trim(), openrouter_api_key = $('ak_orkey').value.trim(), openrouter_model = $('ak_omodel').value.trim() || 'openrouter/free';
     if (provider === 'openrouter' && !openrouter_api_key) { msg('OpenRouter needs an OpenRouter API key.'); return; }
     const live_engine = $('ak_live').value, live_model = $('ak_lmodel').value, live_voice = $('ak_lvoice').value;   // GEMINI_LIVE_V1
     if (live_engine === 'gemini' && !gemini_api_key) { msg('Gemini Live needs a Gemini key (or pick the Old live chat engine).'); return; }
