@@ -53,7 +53,9 @@ def load_model():
     model = WhisperForConditionalGeneration.from_pretrained(MODEL_ID).to(dev, dtype).eval()
     STATE.update(model=model, proc=proc, device=dev, dtype=dtype, ready=True)
     log("ready in %.0f s" % (time.time() - t))
-    transcribe([0.0] * 16000)    # warm up the GPU so the first real line is quick
+    import numpy as np            # warm up the GPU with quiet noise (silence is skipped), so the first real line is quick
+    t = time.time(); transcribe((np.random.default_rng(0).standard_normal(16000) * 0.02).astype("float32"))
+    log("warmed up in %.1f s" % (time.time() - t))
 
 
 def to_f32(wav_bytes):
