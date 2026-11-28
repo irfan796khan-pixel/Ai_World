@@ -1398,8 +1398,14 @@ If someone asks what you can do: name 3 to 5 of these in a fun, short way and of
 Never claim a skill that is not on this list (you cannot fly, browse websites by yourself, change your clothes,
 or see the real room through a camera).
 """
-PERSONALITY = PERSONALITY.replace("\nOUTPUT:", "\n" + SKILLS_TEXT + "\nOUTPUT:", 1)
-LIVE_RULES = LIVE_RULES + SKILLS_TEXT
+ECHO_RULE = """
+YOUR OWN ECHO (ECHO_RULE_V1): the microphone sometimes picks up YOUR OWN voice from the speakers. If a message from
+the person is mostly your own recent words, or a piece of what you just said, it is your echo, not him. Then do NOT
+answer it, do not repeat it, do not comment on it: say nothing (in a live call, stay silent) and carry on with what
+you were doing. Only answer the words in a message that are clearly his.
+"""
+PERSONALITY = PERSONALITY.replace("\nOUTPUT:", "\n" + SKILLS_TEXT + ECHO_RULE + "\nOUTPUT:", 1)
+LIVE_RULES = LIVE_RULES + SKILLS_TEXT + ECHO_RULE
 
 def live_history_text(limit=12):
     lines = [message_text(m) for m in history[-limit:]]
