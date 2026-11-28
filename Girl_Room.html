@@ -1497,11 +1497,16 @@ async function checkedVoice(text) {
   console.warn('VoiceStudio still short: her own voice says this piece:', text);
   return voiceFetch(text, 'piper');
 }
+// HD_FALLBACK_V1 (Imran, 27 Nov): her HD voice on the CPU took 32 s per sentence, so she looked silent.
+// If a piece takes longer than this, her normal (Piper) voice says it. The HD line still finishes in the
+// background and is kept in voice_cache, so next time that line is instant in HD.
+const HD_WAIT_S = 6;
 function studioVoice(text) {
   const k = VS.engine + '|' + VS.name + '|' + text;
   if (VCACHE.has(k)) return VCACHE.get(k);
   const p = VS.engine === 'voicestudio' ? checkedVoice(text)
-    : VS.engine === 'omnivoice' ? voiceFetch(text, 'omnivoice').catch(e => { console.warn('her HD voice did not answer, her Piper voice says this line', e); return voiceFetch(text, 'piper'); })   // HER_HD_VOICE_V1
+    : VS.engine === 'omnivoice' ? Promise.race([voiceFetch(text, 'omnivoice'), new Promise((_, no) => setTimeout(() => no(new Error('HD voice slower than ' + HD_WAIT_S + ' s (is it on the CPU?)')), HD_WAIT_S * 1000))])   // HD_FALLBACK_V1
+        .catch(e => { console.warn('her HD voice did not answer in time, her Piper voice says this line', e); return voiceFetch(text, 'piper'); })   // HER_HD_VOICE_V1
     : voiceFetch(text, VS.engine);
   VCACHE.set(k, p);
   p.catch(() => VCACHE.delete(k));        // failed: ask again next time
