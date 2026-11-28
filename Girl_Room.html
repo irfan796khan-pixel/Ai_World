@@ -1865,6 +1865,48 @@ async function brainStream(text) {
   if (j.learn !== false) learn({ match: [norm(text)], say: [j.response], mood: j.emotion || 'neutral', actions: acts.length ? acts : undefined, gesture: j.animation === 'nod' ? 'nod' : j.animation === 'shake_head' ? 'shake' : undefined });
   return true;
 }
+// INSTANT_REACT_V1 (Imran, 27 Nov: "she says Hmm or Okay with a matching face in under a second, she never sits silent;
+//   laughing, judging... basic human reactions"). The moment you finish talking, she reacts BEFORE the brain answers:
+//   face + head/body move + a tiny word. No AI here (simple word rules), so it is instant. The short words are made
+//   in her voice once in the background and kept, so they play at once. Until a word is ready she only reacts with
+//   her face and body (still instant). Console: AIWorld.react.on = false (off), AIWorld.react.test("lol")
+const REACT = { on: true, ready: new Set(), last: '', rules: [
+  { re: /\b(stupid|dumb|idiot|ugly|shut up|hate you|loser|useless)\b/i, mood: 'annoyed', move: 'shake', say: ['Excuse me?', 'Wow. Rude.', 'Okay, ouch.'] },
+  { re: /\b(lol|lmao|rofl|haha+|hehe+|joke|funny|hilarious)\b|😂|🤣/i, mood: 'laugh', move: [{ body: 'funny' }], say: ['Ha!', 'Hahaha!', 'Ha, oh my god.'] },
+  { re: /\b(cute|pretty|smart|beautiful|love you|you('| a)re (the )?best|good job|well done|amazing|genius)\b/i, mood: 'happy', move: 'nod', say: ['Aww.', 'Oh, stop it.', 'I know, right?'] },
+  { re: /\b(sad|tired|sick|bad day|lonely|upset|crying|hurt|stressed|worried)\b/i, mood: 'sad', move: 'nod', say: ['Aww, no.', 'Oh no.'] },
+  { re: /\b(omg|oh my god|no way|guess what|wow|crazy|insane|believe this|you won'?t believe)\b/i, mood: 'surprised', move: 'shrug', say: ['Whoa!', 'Wait, what?', 'No way!'] },
+  { re: /^(hi|hey|hello|yo|sup|hiya|good (morning|afternoon|evening))\b/i, mood: 'happy', move: [{ face: 'camera' }, { wave: 1.2 }], say: ['Hey!', 'Oh, hi!'] },
+  { re: /\b(i think|my idea|i (bought|made|built|did|wrote|tried|cooked|drew)|look at (my|this)|what do you think|rate (my|this)|how do i look|is (it|this) good)\b/i, mood: 'unimpressed', move: 'shrug', say: ['Hmm. Let\'s see.', 'Oh, this should be good.', 'Mm-hm. Go on.'] },
+  { re: /^(can you|could you|please|go |turn|put|show|play|open|walk|sit|dance|come|bring|switch)/i, mood: 'happy', move: 'nod', say: ['Okay!', 'On it.', 'Sure.'] },
+  { re: /\?\s*$|^(what|why|how|who|when|where|which|do|does|did|is|are|can|should|would|will)\b/i, mood: 'confused', move: 'nod', say: ['Hmm…', 'Ooh, okay.', 'Let me think.'] },
+  { re: /./, mood: 'amused', move: 'nod', say: ['Mm-hm.', 'Okay.', 'Hmm.'] } ] };
+function reactPick(text) { return REACT.rules.find(r => r.re.test(String(text || '').trim())) || REACT.rules[REACT.rules.length - 1]; }
+function quickReact(text) {
+  if (!REACT.on) { showBubble('…', 20); return; }
+  const r = reactPick(text);
+  setMood(r.mood, 0.9, 8);                                    // her face changes right away; the real answer's emotion replaces it
+  if (typeof r.move === 'string') gesture(r.move); else if (Array.isArray(r.move)) window.AIWorld.act(r.move);
+  let line = pick(r.say);
+  if (line === REACT.last && r.say.length > 1) line = r.say.find(x => x !== REACT.last);   // not the same word twice in a row
+  REACT.last = line;
+  if (VS.mode === 'studio' && REACT.ready.has(VS.engine + '|' + VS.name + '|' + line)) sayNow(line);   // ready in her voice: says it now
+  else showBubble(line, 20);                                  // not ready yet: the word in her bubble, face and body still react
+}
+async function prepReactions() {                              // makes the little words in her voice once, in the background
+  await waitS(8);
+  const all = [...new Set(REACT.rules.flatMap(r => r.say))];
+  for (const line of all) {
+    if (VS.mode !== 'studio' || VS.ok === false) { await waitS(10); continue; }
+    while (TALK.main > 0 || sheTalks()) await waitS(0.5);    // never in the way of a real answer
+    const k = VS.engine + '|' + VS.name + '|' + line;
+    if (REACT.ready.has(k)) continue;
+    try { await studioVoice(line); REACT.ready.add(k); } catch (e) {}
+  }
+}
+setTimeout(() => { prepReactions(); }, 0);
+setInterval(() => { prepReactions(); }, 120000);             // her voice changed (HD on/off): make the words again in the new voice
+window.AIWorld.react = { get on() { return REACT.on; }, set on(v) { REACT.on = !!v; }, test: (t) => quickReact(t), rules: REACT.rules, ready: () => [...REACT.ready] };
 async function hear(text) {
   if (text.length >= 200 && /\bpresent/i.test(text)) { presentText(text); return null; }
   if (PRESENT_ASK.test(text)) { presentText(text); return null; }   // PRESENT_V2
@@ -1882,7 +1924,7 @@ async function hear(text) {
   if (e) { const r = runQuick(e); if (isQuestion(text) && r && r.say) answerCard(text, r.say); return r; }
   if (typeof window.AIWorld.onUnmatched === 'function') { window.AIWorld.onUnmatched(text); return null; }
   if (window.AIWorld.brainUrl) {
-    showBubble('…', 20);
+    quickReact(text);                             // INSTANT_REACT_V1: face + little word right away, before the brain answers
     if (await brainStream(text)) return null;   // STREAM_SENTENCES_V1: she talks sentence by sentence; old way below if the brain cannot stream
     try {
       const r = await fetch(window.AIWorld.brainUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, context: roomNow() }) });   // LIVE_CONTEXT_V1
