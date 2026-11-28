@@ -2196,9 +2196,17 @@ async function judgeAndAct(text) {
   if (!sheTalks() && d.do !== 'stop') { if (d.do !== 'ignore') return deliverHeard(text); liveIdle(); return; }   // she finished meanwhile
   if (d.do === 'ignore') { liveIdle(); return; }
   if (d.do === 'stop') { if (SHOW.on) stopShow(); else stopVoices(); liveIdle(); return; }
-  if (d.do === 'later') { JUDGE.later.push(text); liveText('Got it - after this…'); setTimeout(liveIdle, 2500); return; }
+  // JUDGE_ACK_V1: she never just ignores you. "later": she says she will come back to it, goes on, then answers it.
+  // "now": she answers on the spot, then goes back to what she was saying.
+  const gl = window.AIWorld.geminiLive, live = gl && gl.isOn && gl.isOn() && !SHOW.on;
+  if (d.do === 'later') {
+    JUDGE.later.push(text); liveText('Got it - after this…'); setTimeout(liveIdle, 2500);
+    if (live) gl.aside('(He just said: "' + text + '". It can wait. Say in a few words that you will come back to it, then go on with exactly what you were saying, from where you stopped.)');
+    else sayMain(pick(["Hold that thought, I'll come back to it.", "Noted. I'll get to that in a second.", "Good one. I'll answer that right after this.", "Wait for it, I'll come back to that."]));
+    return;
+  }
   if (SHOW.on) return interruptShow(text);            // now
-  stopVoices(); return deliverHeard(text);
+  stopVoices(); return deliverHeard('(He cut in while you were talking. Answer this now, short. Then, if what you were saying still matters, go back to it in a few words.) ' + text);
 }
 setInterval(() => {                               // the "later" ones: asked as soon as she is done talking (and her presentation is over)
   if (!JUDGE.later.length) { JUDGE.quietSince = 0; return; }
@@ -4530,6 +4538,12 @@ window.addEventListener('resize', () => {
 
   window.AIWorld.geminiLive = { start, stop, isOn: () => GL.on, state: () => ({ on: GL.on, ready: GL.ready, engine: GL.engine, plain: GL.plain, talking: herTalking() }),
     bargeIn,
+    aside(text) {                                         // JUDGE_ACK_V1: cut her and give her a short instruction (she answers in her own voice)
+      if (!(GL.on && GL.ready && GL.ws && GL.ws.readyState === 1)) return false;
+      if (herTalking()) bargeIn();
+      GL.ws.send(JSON.stringify({ realtimeInput: { text: String(text).slice(0, 600) } }));
+      return true;
+    },
     note(text) {                                          // TV_AWARE_V1: tell her something without asking for an answer
       if (!(GL.on && GL.ready && GL.ws && GL.ws.readyState === 1)) return false;
       GL.ws.send(JSON.stringify({ clientContent: { turns: [{ role: 'user', parts: [{ text: String(text).slice(0, 600) }] }], turnComplete: false } }));
