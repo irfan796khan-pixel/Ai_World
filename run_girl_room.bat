@@ -24,7 +24,10 @@ rem VoiceStudio is no longer needed for her voice. If it is running, Live chat u
 
 rem ---- 2. COUNCIL_AUTOSTART_V1 (Imran, 27 Nov): AI Council Chat starts in its own terminal window, before the brain.
 rem      No browser tab opens. Close that terminal window to stop the council.
-set "COUNCIL_APP=%USERPROFILE%\Documents\ai-council\chat-app\app.py"
+rem COUNCIL_IN_REPO_V1: the council app now comes from GitHub with AI World (council\app.py), so every update is automatic.
+rem Your chats, memory, settings and key stay in Documents\ai-council\app-data as before.
+set "COUNCIL_APP=%~dp0council\app.py"
+if not exist "%COUNCIL_APP%" set "COUNCIL_APP=%USERPROFILE%\Documents\ai-council\chat-app\app.py"
 "%PY%" wait_for.py http://127.0.0.1:8765/ 0
 if errorlevel 1 (
   if exist "%COUNCIL_APP%" (
