@@ -819,11 +819,11 @@ def council_mode(kind="fast"):
     return mode if mode in COUNCIL_MODES else default
 
 
-def council_text(prompt, kind="fast", timeout=300):
+def council_text(prompt, kind="fast", timeout=300, mode=None):
     key = council_key()
     if not key:
         raise ValueError("AI Council Chat isn't configured on this PC (no api_key.txt).")
-    data = send_json(COUNCIL_URL, {"project": "Ai_World", "mode": council_mode(kind), "message": prompt},
+    data = send_json(COUNCIL_URL, {"project": "Ai_World", "mode": mode or council_mode(kind), "message": prompt},
                      {"Content-Type": "application/json", "X-API-Key": key}, timeout)
     if data.get("error"):
         raise ValueError("AI Council Chat: " + str(data["error"]))
@@ -1649,9 +1649,16 @@ def make_drawing(what):
         return svg, "saved drawing", desc
     user = "Draw: " + what
     tried = []
-    for who in ("gemini", "openrouter", "venice"):
+    # TV_CLAUDE_CHEAP_V1 (Imran, 27 Nov): the TV is drawn by the council with Claude's cheapest model (Haiku,
+    # on his Claude plan, no API bill). If AI Council Chat is closed, Gemini / OpenRouter / Venice draw it.
+    for who in ("council", "gemini", "openrouter", "venice"):
         try:
-            if who == "gemini":
+            if who == "council":
+                if not council_key():
+                    continue
+                text = council_text(DRAW_SYSTEM + "\n\n" + user, timeout=150, mode="claude_cheap")
+                who = "council (Claude Haiku)"
+            elif who == "gemini":
                 if not os.getenv("GEMINI_API_KEY"):
                     continue
                 models = [m for m in [os.getenv("GEMINI_MODEL", "").strip()] + GEMINI_MODELS[::-1] if m]   # the bigger flash first
