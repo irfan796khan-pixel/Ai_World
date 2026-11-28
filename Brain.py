@@ -755,8 +755,8 @@ def openrouter_send(payload, timeout=None):
         return send_json(*args)
 
 
-def ask_openrouter(user_text, reminder=None):
-    model = os.getenv("OPENROUTER_MODEL", "").strip() or OPENROUTER_MODELS[0]
+def ask_openrouter(user_text, reminder=None, model=None):
+    model = model or os.getenv("OPENROUTER_MODEL", "").strip() or OPENROUTER_MODELS[0]
     system = (PERSONALITY + day_summary_text() + said_hint() + context_hint() + story_hint()
               + "\n\nReturn ONLY one JSON object with the keys response, emotion, animation, actions. No other text.")
     payload = {
@@ -794,6 +794,22 @@ def council_key():
             return f.read().strip()
     except OSError:
         return ""
+
+
+# FAST_TALK_V1 (Imran, 27 Nov: "make it faster"): the fast brain does not go through AI Council Chat when it
+# does not have to. Gemini streams straight from Google with the saved Gemini key; DeepSeek / Grok stream straight
+# from OpenRouter. Only Claude (no other way on his plan) and the smart brain use AI Council Chat.
+FAST_OR_MODELS = {"deepseek": "deepseek/deepseek-chat-v3:free", "grok": "x-ai/grok-4.1-fast:free"}
+
+
+def fast_direct():
+    """The brain that answers chat directly (streaming), or None if the fast brain must use AI Council Chat."""
+    mode = council_mode("fast")
+    if mode == "gemini" and os.getenv("GEMINI_API_KEY"):
+        return "gemini"
+    if mode in FAST_OR_MODELS and os.getenv("OPENROUTER_API_KEY"):
+        return mode
+    return None
 
 
 def council_mode(kind="fast"):
@@ -1099,7 +1115,13 @@ def _ask_brain(user_text, provider, max_attempts):
             # We use the selected provider, but everything after
             # this point works exactly the same for either model.
             if provider == "council":
-                reply = ask_council(user_text, reminder)
+                direct = fast_direct()               # FAST_TALK_V1
+                if direct == "gemini":
+                    reply = ask_gemini(user_text, reminder)
+                elif direct in FAST_OR_MODELS:
+                    reply = ask_openrouter(user_text, reminder, FAST_OR_MODELS[direct])
+                else:
+                    reply = ask_council(user_text, reminder)
             elif provider == "claude":
                 reply = ask_claude(user_text, reminder)
             elif provider == "gemini":
@@ -2170,10 +2192,10 @@ def _sse_json(response):
 
 def stream_tokens(provider, system, messages):
     """Yields text pieces from the brain as they are written. Raises if this brain cannot stream."""
-    if provider in ("openrouter", "venice"):
-        if provider == "openrouter":
+    if provider in ("openrouter", "venice") or provider in FAST_OR_MODELS:
+        if provider != "venice":
             key = os.getenv("OPENROUTER_API_KEY")
-            url, model = OPENROUTER_URL, os.getenv("OPENROUTER_MODEL", "").strip() or OPENROUTER_MODELS[0]
+            url, model = OPENROUTER_URL, FAST_OR_MODELS.get(provider) or os.getenv("OPENROUTER_MODEL", "").strip() or OPENROUTER_MODELS[0]
             extra = {}
             headers = {"HTTP-Referer": "http://localhost:8081", "X-Title": "AI World"}
         else:
@@ -2347,7 +2369,11 @@ def stream_reply(user_text, provider, emit, reminder=None, allow_old=False):
 
 def stream_brain(user_text, provider, emit):
     """The chosen brain streams; if it fails before saying anything, slow Ollama streams; last, the normal brain."""
-    order = [] if provider == "council" else [provider]   # COUNCIL_V1: council answers whole (normal brain below), no Ollama
+    if provider == "council":                   # FAST_TALK_V1: stream from Gemini / OpenRouter directly when we can
+        direct = fast_direct()
+        order = [direct] if direct else []
+    else:
+        order = [provider]                      # COUNCIL_V1: no Ollama
     reminder = None
     for p in order:
         for attempt in range(2):
