@@ -784,7 +784,8 @@ def ask_openrouter(user_text, reminder=None, model=None):
 #   FAST talking brain = council_fast (default gemini). Hard questions (/think) = council_smart (default claude).
 #   If AI Council Chat is closed, she uses free OpenRouter. No Ollama: nothing heavy runs on this PC.
 COUNCIL_URL = "http://127.0.0.1:8765/api/chat"
-COUNCIL_MODES = ["gemini", "claude", "deepseek", "grok"]
+COUNCIL_STREAM_URL = "http://127.0.0.1:8765/api/chat_stream"   # COUNCIL_STREAM_V1: AI Council Chat keeps Claude / Gemini open and streams
+COUNCIL_MODES = ["gemini"]   # GEMINI_ONLY_V1 (Imran, 27 Nov): only Gemini, no Claude
 COUNCIL_DATA = os.path.join(os.path.expanduser("~"), "Documents", "ai-council", "app-data")
 
 
@@ -813,7 +814,7 @@ def fast_direct():
 
 
 def council_mode(kind="fast"):
-    default = "gemini" if kind == "fast" else "claude"
+    default = "gemini"                          # GEMINI_ONLY_V1: fast and smart are both Gemini
     mode = os.getenv("COUNCIL_FAST" if kind == "fast" else "COUNCIL_SMART", "").strip().lower() or default
     return mode if mode in COUNCIL_MODES else default
 
@@ -1384,7 +1385,7 @@ LIVE_MODELS = ["gemini-3.1-flash-live-preview", "gemini-3.8-live", "gemini-2.5-f
 LIVE_VOICES = ["Leda", "Aoede", "Kore", "Zephyr", "Callirrhoe", "Despina"]
 LIVE_DEFAULTS = {"live_engine": "gemini", "live_model": LIVE_MODELS[0], "live_voice": "Leda"}
 LIVE_SETTING_ENV = {"live_engine": "LIVE_ENGINE", "live_model": "LIVE_MODEL", "live_voice": "LIVE_VOICE"}
-THINK_ORDER = ["council", "openrouter"]   # COUNCIL_V1 (Imran, 27 Nov): hard questions go to the smart council brain (Claude by default), free OpenRouter if it is closed
+THINK_ORDER = ["gemini", "council", "openrouter"]   # GEMINI_ONLY_V1: Gemini key first (fastest), then Gemini through AI Council Chat, then free OpenRouter. Was: council first   # COUNCIL_V1 (Imran, 27 Nov): hard questions go to the smart council brain (Claude by default), free OpenRouter if it is closed
 AUTH_TOKEN_URLS = [("v1beta", "https://generativelanguage.googleapis.com/v1beta/auth_tokens"),
                    ("v1alpha", "https://generativelanguage.googleapis.com/v1alpha/auth_tokens")]
 
@@ -2192,6 +2193,26 @@ def _sse_json(response):
 
 def stream_tokens(provider, system, messages):
     """Yields text pieces from the brain as they are written. Raises if this brain cannot stream."""
+    if provider == "council":                   # COUNCIL_STREAM_V1: words come from AI Council Chat as they are written
+        key = council_key()
+        if not key:
+            raise ValueError("AI Council Chat isn't configured on this PC.")
+        lines = [message_text(m) for m in messages]
+        prompt = system + "\n\nCHAT SO FAR (the last line is the new message):\n" + "\n".join(lines)
+        req = urllib.request.Request(COUNCIL_STREAM_URL, data=json.dumps(
+            {"project": "Ai_World", "mode": council_mode("fast"), "message": prompt}).encode("utf-8"),
+            headers={"Content-Type": "application/json", "X-API-Key": key}, method="POST")
+        with urllib.request.urlopen(req, timeout=300) as res:
+            for raw in res:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line:
+                    continue
+                d = json.loads(line)
+                if d.get("error"):
+                    raise ValueError("AI Council Chat: " + str(d["error"]))
+                if d.get("delta"):
+                    yield d["delta"]
+        return
     if provider in ("openrouter", "venice") or provider in FAST_OR_MODELS:
         if provider != "venice":
             key = os.getenv("OPENROUTER_API_KEY")
@@ -2371,7 +2392,7 @@ def stream_brain(user_text, provider, emit):
     """The chosen brain streams; if it fails before saying anything, slow Ollama streams; last, the normal brain."""
     if provider == "council":                   # FAST_TALK_V1: stream from Gemini / OpenRouter directly when we can
         direct = fast_direct()
-        order = [direct] if direct else []
+        order = [direct] if direct else ["council"]   # COUNCIL_STREAM_V1: Claude streams through AI Council Chat too
     else:
         order = [provider]                      # COUNCIL_V1: no Ollama
     reminder = None
