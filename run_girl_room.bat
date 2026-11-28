@@ -22,6 +22,22 @@ echo Getting her voice ready...
 if errorlevel 1 (echo Her voice could not be set up - she uses the browser voice.)
 rem VoiceStudio is no longer needed for her voice. If it is running, Live chat uses it for speech-to-text; if not, the browser does that.
 
+rem ---- 2. COUNCIL_AUTOSTART_V1 (Imran, 27 Nov): AI Council Chat starts in its own terminal window, before the brain.
+rem      No browser tab opens. Close that terminal window to stop the council.
+set "COUNCIL_APP=%USERPROFILE%\Documents\ai-council\chat-app\app.py"
+"%PY%" wait_for.py http://127.0.0.1:8765/ 0
+if errorlevel 1 (
+  if exist "%COUNCIL_APP%" (
+    echo Starting AI Council in its own window...
+    start "AI Council (keep this window open)" cmd /k "set AICHAT_NO_BROWSER=1&& "%PY%" "%COUNCIL_APP%""
+    "%PY%" wait_for.py http://127.0.0.1:8765/ 20
+  ) else (
+    echo AI Council Chat not found - she uses free OpenRouter.
+  )
+) else (
+  echo AI Council is already running.
+)
+
 rem ---- 3. brain (Steven's Brain.py) in its own window, unless it is already running
 "%PY%" wait_for.py http://127.0.0.1:5005/health 0
 if errorlevel 1 (
